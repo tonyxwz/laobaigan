@@ -3,7 +3,7 @@ import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { AgentId, SessionRef } from "../sources/types.ts";
 
-const MIGRATIONS: string[] = [
+export const MIGRATIONS: string[] = [
   `CREATE TABLE session (
      agent        TEXT NOT NULL,
      session_id   TEXT NOT NULL,
@@ -52,7 +52,64 @@ const MIGRATIONS: string[] = [
      dry_run      INTEGER NOT NULL,
      stats        TEXT                    -- JSON counts, tokens, cost, errors
    );`,
+  // 2: clusters of nuggets that say the same thing (M2)
+  `CREATE TABLE cluster (
+     id           INTEGER PRIMARY KEY AUTOINCREMENT,
+     title        TEXT NOT NULL,
+     summary      TEXT NOT NULL,          -- canonical merged knowledge, updated as members join
+     scope        TEXT NOT NULL,          -- global | repo
+     repo         TEXT,                   -- repo root when scope = repo
+     status       TEXT NOT NULL DEFAULT 'open', -- open | candidate | proposed | merged | rejected
+     score        REAL NOT NULL DEFAULT 0,
+     target       TEXT,                   -- e.g. global:update:git-worktree, repo:agents-md:/path
+     stats        TEXT,                   -- JSON ClusterStats at last scoring
+     rejected_sessions INTEGER,           -- distinct sessions when rejected; re-propose only after growth
+     created_at   INTEGER NOT NULL,
+     updated_at   INTEGER NOT NULL
+   );
+   CREATE INDEX cluster_status ON cluster (status);`,
 ];
+
+export const CLUSTER_STATUSES = ["open", "candidate", "proposed", "merged", "rejected"] as const;
+export type ClusterStatus = (typeof CLUSTER_STATUSES)[number];
+
+export interface NuggetRow {
+  id: number;
+  runId: number;
+  agent: AgentId;
+  sessionId: string;
+  cwd: string;
+  kind: string;
+  title: string;
+  knowledge: string;
+  triggers: string[];
+  scope: "global" | "repo";
+  repo?: string;
+  coveredBy?: string;
+  confidence: number;
+  evidence: { label: string; fingerprint?: string; ts?: string; quote: string }[];
+  clusterId?: number;
+  createdAt: Date;
+}
+
+export interface ClusterRow {
+  id: number;
+  title: string;
+  summary: string;
+  scope: "global" | "repo";
+  repo?: string;
+  status: ClusterStatus;
+  score: number;
+  target?: string;
+  stats?: unknown;
+  rejectedSessions?: number;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface ClusterWithMembers extends ClusterRow {
+  members: NuggetRow[];
+}
 
 export interface SessionRow {
   agent: AgentId;
@@ -212,6 +269,95 @@ export class StateDb {
     this.db.prepare("UPDATE run SET finished_at = ?, stats = ? WHERE id = ?").run(Date.now(), JSON.stringify(stats), id);
   }
 
+  // ---- nuggets & clusters -------------------------------------------------
+
+  /** Nuggets not yet assigned to a cluster, oldest first. */
+  unclusteredNuggets(): NuggetRow[] {
+    return (this.db.prepare("SELECT * FROM nugget WHERE cluster_id IS NULL ORDER BY id").all() as Row[]).map(toNugget);
+  }
+
+  nuggets(): NuggetRow[] {
+    return (this.db.prepare("SELECT * FROM nugget ORDER BY id").all() as Row[]).map(toNugget);
+  }
+
+  createCluster(c: { title: string; summary: string; scope: "global" | "repo"; repo?: string }): number {
+    const now = Date.now();
+    const r = this.db
+      .prepare(
+        "INSERT INTO cluster (title, summary, scope, repo, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+      )
+      .run(c.title, c.summary, c.scope, c.scope === "repo" ? (c.repo ?? null) : null, now, now);
+    return Number(r.lastInsertRowid);
+  }
+
+  /** Update any subset of mutable cluster fields. */
+  updateCluster(
+    id: number,
+    patch: Partial<Pick<ClusterRow, "title" | "summary" | "status" | "score" | "target" | "stats" | "rejectedSessions">>,
+  ): void {
+    const cols: Record<string, string> = {
+      title: "title",
+      summary: "summary",
+      status: "status",
+      score: "score",
+      target: "target",
+      stats: "stats",
+      rejectedSessions: "rejected_sessions",
+    };
+    const sets: string[] = [];
+    const vals: (string | number | null)[] = [];
+    for (const [k, v] of Object.entries(patch)) {
+      const col = cols[k];
+      if (!col || v === undefined) continue;
+      if (k === "status" && !CLUSTER_STATUSES.includes(v as ClusterStatus)) throw new Error(`Bad cluster status: ${v}`);
+      sets.push(`${col} = ?`);
+      vals.push(k === "stats" ? JSON.stringify(v) : (v as string | number | null));
+    }
+    if (!sets.length) return;
+    sets.push("updated_at = ?");
+    vals.push(Date.now(), id);
+    const r = this.db.prepare(`UPDATE cluster SET ${sets.join(", ")} WHERE id = ?`).run(...vals);
+    if (Number(r.changes) === 0) throw new Error(`No cluster ${id}`);
+  }
+
+  /** Assign a nugget to a cluster. Scope/repo must match (never mix global with repo, or two repos). */
+  assignNugget(nuggetId: number, clusterId: number): void {
+    const n = this.db.prepare("SELECT scope, repo FROM nugget WHERE id = ?").get(nuggetId) as Row | undefined;
+    const c = this.db.prepare("SELECT scope, repo FROM cluster WHERE id = ?").get(clusterId) as Row | undefined;
+    if (!n) throw new Error(`No nugget ${nuggetId}`);
+    if (!c) throw new Error(`No cluster ${clusterId}`);
+    if (n.scope !== c.scope || (n.scope === "repo" && (n.repo ?? null) !== (c.repo ?? null))) {
+      throw new Error(
+        `Scope mismatch: nugget ${nuggetId} (${n.scope}${n.repo ? `:${n.repo}` : ""}) vs cluster ${clusterId} (${c.scope}${c.repo ? `:${c.repo}` : ""})`,
+      );
+    }
+    this.db.prepare("UPDATE nugget SET cluster_id = ? WHERE id = ?").run(clusterId, nuggetId);
+    this.db.prepare("UPDATE cluster SET updated_at = ? WHERE id = ?").run(Date.now(), clusterId);
+  }
+
+  getCluster(id: number): ClusterWithMembers | undefined {
+    const row = this.db.prepare("SELECT * FROM cluster WHERE id = ?").get(id) as Row | undefined;
+    if (!row) return undefined;
+    const members = (this.db.prepare("SELECT * FROM nugget WHERE cluster_id = ? ORDER BY id").all(id) as Row[]).map(toNugget);
+    return { ...toCluster(row), members };
+  }
+
+  /** All clusters (optionally filtered by status) with their member nuggets. */
+  clusters(status?: ClusterStatus[]): ClusterWithMembers[] {
+    const rows = (
+      status?.length
+        ? this.db.prepare(`SELECT * FROM cluster WHERE status IN (${status.map(() => "?").join(",")}) ORDER BY id`).all(...status)
+        : this.db.prepare("SELECT * FROM cluster ORDER BY id").all()
+    ) as Row[];
+    const byCluster = new Map<number, NuggetRow[]>();
+    for (const n of (this.db.prepare("SELECT * FROM nugget WHERE cluster_id IS NOT NULL ORDER BY id").all() as Row[]).map(toNugget)) {
+      const list = byCluster.get(n.clusterId!) ?? [];
+      list.push(n);
+      byCluster.set(n.clusterId!, list);
+    }
+    return rows.map((r) => ({ ...toCluster(r), members: byCluster.get(Number(r.id)) ?? [] }));
+  }
+
   counts(): Record<string, number> {
     const one = (sql: string) => Number((this.db.prepare(sql).get() as { n: number }).n);
     return {
@@ -221,6 +367,58 @@ export class StateDb {
       errors: one("SELECT count(*) n FROM session WHERE status = 'error'"),
       turnsSeen: one("SELECT count(*) n FROM turn_seen"),
       nuggets: one("SELECT count(*) n FROM nugget"),
+      unclustered: one("SELECT count(*) n FROM nugget WHERE cluster_id IS NULL"),
+      clusters: one("SELECT count(*) n FROM cluster"),
+      candidates: one("SELECT count(*) n FROM cluster WHERE status = 'candidate'"),
     };
   }
+}
+
+type Row = Record<string, unknown>;
+
+function parseJson<T>(v: unknown, fallback: T): T {
+  if (typeof v !== "string") return fallback;
+  try {
+    return JSON.parse(v) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+function toNugget(r: Row): NuggetRow {
+  return {
+    id: Number(r.id),
+    runId: Number(r.run_id),
+    agent: r.agent as AgentId,
+    sessionId: String(r.session_id),
+    cwd: String(r.cwd ?? ""),
+    kind: String(r.kind),
+    title: String(r.title),
+    knowledge: String(r.knowledge),
+    triggers: parseJson(r.triggers, [] as string[]),
+    scope: r.scope as "global" | "repo",
+    ...(r.repo ? { repo: String(r.repo) } : {}),
+    ...(r.covered_by ? { coveredBy: String(r.covered_by) } : {}),
+    confidence: Number(r.confidence),
+    evidence: parseJson(r.evidence, [] as NuggetRow["evidence"]),
+    ...(r.cluster_id != null ? { clusterId: Number(r.cluster_id) } : {}),
+    createdAt: new Date(Number(r.created_at)),
+  };
+}
+
+function toCluster(r: Row): ClusterRow {
+  return {
+    id: Number(r.id),
+    title: String(r.title),
+    summary: String(r.summary),
+    scope: r.scope as "global" | "repo",
+    ...(r.repo ? { repo: String(r.repo) } : {}),
+    status: r.status as ClusterStatus,
+    score: Number(r.score),
+    ...(r.target ? { target: String(r.target) } : {}),
+    ...(r.stats ? { stats: parseJson(r.stats, undefined) } : {}),
+    ...(r.rejected_sessions != null ? { rejectedSessions: Number(r.rejected_sessions) } : {}),
+    createdAt: new Date(Number(r.created_at)),
+    updatedAt: new Date(Number(r.updated_at)),
+  };
 }
