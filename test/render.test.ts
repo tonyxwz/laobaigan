@@ -212,3 +212,28 @@ describe("draftCandidates", () => {
     expect(tree.getNode(dot)!.status).toBe("candidate");
   });
 });
+
+describe("proposalDiff", () => {
+  it("emits git-style headers for added, modified and deleted files (git apply accepts it)", async () => {
+    const { execFileSync } = await import("node:child_process");
+    const root = realpathSync(await mkdtemp(join(tmpdir(), "lbg-diff-")));
+    await mkdir(join(root, "s"));
+    await writeFile(join(root, "s", "SKILL.md"), "one\ntwo\n");
+    await writeFile(join(root, "s", "old.md"), "bye\n");
+    const p = {
+      targetRoot: root,
+      files: [
+        { path: "s/SKILL.md", baseHash: "x", content: "one\nTWO\n" },
+        { path: "s/new.md", baseHash: null, content: "hi\n" },
+        { path: "s/old.md", baseHash: "y", content: null },
+      ],
+    } as unknown as Parameters<typeof proposalDiff>[0];
+    const diff = await proposalDiff(p);
+    expect(diff).toContain("diff --git a/s/SKILL.md b/s/SKILL.md\n--- a/s/SKILL.md\n+++ b/s/SKILL.md\n@@ -1,2 +1,2 @@");
+    expect(diff).toContain("diff --git a/s/new.md b/s/new.md\nnew file mode 100644\n--- /dev/null\n+++ b/s/new.md");
+    expect(diff).toContain("diff --git a/s/old.md b/s/old.md\ndeleted file mode 100644\n--- a/s/old.md\n+++ /dev/null");
+    expect(diff).not.toMatch(/\t$/m);
+    await writeFile(join(root, "p.diff"), diff);
+    execFileSync("git", ["apply", "--check", "--directory=", "p.diff"], { cwd: root });
+  });
+});

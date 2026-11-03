@@ -62,7 +62,9 @@ files change only through proposals; every edit re-scores right away):
 Proposals (lbg never runs git: accept writes the files; commit them yourself if you like):
   lbg draft [<skill-id>...] [--max N]          Draft candidate skills with pi into proposals (default: top candidates)
   lbg proposals [--status open,accepted,...]  List proposals (default: open)
-  lbg proposal show <id>                       Summary, evidence, and the diff against the live files
+  lbg proposal show <id> [--no-pager]          Summary, evidence, and the diff against the live files
+  lbg proposal diff <id> [--no-pager]          Only the diff (git format; pipe it into delta etc.)
+      On a terminal both page through $LBG_PAGER, else delta if installed, else less -R.
   lbg proposal accept <id> [--force]           Write the files into the skills dir / repo (--force: even if they changed since)
   lbg proposal reject <id> [--reason "..."]
   lbg status                                                 State db counts and recent runs
@@ -86,6 +88,7 @@ async function main(argv: string[]): Promise<number> {
       session: { type: "string" },
       json: { type: "boolean", default: false },
       "user-only": { type: "boolean", default: false },
+      "no-pager": { type: "boolean", default: false },
       "dry-run": { type: "boolean", default: false },
       fresh: { type: "boolean", default: false },
       excerpt: { type: "boolean", default: false },
@@ -408,9 +411,16 @@ async function main(argv: string[]): Promise<number> {
           return 0;
         }
         if (!Number.isInteger(id) || id <= 0) throw new Error(`proposal ${sub} expects <id>`);
+        if (sub === "diff") {
+          // Just the git-style diff: pipe it into delta, diff-so-fancy, etc.
+          const diff = await proposalDiff(props.mustGet(id));
+          return (await page(diff, values["no-pager"])), 0;
+        }
         if (sub === "show") {
           const p = props.mustGet(id);
           if (values.json) return json(p), 0;
+          const buf: string[] = [];
+          const out = (s: string) => void buf.push(s);
           out(renderProposalLine(p, tree));
           out(`target: ${p.targetRoot}   writable: ${p.writable.join(", ")}\n`);
           if (p.summary) out(`\n${p.summary}\n`);
@@ -428,7 +438,7 @@ async function main(argv: string[]): Promise<number> {
             if (stale.length && p.status === "open") out(`\n⚠ stale: ${stale.map((c) => `${c.path} ${c.reason}`).join("; ")}\n`);
             out(`\n${await proposalDiff(p)}`);
           }
-          return 0;
+          return (await page(buf.join(""), values["no-pager"])), 0;
         }
         if (sub === "accept") {
           const r = await acceptProposal(tree, cfg, id, { force: values.force });
@@ -545,6 +555,23 @@ function shortPath(p: string | undefined): string {
 
 function sessionsOf(n: TreeNode): number {
   return new Set(subtreeNuggets(n).map((m) => `${m.agent}:${m.sessionId}`)).size;
+}
+
+/** Page `text` on a terminal ($LBG_PAGER → delta → less -R); plain stdout when piped. */
+async function page(text: string, noPager: boolean): Promise<void> {
+  const write = () => void process.stdout.write(text);
+  if (noPager || !process.stdout.isTTY) return write();
+  const { spawn, spawnSync } = await import("node:child_process");
+  const has = (bin: string) => spawnSync("sh", ["-c", `command -v ${bin}`], { stdio: "ignore" }).status === 0;
+  const cmd = process.env.LBG_PAGER ?? (has("delta") ? "delta" : has("less") ? "less -R" : "");
+  if (!cmd) return write();
+  await new Promise<void>((resolve) => {
+    const child = spawn("sh", ["-c", cmd], { stdio: ["pipe", "inherit", "inherit"] });
+    child.on("error", () => (write(), resolve()));
+    child.on("close", () => resolve());
+    child.stdin.on("error", () => {}); // pager quit early
+    child.stdin.end(text);
+  });
 }
 
 function renderProposalLine(p: ProposalRow, tree: Tree): string {

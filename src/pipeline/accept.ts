@@ -93,14 +93,27 @@ export function rejectProposal(tree: Tree, id: number, reason?: string): void {
   new Proposals(tree.db).markRejected(id, reason);
 }
 
-/** Unified diff of the proposal against what's on disk now. */
+/**
+ * Git-style unified diff of the proposal against what's on disk now, so diff
+ * viewers (delta, diff-so-fancy, less) recognise added / deleted / modified files.
+ */
 export async function proposalDiff(p: ProposalRow): Promise<string> {
   const parts: string[] = [];
   for (const f of p.files) {
-    const now = (await current(p.targetRoot, f.path)) ?? "";
-    parts.push(createTwoFilesPatch(`a/${f.path}`, f.content === null ? "/dev/null" : `b/${f.path}`, now, f.content ?? "", "", "", { context: 3 }).replace(/^=+\n/, ""));
+    const now = await current(p.targetRoot, f.path);
+    const oldText = now ?? "";
+    const newText = f.content ?? "";
+    if (now === null && f.content === null) continue;
+    if (oldText === newText) continue;
+    const header = [`diff --git a/${f.path} b/${f.path}`];
+    if (now === null) header.push("new file mode 100644", "--- /dev/null", `+++ b/${f.path}`);
+    else if (f.content === null) header.push("deleted file mode 100644", `--- a/${f.path}`, "+++ /dev/null");
+    else header.push(`--- a/${f.path}`, `+++ b/${f.path}`);
+    const body = createTwoFilesPatch("a", "b", oldText, newText, "", "", { context: 3 });
+    const hunks = body.slice(body.indexOf("\n@@") + 1);
+    parts.push(`${header.join("\n")}\n${hunks}`);
   }
-  return parts.join("\n");
+  return parts.join("");
 }
 
 /** A commit message you can use; lbg itself never commits. */
