@@ -1,0 +1,136 @@
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { isAbsolute, join, resolve } from "node:path";
+
+/** Truncation limits applied when normalizing transcripts. */
+export interface NormalizeLimits {
+  /** Max chars kept from a single tool result. */
+  toolResultChars: number;
+  /** Max chars kept from a rendered tool-call input. */
+  toolInputChars: number;
+}
+
+export const DEFAULT_LIMITS: NormalizeLimits = {
+  toolResultChars: 1500,
+  toolInputChars: 300,
+};
+
+const home = homedir();
+
+/** Expand a leading `~` and make the path absolute. */
+export function expandPath(p: string): string {
+  const expanded = p === "~" ? home : p.startsWith("~/") ? join(home, p.slice(2)) : p;
+  return isAbsolute(expanded) ? expanded : resolve(expanded);
+}
+
+/** Default on-disk locations of each agent's session storage. */
+export const DEFAULT_PATHS = {
+  claudeProjects: process.env.LBG_CLAUDE_PROJECTS ?? join(home, ".claude", "projects"),
+  piSessions: process.env.LBG_PI_SESSIONS ?? join(home, ".pi", "agent", "sessions"),
+  opencodeDb: process.env.LBG_OPENCODE_DB ?? join(home, ".local", "share", "opencode", "opencode.db"),
+  skillsDir: process.env.LBG_SKILLS_DIR ?? join(home, ".config", "opencode", "skills"),
+  stateDir: process.env.LBG_STATE_DIR ?? join(home, ".local", "state", "laobaigan"),
+};
+
+/** A git repository that proposals are committed to. */
+export interface RepoTarget {
+  /** `--git-dir`. Omit for a normal (non-bare) repo; then `workTree/.git` is used. */
+  gitDir?: string;
+  /** Root of the main checkout (for a bare dotfiles repo: usually `~`). */
+  workTree: string;
+  /** Branch proposals are based on. I merge into it myself. */
+  baseBranch: string;
+}
+
+export interface SkillsRepo extends RepoTarget {
+  /** Global skills directory, relative to `workTree`. */
+  skillsPath: string;
+}
+
+/** Model ids, always resolved against the `amazon-bedrock` provider. */
+export interface ModelConfig {
+  extract: string;
+  distill: string;
+  extractThinking: "off" | "minimal" | "low" | "medium" | "high";
+  distillThinking: "off" | "minimal" | "low" | "medium" | "high";
+}
+
+export interface Config {
+  skillsRepo: SkillsRepo;
+  /** Where proposal worktrees are created. */
+  worktreesDir: string;
+  branchPrefix: string;
+  stateDir: string;
+  models: ModelConfig;
+  /** Skip sessions modified more recently than this (minutes). */
+  settleMinutes: number;
+  extract: {
+    /** Approximate max tokens of excerpt per extract call. */
+    chunkTokens: number;
+    /** Max extract calls per run (the rest waits for the next run). */
+    maxCallsPerRun: number;
+  };
+}
+
+export const DEFAULT_CONFIG: Config = {
+  skillsRepo: {
+    gitDir: "~/.cfg",
+    workTree: "~",
+    skillsPath: ".config/opencode/skills",
+    baseBranch: "main",
+  },
+  worktreesDir: join(DEFAULT_PATHS.stateDir, "worktrees"),
+  branchPrefix: "laobaigan/",
+  stateDir: DEFAULT_PATHS.stateDir,
+  models: {
+    extract: "global.openai.gpt-6.1-sol",
+    distill: "global.anthropic.claude-opus-5-5",
+    extractThinking: "medium",
+    distillThinking: "high",
+  },
+  settleMinutes: 30,
+  extract: {
+    chunkTokens: 40_000,
+    maxCallsPerRun: 50,
+  },
+};
+
+export const CONFIG_PATH =
+  process.env.LBG_CONFIG ?? join(process.env.XDG_CONFIG_HOME ?? join(home, ".config"), "laobaigan", "config.json");
+
+type DeepPartial<T> = { [K in keyof T]?: T[K] extends object ? DeepPartial<T[K]> : T[K] };
+
+function merge<T>(base: T, over: DeepPartial<T> | undefined): T {
+  if (!over) return base;
+  const out: Record<string, unknown> = { ...(base as Record<string, unknown>) };
+  for (const [k, v] of Object.entries(over)) {
+    const b = out[k];
+    out[k] =
+      v && typeof v === "object" && !Array.isArray(v) && b && typeof b === "object"
+        ? merge(b, v as DeepPartial<typeof b>)
+        : v;
+  }
+  return out as T;
+}
+
+/** Load config: defaults ← config file (JSON, `//` comments allowed). Paths are expanded. */
+export function loadConfig(path = CONFIG_PATH): Config {
+  let fileCfg: DeepPartial<Config> | undefined;
+  try {
+    const raw = readFileSync(path, "utf8").replace(/^\s*\/\/.*$/gm, "");
+    fileCfg = JSON.parse(raw) as DeepPartial<Config>;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw new Error(`Bad config ${path}: ${String(err)}`);
+  }
+  const c = merge(DEFAULT_CONFIG, fileCfg);
+  return {
+    ...c,
+    skillsRepo: {
+      ...c.skillsRepo,
+      ...(c.skillsRepo.gitDir ? { gitDir: expandPath(c.skillsRepo.gitDir) } : {}),
+      workTree: expandPath(c.skillsRepo.workTree),
+    },
+    worktreesDir: expandPath(c.worktreesDir),
+    stateDir: expandPath(c.stateDir),
+  };
+}

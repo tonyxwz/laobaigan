@@ -1,0 +1,25 @@
+# Installed by scripts/install-service.sh. Do not edit the copy in ~/.config/systemd/user;
+# edit systemd/laobaigan.service.in and re-run the install script.
+[Unit]
+Description=Laobaigan (老白干): distill repeated explanations from agent sessions
+Documentation=file://@REPO@/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=@REPO@
+ExecStart=@NODE@ @REPO@/src/cli.ts run
+# PATH: systemd doesn't inherit the login shell's. Tools your provider's credentials need
+# (e.g. a credential_process helper) must be on it; git is in /usr/bin.
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=AWS_EC2_METADATA_DISABLED=true
+Environment=NODE_NO_WARNINGS=1
+# Optional overrides (AWS_PROFILE, LBG_CONFIG, ...), one KEY=value per line.
+EnvironmentFile=-%h/.config/laobaigan/env
+# 75 = another run holds the lock; not a failure.
+SuccessExitStatus=75
+TimeoutStartSec=45min
+Nice=10
+IOSchedulingClass=idle
+NoNewPrivileges=yes

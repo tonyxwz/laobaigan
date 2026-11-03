@@ -1,0 +1,12 @@
+[Unit]
+Description=Run laobaigan hourly
+
+[Timer]
+OnCalendar=hourly
+# Catch up on runs missed while the machine was off / user logged out.
+Persistent=true
+RandomizedDelaySec=5min
+OnBootSec=10min
+
+[Install]
+WantedBy=timers.target
