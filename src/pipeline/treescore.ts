@@ -1,7 +1,7 @@
 import type { ScoreConfig } from "../config.ts";
 import type { NuggetRow } from "../state/db.ts";
 import { subtreeNuggets, type ProposalKind, type Tree, type TreeNode } from "../state/tree.ts";
-import { meetsPromotion, scoreOf, topicStats, type TopicStats } from "./score.ts";
+import { evidenceStats, meetsPromotion, scoreOf, type EvidenceStats } from "./stats.ts";
 
 /**
  * Recursive scoring over the knowledge tree. Recurrence is counted over a
@@ -13,7 +13,7 @@ import { meetsPromotion, scoreOf, topicStats, type TopicStats } from "./score.ts
  *                                                 I still had to explain it, so it didn't trigger
  */
 
-export interface SkillStats extends TopicStats {
+export interface SkillStats extends EvidenceStats {
   /** Live skills: evidence attached after the last render that isn't already covered. */
   fresh?: { nuggets: number; sessions: number; agents: string[] };
   /** Live skills: evidence (since the last render) that the file already states. */
@@ -27,13 +27,7 @@ function sessionsOf(ns: NuggetRow[]): number {
 /** Stats over a skill's subtree (members = every nugget below it). */
 export function skillStats(skill: TreeNode): SkillStats {
   const members = subtreeNuggets(skill);
-  const base = topicStats({
-    title: skill.title,
-    summary: skill.summary,
-    scope: skill.scope,
-    ...(skill.repo ? { repo: skill.repo } : {}),
-    members,
-  });
+  const base = evidenceStats({ members });
   if (skill.origin !== "file") return base;
   const since = skill.renderedAt?.getTime() ?? 0;
   // Both kinds only count since the last render: a merged proposal absorbs them.

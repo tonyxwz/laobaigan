@@ -5,7 +5,7 @@ import { addUsage, ZERO_USAGE } from "../pi/run-pi.ts";
 import type { NuggetRow } from "../state/db.ts";
 import { subtreeNuggets, Tree, type Scope, type TreeNode } from "../state/tree.ts";
 import { truncate } from "../util/text.ts";
-import { skillName } from "./score.ts";
+import { skillName } from "./stats.ts";
 
 /**
  * Insert: route new nuggets top-down through the knowledge tree, one batched

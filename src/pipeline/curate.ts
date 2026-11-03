@@ -1,140 +1,161 @@
-import type { StateDb, TopicWithClusters } from "../state/db.ts";
+import { subtreeNuggets, Tree, type NodeRow, type TreeNode } from "../state/tree.ts";
 
 /**
- * Hand curation. Every operation locks what it touches, so regroup and the
- * consolidation pass never undo it: my edits win over automation.
+ * Hand curation of the knowledge tree. Every edit locks what it touches, so
+ * insert and rebalance never undo it: my edits win over automation.
  *
- *   topic   = future skill        → merge, split, rename
- *   cluster = subtopic            → move (to a topic), merge, rename
- *   nugget                        → move (to a cluster)
+ * Live (file) nodes are the skill files themselves: their structure changes only
+ * through proposals I merge, so these commands refuse to restructure them. They
+ * can still *receive* latent sections and nuggets.
  */
 
-/** Topics that already have a proposal or were merged can't be dissolved. */
-function assertMovable(t: TopicWithClusters, what: string): void {
-  if (t.status === "proposed" || t.status === "merged") {
-    throw new Error(`${what}: topic #${t.id} is ${t.status}; finish or reject its proposal first`);
+const SKILL_NAME = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+
+function node(tree: Tree, id: number): NodeRow {
+  const n = tree.getNode(id);
+  if (!n) throw new Error(`No node ${id}`);
+  return n;
+}
+
+function sub(tree: Tree, id: number): TreeNode {
+  const n = tree.subtree(id);
+  if (!n) throw new Error(`No node ${id}`);
+  return n;
+}
+
+/** Nodes in the proposal lifecycle can't be reshaped until it ends. */
+function assertFree(n: NodeRow, what: string): void {
+  if (n.status === "proposed" || n.status === "merged") {
+    throw new Error(`${what}: #${n.id} is ${n.status}; finish or reject its proposal first`);
   }
 }
 
-function topic(db: StateDb, id: number): TopicWithClusters {
-  const t = db.getTopic(id);
-  if (!t) throw new Error(`No topic ${id}`);
-  return t;
+function assertNotFile(n: NodeRow, what: string): void {
+  if (n.origin === "file") {
+    throw new Error(`${what}: #${n.id} is a live skill file (${n.sourcePath ?? n.title}); change it through a proposal`);
+  }
 }
 
-/** Move all clusters of `from` topics under `into`; empty non-declared topics are deleted. */
-export function mergeTopics(db: StateDb, into: number, from: number[]): { moved: number[]; deleted: number } {
-  const target = topic(db, into);
-  if (from.includes(into)) throw new Error("Can't merge a topic into itself");
-  const sources = from.map((id) => topic(db, id));
-  for (const s of sources) assertMovable(s, "merge");
-  const moved: number[] = [];
-  let deleted = 0;
-  db.tx(() => {
+/** The skill (depth 1) a node belongs to. */
+function skillOf(tree: Tree, n: NodeRow): NodeRow | undefined {
+  return tree.path(n.id).find((p) => p.depth === 1);
+}
+
+/**
+ * Merge skills: sections and body nuggets of each `from` skill move into `into`;
+ * the emptied skills are removed. `from` skills must not be live files.
+ */
+export function mergeSkills(tree: Tree, into: number, from: number[]): { sections: number; nuggets: number } {
+  const target = node(tree, into);
+  if (target.depth !== 1) throw new Error(`#${into} is not a skill`);
+  if (from.includes(into)) throw new Error("Can't merge a skill into itself");
+  assertFree(target, "merge");
+  const sources = from.map((id) => sub(tree, id));
+  for (const s of sources) {
+    if (s.depth !== 1) throw new Error(`#${s.id} is not a skill`);
+    assertNotFile(s, "merge");
+    assertFree(s, "merge");
+  }
+  let sections = 0;
+  let nuggets = 0;
+  tree.db.tx(() => {
     for (const s of sources) {
-      for (const c of s.clusters) {
-        db.setClusterTopic(c.id, target.id); // throws on scope/repo mismatch → whole merge rolls back
-        db.updateCluster(c.id, { locked: true });
-        moved.push(c.id);
+      for (const c of s.children) {
+        tree.moveNode(c.id, into); // throws on scope mismatch → whole merge rolls back
+        tree.updateNode(c.id, { locked: true });
+        sections++;
       }
+      for (const n of s.nuggets) {
+        tree.attachNugget(n.id, into, { lock: true });
+        nuggets++;
+      }
+      tree.updateNode(s.id, { origin: "latent" }); // declared → latent so it can be pruned
+      tree.db.db.prepare("DELETE FROM node WHERE id = ?").run(s.id);
     }
-    db.updateTopic(target.id, { locked: true });
-    deleted = db.deleteEmptyTopics();
+    tree.updateNode(into, { locked: true });
   });
-  return { moved, deleted };
+  return { sections, nuggets };
 }
 
-/** Move some clusters of a topic into a new topic. Both topics end up locked. */
-export function splitTopic(db: StateDb, topicId: number, clusterIds: number[], title?: string): number {
-  const t = topic(db, topicId);
-  assertMovable(t, "split");
-  const picked = t.clusters.filter((c) => clusterIds.includes(c.id));
-  const missing = clusterIds.filter((id) => !picked.some((c) => c.id === id));
-  if (missing.length) throw new Error(`Cluster(s) ${missing.join(", ")} are not in topic #${topicId}`);
-  if (picked.length === t.clusters.length) throw new Error("A split must leave at least one cluster behind");
+/** Split sections out of a skill into a new (latent, locked) skill. */
+export function splitSkill(tree: Tree, skillId: number, sectionIds: number[], title?: string): number {
+  const skill = sub(tree, skillId);
+  if (skill.depth !== 1) throw new Error(`#${skillId} is not a skill`);
+  assertFree(skill, "split");
+  const picked = skill.children.filter((c) => sectionIds.includes(c.id));
+  const missing = sectionIds.filter((id) => !picked.some((c) => c.id === id));
+  if (missing.length) throw new Error(`Section(s) ${missing.join(", ")} are not in skill #${skillId}`);
+  for (const c of picked) assertNotFile(c, "split");
+  if (picked.length === skill.children.length && skill.nuggets.length === 0 && skill.origin !== "file") {
+    throw new Error("A split must leave something behind; use rename instead");
+  }
   let created = 0;
-  db.tx(() => {
-    created = db.createTopic({ title: title ?? picked[0]!.title, scope: t.scope, ...(t.repo ? { repo: t.repo } : {}), locked: true });
+  tree.db.tx(() => {
+    created = tree.createNode(skill.parentId!, { title: title ?? picked[0]!.title, locked: true });
     for (const c of picked) {
-      db.setClusterTopic(c.id, created);
-      db.updateCluster(c.id, { locked: true });
+      tree.moveNode(c.id, created);
+      tree.updateNode(c.id, { locked: true });
     }
-    db.updateTopic(t.id, { locked: true });
+    tree.updateNode(skillId, { locked: true });
   });
   return created;
 }
 
-/** Rename a topic and/or set its skill name. */
-export function renameTopic(db: StateDb, id: number, patch: { title?: string; name?: string }): void {
-  topic(db, id);
-  if (patch.name !== undefined && !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(patch.name)) {
-    throw new Error(`Skill name must be lowercase letters, digits and single hyphens: ${patch.name}`);
+/**
+ * Move a node under another parent: a section to another skill, a section up to
+ * the root (it becomes a skill), or a section-less skill into a skill (it becomes
+ * a section). Same scope only; live nodes don't move.
+ */
+export function moveNode(tree: Tree, id: number, parentId: number): void {
+  const n = node(tree, id);
+  assertNotFile(n, "move");
+  assertFree(n, "move");
+  const owner = skillOf(tree, n);
+  if (owner) assertFree(owner, "move");
+  const dest = node(tree, parentId);
+  const destSkill = dest.depth === 1 ? dest : undefined;
+  if (destSkill) assertFree(destSkill, "move");
+  tree.db.tx(() => {
+    tree.moveNode(id, parentId);
+    tree.updateNode(id, { locked: true });
+    tree.pruneEmpty();
+  });
+}
+
+/** Rename a node and/or set a skill's name. Live nodes take their names from their files. */
+export function renameNode(tree: Tree, id: number, patch: { title?: string; name?: string }): void {
+  const n = node(tree, id);
+  assertNotFile(n, "rename");
+  if (patch.name !== undefined) {
+    if (n.depth !== 1) throw new Error("Only skills have names");
+    if (!SKILL_NAME.test(patch.name) || patch.name.length > 64) {
+      throw new Error(`Skill name must be lowercase letters, digits and single hyphens (≤ 64): ${patch.name}`);
+    }
+    const clash = tree.children(n.parentId!).find((c) => c.id !== id && c.name === patch.name);
+    if (clash) throw new Error(`Skill #${clash.id} is already named ${patch.name}`);
   }
-  db.updateTopic(id, { ...patch, locked: true });
+  tree.updateNode(id, { ...patch, locked: true });
 }
 
-/** Put a cluster under another (or a brand-new) topic. */
-export function moveCluster(db: StateDb, clusterId: number, topicId: number): void {
-  const c = db.getCluster(clusterId);
-  if (!c) throw new Error(`No cluster ${clusterId}`);
-  assertMovable(topic(db, c.topicId), "move");
-  topic(db, topicId);
-  db.tx(() => {
-    db.setClusterTopic(clusterId, topicId);
-    db.updateCluster(clusterId, { locked: true });
-    db.deleteEmptyTopics();
+/** Put one nugget somewhere else (any skill or section of the same scope). Emptied latent nodes are pruned. */
+export function moveNugget(tree: Tree, nuggetId: number, nodeId: number): void {
+  if (!tree.db.getNugget(nuggetId)) throw new Error(`No nugget ${nuggetId}`);
+  tree.db.tx(() => {
+    tree.attachNugget(nuggetId, nodeId, { lock: true });
+    tree.setCovered(nuggetId, undefined);
+    tree.pruneEmpty();
   });
 }
 
-/** Fold clusters into one. The summaries are concatenated as sections; re-summarizing is left to consolidation. */
-export function mergeClusters(db: StateDb, into: number, from: number[]): void {
-  const target = db.getCluster(into);
-  if (!target) throw new Error(`No cluster ${into}`);
-  if (from.includes(into)) throw new Error("Can't merge a cluster into itself");
-  const sources = from.map((id) => {
-    const c = db.getCluster(id);
-    if (!c) throw new Error(`No cluster ${id}`);
-    return c;
-  });
-  for (const s of sources) assertMovable(topic(db, s.topicId), "merge");
-  db.tx(() => {
-    const parts = [target.summary];
-    for (const s of sources) {
-      for (const m of s.members) db.assignNugget(m.id, target.id, { lock: true }); // throws on scope mismatch
-      parts.push(`### ${s.title}\n${s.summary}`);
-      db.deleteCluster(s.id);
-    }
-    db.updateCluster(target.id, { summary: parts.join("\n\n"), locked: true });
-    db.deleteEmptyTopics();
-  });
-}
-
-export function renameCluster(db: StateDb, id: number, title: string): void {
-  if (!db.getCluster(id)) throw new Error(`No cluster ${id}`);
-  db.updateCluster(id, { title, locked: true });
-}
-
-/** Move one nugget to another cluster. A cluster left empty is deleted (and then its topic, if empty). */
-export function moveNugget(db: StateDb, nuggetId: number, clusterId: number): void {
-  const n = db.getNugget(nuggetId);
-  if (!n) throw new Error(`No nugget ${nuggetId}`);
-  if (!db.getCluster(clusterId)) throw new Error(`No cluster ${clusterId}`);
-  db.tx(() => {
-    db.assignNugget(nuggetId, clusterId, { lock: true });
-    const old = n.clusterId !== undefined ? db.getCluster(n.clusterId) : undefined;
-    if (old && old.id !== clusterId && old.members.length === 0) db.deleteCluster(old.id);
-    db.deleteEmptyTopics();
-  });
-}
-
-/** Clear hand-curation locks on a topic (and its clusters/nuggets), letting automation reorganize it again. */
-export function unlockTopic(db: StateDb, id: number): void {
-  const t = topic(db, id);
-  db.tx(() => {
-    db.updateTopic(id, { locked: false, targetLocked: false });
-    for (const c of t.clusters) {
-      db.updateCluster(c.id, { locked: false });
-      for (const m of c.members) db.assignNugget(m.id, c.id, { lock: false });
-    }
+/** Clear hand-curation locks on a node's subtree (and its nuggets' placements). */
+export function unlockNode(tree: Tree, id: number): void {
+  const n = sub(tree, id);
+  tree.db.tx(() => {
+    const walk = (x: TreeNode) => {
+      tree.updateNode(x.id, { locked: false });
+      x.children.forEach(walk);
+    };
+    walk(n);
+    for (const m of subtreeNuggets(n)) tree.db.db.prepare("UPDATE nugget SET assignment_locked = 0 WHERE id = ?").run(m.id);
   });
 }

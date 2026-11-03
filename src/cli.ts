@@ -2,13 +2,8 @@
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { loadConfig } from "./config.ts";
-import { addUsage, BedrockPiRunner } from "./pi/run-pi.ts";
-import { clusterNuggets } from "./pipeline/cluster.ts";
+import { BedrockPiRunner } from "./pi/run-pi.ts";
 import * as curate from "./pipeline/curate.ts";
-import { regroup } from "./pipeline/regroup.ts";
-import { parseTarget, resolveRepoTargets, scoreTopics, type TopicStats } from "./pipeline/score.ts";
-import { TOPIC_STATUSES, type TopicStatus, type TopicWithClusters } from "./state/db.ts";
-import { loadSkillsDir } from "./skills/index.ts";
 import { processSessions, type ProcessOptions, type SessionOutcome } from "./pipeline/process.ts";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -39,31 +34,25 @@ Pipeline:
   lbg run     [--max-calls N]
       One unattended pipeline pass (what the systemd timer runs): takes a lock, processes
       new/changed sessions, logs a summary. Exit 0 ok, 2 some sessions failed, 3 aborted, 75 locked.
-  lbg cluster [--regroup] [--dry-run] [--max-calls N] [--json]
-      Group unclustered nuggets into clusters (subtopics) with pi (Bedrock), then score
-      topics on the union of their clusters and promote recurring ones with a target.
-      --regroup  also re-place existing (unlocked) clusters under declared / umbrella topics
-      --dry-run  run against a temporary copy of the state db, then discard it
-  lbg tree [--status candidate,...] [show <id>] [--json]  The knowledge tree: roots → skills → sections
-  lbg tree score                                       Recompute scores; promote skills that earned a proposal
-  lbg tree sync [--dry-run]                            Mirror skill files (global + known repos) and declared topics into the tree
-  lbg tree insert [--all] [--dry-run] [--max-calls N]  Sync, then route unplaced nuggets top-down into skills and sections (pi)
-      --all  first take the nuggets out of latent skills and insert them again
-  lbg topics [--status candidate,open,...] [--json]    Topics (future skills) by score, with their clusters
-  lbg topics show <id> [--json]                         Summary, clusters, members, evidence
-  lbg topics retarget <id> <target>                     Set the target by hand, e.g.
-      global:new:<name> | global:update:<skill> | global:fix-description:<skill> |
-      repo:agents-md:<repo> | repo:skill:<repo>:<name>
+  lbg cluster [--all] [--dry-run] [--max-calls N]       Same as: lbg tree insert
 
-Curating topics (every edit is locked, so automation never undoes it; re-scores right away):
-  lbg topics merge <into> <from>...                     Move all clusters of <from> topics under <into>
-  lbg topics split <topic> <cluster>... [--title T]     Move clusters out into a new topic
-  lbg topics rename <id> [--title T] [--name skill-name]
-  lbg topics unlock <id>                                Let automation reorganize the topic again
-  lbg clusters move <cluster> <topic>                   Put a cluster (subtopic) under another topic
-  lbg clusters merge <into> <from>...                   Fold clusters into one
-  lbg clusters rename <id> <title>
-  lbg nuggets move <nugget> <cluster>
+Knowledge tree (one per scope: root → skills → sections → nuggets):
+  lbg tree [--status candidate,...] [--json]            The tree (live skills' own sections collapsed)
+  lbg tree show <id> [--json]                          One node: path, summary, sections, evidence
+  lbg tree sync [--dry-run]                            Mirror skill files (global + known repos) and declared topics
+  lbg tree insert [--all] [--dry-run] [--max-calls N]  Sync, route unplaced nuggets into skills/sections (pi), score
+      --all      first take the nuggets out of latent skills and insert them again
+      --dry-run  run against a temporary copy of the state db, then discard it
+  lbg tree score                                       Recompute scores; promote skills that earned a proposal
+
+Curating the tree (hand edits are locked so automation never undoes them; live skill
+files change only through proposals; every edit re-scores right away):
+  lbg tree merge <into> <from>...                      Fold skills into one (their sections and nuggets move)
+  lbg tree split <skill> <section>... [--title T]      Move sections out into a new skill
+  lbg tree move <node> <parent>                        Section → other skill, section → root (new skill), skill → section
+  lbg tree rename <id> [--title T] [--name skill-name]
+  lbg tree unlock <id>                                 Let automation reorganize it again
+  lbg nuggets move <nugget> <node>
 
   lbg nuggets [--json]                                       List stored nuggets
   lbg status                                                 State db counts and recent runs
@@ -105,6 +94,11 @@ async function main(argv: string[]): Promise<number> {
     return cmd || values.help ? 0 : 1;
   }
 
+  if (cmd === "cluster") return main(["tree", "insert", ...argv.slice(argv.indexOf("cluster") + 1)]);
+  if (cmd === "topics" || cmd === "clusters") {
+    process.stderr.write(`\`lbg ${cmd}\` is gone: topics and clusters became the knowledge tree. Use \`lbg tree\` (see lbg --help).\n`);
+    return 1;
+  }
   const agents = values.agent ? parseAgents(values.agent) : undefined;
   const adapters = defaultAdapters();
   const out = (s: string) => process.stdout.write(s);
@@ -221,49 +215,6 @@ async function main(argv: string[]): Promise<number> {
       }
     }
 
-    case "cluster": {
-      const cfg = loadConfig();
-      const real = new StateDb(join(cfg.stateDir, "state.db"));
-      const tmp = values["dry-run"] ? mkdtempSync(join(tmpdir(), "lbg-dry-")) : undefined;
-      const db = tmp ? real.snapshotTo(join(tmp, "state.db")) : real;
-      try {
-        const res = await clusterNuggets(db, new BedrockPiRunner(), cfg, {
-          ...(values["max-calls"] ? { maxCalls: Number(values["max-calls"]) } : {}),
-          log: (m) => process.stderr.write(`${m}\n`),
-        });
-        if (values.regroup) {
-          const rg = await regroup(db, new BedrockPiRunner(), cfg, { log: (m) => process.stderr.write(`${m}\n`) });
-          res.calls += rg.calls;
-          res.usage = addUsage(res.usage, rg.usage);
-          for (const p of rg.plans) {
-            for (const n of p.newTopics) out(`regroup: new topic "${n.title}" ← cluster(s) ${n.clusterIds.join(", ")}\n`);
-            for (const m of p.moves) out(`regroup: cluster ${m.clusterId} → topic #${m.topicId}\n`);
-          }
-        }
-        const skills = await loadSkillsDir(join(cfg.skillsRepo.workTree, cfg.skillsRepo.skillsPath), "global");
-        const scored = scoreTopics(db, skills, cfg.score);
-        const retargeted = await resolveRepoTargets(db);
-        if (values.json) return json({ ...res, scored, retargeted, topics: db.topics() }), 0;
-        if (tmp) renderTopicList(db.topics(), out);
-        for (const p of scored.promoted) out(`promoted topic #${p.id} ${p.title} → ${p.target}\n`);
-        for (const r of retargeted) {
-          out(`retargeted topic #${r.id}: ${r.from} → ${r.to}${r.reason ? `  (${r.reason})` : ""}\n`);
-          for (const c of r.candidates ?? []) out(`    candidate: ${c}\n`);
-        }
-        out(
-          `${res.calls} model call(s), ${res.created} cluster(s) created, ${res.assigned} nugget(s) assigned, ` +
-            `cost≈$${res.usage.cost.toFixed(4)}${tmp ? "  (dry run: nothing persisted)" : "  — see: lbg topics"}\n`,
-        );
-        return 0;
-      } finally {
-        if (tmp) {
-          db.close();
-          rmSync(tmp, { recursive: true, force: true });
-        }
-        real.close();
-      }
-    }
-
     case "tree": {
       const cfg = loadConfig();
       const real = new StateDb(join(cfg.stateDir, "state.db"));
@@ -271,6 +222,56 @@ async function main(argv: string[]): Promise<number> {
       const db = tmp ? real.snapshotTo(join(tmp, "state.db")) : real;
       try {
         const tree = new Tree(db);
+        const num = (x: string | undefined, what: string) => {
+          const n = Number((x ?? "").replace(/^#/, ""));
+          if (!Number.isInteger(n) || n <= 0) throw new Error(`Expected ${what} id, got ${JSON.stringify(x)}`);
+          return n;
+        };
+        /** After a hand edit: re-score (no model calls) and show the affected skill. */
+        const after = (id: number | undefined, msg: string) => {
+          const scored = scoreTree(tree, cfg.score);
+          out(`${msg}${tmp ? "  (dry run: nothing persisted)" : ""}\n`);
+          renderScore(scored, out);
+          const skill = id !== undefined ? tree.path(id).find((p) => p.depth === 1) : undefined;
+          const s = skill && tree.subtree(skill.id);
+          if (s) renderSkill(s, out);
+          return 0;
+        };
+        switch (rest[0]) {
+          case "merge": {
+            const into = num(rest[1], "skill");
+            const from = rest.slice(2).map((x) => num(x, "skill"));
+            if (!from.length) throw new Error("tree merge expects <into> <from>...");
+            const r = curate.mergeSkills(tree, into, from);
+            return after(into, `merged ${from.map((x) => `#${x}`).join(", ")} into #${into}: ${r.sections} section(s), ${r.nuggets} nugget(s) moved`);
+          }
+          case "split": {
+            const skill = num(rest[1], "skill");
+            const sections = rest.slice(2).map((x) => num(x, "section"));
+            if (!sections.length) throw new Error("tree split expects <skill> <section>...");
+            const created = curate.splitSkill(tree, skill, sections, values.title);
+            after(skill, `split ${sections.map((x) => `#${x}`).join(", ")} out of #${skill} into new skill #${created}`);
+            renderSkill(tree.subtree(created)!, out);
+            return 0;
+          }
+          case "move": {
+            const id = num(rest[1], "node");
+            const parent = num(rest[2], "parent");
+            curate.moveNode(tree, id, parent);
+            return after(id, `moved #${id} under #${parent}`);
+          }
+          case "rename": {
+            const id = num(rest[1], "node");
+            if (!values.title && !values.name) throw new Error("tree rename expects --title and/or --name");
+            curate.renameNode(tree, id, { ...(values.title ? { title: values.title } : {}), ...(values.name ? { name: values.name } : {}) });
+            return after(id, `renamed #${id}`);
+          }
+          case "unlock": {
+            const id = num(rest[1], "node");
+            curate.unlockNode(tree, id);
+            return after(id, `unlocked #${id}`);
+          }
+        }
         if (rest[0] === "insert") {
           await syncTree(tree, { skillsDir: join(cfg.skillsRepo.workTree, cfg.skillsRepo.skillsPath), declared: cfg.topics });
           if (values.all) out(`re-inserting ${detachLatent(tree).length} nugget(s) from latent skills\n`);
@@ -346,133 +347,27 @@ async function main(argv: string[]): Promise<number> {
       }
     }
 
-    case "clusters":
-    case "topics": {
-      const cfg = loadConfig();
-      const db = new StateDb(join(cfg.stateDir, "state.db"));
-      try {
-        const [sub, idArg, targetArg] = rest;
-        const ids = (xs: string[]) =>
-          xs.map((x) => {
-            const n = Number(x.replace(/^#/, ""));
-            if (!Number.isInteger(n)) throw new Error(`Not an id: ${x}`);
-            return n;
-          });
-        /** After a curation edit: re-score (no model calls) and show the affected topic. */
-        const after = async (topicId: number | undefined, msg: string) => {
-          const skills = await loadSkillsDir(join(cfg.skillsRepo.workTree, cfg.skillsRepo.skillsPath), "global");
-          const scored = scoreTopics(db, skills, cfg.score);
-          await resolveRepoTargets(db);
-          out(`${msg}\n`);
-          for (const p of scored.promoted) out(`promoted topic #${p.id} ${p.title} → ${p.target}\n`);
-          const t = topicId !== undefined ? db.getTopic(topicId) : undefined;
-          if (t) renderTopicList([t], out);
-        };
-
-        if (cmd === "clusters") {
-          if (sub === "move") {
-            const [c, t] = ids(rest.slice(1, 3));
-            curate.moveCluster(db, c!, t!);
-            return await after(t, `cluster ${c} → topic #${t}`), 0;
-          }
-          if (sub === "merge") {
-            const [into, ...from] = ids(rest.slice(1));
-            if (!from.length) throw new Error("clusters merge expects <into> <from>...");
-            curate.mergeClusters(db, into!, from);
-            return await after(db.getCluster(into!)?.topicId, `merged cluster(s) ${from.join(", ")} into ${into}`), 0;
-          }
-          if (sub === "rename") {
-            const [c] = ids([idArg ?? ""]);
-            const title = rest.slice(2).join(" ");
-            if (!title) throw new Error("clusters rename expects <id> <title>");
-            curate.renameCluster(db, c!, title);
-            return await after(db.getCluster(c!)?.topicId, `cluster ${c} renamed`), 0;
-          }
-          if (sub) throw new Error(`Unknown clusters subcommand: ${sub} (move | merge | rename)`);
-          process.stderr.write("note: to list, use `lbg topics`\n");
-        }
-
-        if (sub === "merge") {
-          const [into, ...from] = ids(rest.slice(1));
-          if (!from.length) throw new Error("topics merge expects <into> <from>...");
-          const r = curate.mergeTopics(db, into!, from);
-          return await after(into, `merged topic(s) ${from.join(", ")} into #${into}: ${r.moved.length} cluster(s) moved`), 0;
-        }
-        if (sub === "split") {
-          const [t, ...clusters] = ids(rest.slice(1));
-          if (!clusters.length) throw new Error("topics split expects <topic> <cluster>...");
-          const created = curate.splitTopic(db, t!, clusters, values.title);
-          await after(t, `split cluster(s) ${clusters.join(", ")} out of #${t} into new topic #${created}`);
-          const n = db.getTopic(created);
-          if (n) renderTopicList([n], out);
-          return 0;
-        }
-        if (sub === "rename") {
-          const [t] = ids([idArg ?? ""]);
-          if (!values.title && !values.name) throw new Error("topics rename expects --title and/or --name");
-          curate.renameTopic(db, t!, { ...(values.title ? { title: values.title } : {}), ...(values.name ? { name: values.name } : {}) });
-          return await after(t, `topic #${t} renamed`), 0;
-        }
-        if (sub === "unlock") {
-          const [t] = ids([idArg ?? ""]);
-          curate.unlockTopic(db, t!);
-          return await after(t, `topic #${t} unlocked`), 0;
-        }
-        if (sub === "show") {
-          const t = db.getTopic(Number(idArg));
-          if (!t) throw new Error(`No topic ${idArg}`);
-          if (values.json) return json(t), 0;
-          out(renderTopicDetail(t));
-          return 0;
-        }
-        if (sub === "retarget") {
-          const t = db.getTopic(Number(idArg));
-          if (!t) throw new Error(`No topic ${idArg}`);
-          if (!targetArg) throw new Error("retarget expects <id> <target>");
-          const parsed = parseTarget(targetArg); // validates
-          if (parsed.kind.startsWith("global") !== (t.scope === "global")) throw new Error(`Target ${targetArg} doesn't match topic scope ${t.scope}`);
-          db.updateTopic(t.id, { target: targetArg, targetLocked: true, ...(t.status === "open" ? { status: "candidate" as const } : {}) });
-          out(`topic #${t.id} → ${targetArg}${t.status === "open" ? " (promoted to candidate)" : ""}\n`);
-          return 0;
-        }
-        if (sub) throw new Error(`Unknown topics subcommand: ${sub}`);
-        const statuses = values.status ? (values.status.split(",") as TopicStatus[]) : undefined;
-        for (const st of statuses ?? []) if (!TOPIC_STATUSES.includes(st)) throw new Error(`Bad status ${st}`);
-        const list = db.topics(statuses);
-        if (values.json) return json(list), 0;
-        renderTopicList(list, out);
-        return 0;
-      } finally {
-        db.close();
-      }
-    }
-
     case "nuggets": {
       const cfg = loadConfig();
       const db = new StateDb(join(cfg.stateDir, "state.db"));
       try {
+        const tree = new Tree(db);
         if (rest[0] === "move") {
-          const [n, c] = rest.slice(1, 3).map((x) => Number(x.replace(/^#/, "")));
-          if (!Number.isInteger(n) || !Number.isInteger(c)) throw new Error("nuggets move expects <nugget> <cluster>");
-          curate.moveNugget(db, n!, c!);
-          const skills = await loadSkillsDir(join(cfg.skillsRepo.workTree, cfg.skillsRepo.skillsPath), "global");
-          scoreTopics(db, skills, cfg.score);
-          await resolveRepoTargets(db);
-          out(`nugget #${n} → cluster ${c} (topic #${db.getCluster(c!)?.topicId})\n`);
+          const [n, node] = rest.slice(1, 3).map((x) => Number((x ?? "").replace(/^#/, "")));
+          if (!Number.isInteger(n) || !Number.isInteger(node)) throw new Error("nuggets move expects <nugget> <node>");
+          curate.moveNugget(tree, n!, node!);
+          renderScore(scoreTree(tree, cfg.score), out);
+          out(`nugget #${n} → ${tree.path(node!).slice(1).map((p) => `#${p.id} ${p.title}`).join(" › ")}\n`);
           return 0;
         }
         if (rest[0]) throw new Error(`Unknown nuggets subcommand: ${rest[0]} (move)`);
-        const rows = db.db
-          .prepare(
-            "SELECT id, agent, session_id, kind, scope, repo, title, knowledge, triggers, covered_by, confidence, evidence FROM nugget ORDER BY id",
-          )
-          .all() as Record<string, unknown>[];
+        const rows = db.nuggets();
         if (values.json) return json(rows), 0;
         for (const r of rows) {
+          const where = r.nodeId !== undefined ? tree.path(r.nodeId).slice(1).map((p) => p.name ?? p.title).join(" › ") : "(not placed)";
           out(
-            `#${r.id} [${r.kind}/${r.scope}${r.repo ? `:${r.repo}` : ""}] ${r.title}  (${r.agent}:${String(r.session_id).slice(0, 12)}, conf ${r.confidence}${
-              r.covered_by ? `, covered by ${r.covered_by}` : ""
-            })\n${indent(String(r.knowledge))}\n\n`,
+            `#${r.id} [${r.kind}/${r.scope}] ${r.title}  (${r.agent}:${r.sessionId.slice(0, 12)}, conf ${r.confidence})\n` +
+              `    in: ${where}${r.coveredNodeId !== undefined ? "  (already covered by the live text)" : ""}\n${indent(r.knowledge)}\n\n`,
           );
         }
         out(`${rows.length} nugget(s)\n`);
@@ -555,24 +450,26 @@ function renderScore(r: TreeScoreResult, out: (s: string) => void): void {
   for (const d of r.demoted) out(`no longer a candidate: #${d.id} ${d.title}\n`);
 }
 
+/** One skill line plus its sections (a live skill's own sections only when they hold evidence). */
+function renderSkill(s: TreeNode, out: (s: string) => void): void {
+  out(
+    `  #${String(s.id).padEnd(4)} ${s.origin.padEnd(8)} ${(s.status + (s.proposalKind ? `:${s.proposalKind}` : "")).padEnd(25)} score=${String(s.score).padStart(3)} ` +
+      `s=${sessionsOf(s)} n=${subtreeNuggets(s).length}  ${s.name ? `${s.name} — ` : ""}${s.title}${s.locked ? " (locked)" : ""}` +
+      `${s.origin === "file" && s.children.length ? `  [${s.children.length} section(s)]` : ""}\n`,
+  );
+  for (const c of s.children) {
+    if (s.origin === "file" && c.origin === "file" && subtreeNuggets(c).length === 0) continue;
+    out(`        · #${c.id} ${c.origin === "file" ? "" : `${c.origin} `}${c.title} (n=${subtreeNuggets(c).length})${c.locked ? " (locked)" : ""}\n`);
+  }
+}
+
 function renderTree(root: TreeNode, out: (s: string) => void, opts: { onlyWithEvidence?: boolean; statuses?: string[] } = {}): void {
   out(`\n${root.scope === "global" ? "Global skills" : `repo ${shortPath(root.repo)}`}  (root #${root.id}, ${root.children.length} skill(s))\n`);
   const skills = [...root.children]
     .filter((s) => !opts.onlyWithEvidence || subtreeNuggets(s).length > 0)
     .filter((s) => !opts.statuses || opts.statuses.includes(s.status))
     .sort((a, b) => sessionsOf(b) - sessionsOf(a) || b.score - a.score || a.id - b.id);
-  for (const s of skills) {
-    out(
-      `  #${String(s.id).padEnd(4)} ${s.origin.padEnd(8)} ${(s.status + (s.proposalKind ? `:${s.proposalKind}` : "")).padEnd(25)} score=${String(s.score).padStart(3)} ` +
-        `s=${sessionsOf(s)} n=${subtreeNuggets(s).length}  ${s.name ? `${s.name} — ` : ""}${s.title}${s.locked ? " (locked)" : ""}` +
-        `${s.origin === "file" && s.children.length ? `  [${s.children.length} section(s)]` : ""}\n`,
-    );
-    // Sections of file skills are the file's own structure: only list those holding evidence (or not from the file).
-    for (const c of s.children) {
-      if (s.origin === "file" && c.origin === "file" && subtreeNuggets(c).length === 0) continue;
-      out(`        · #${c.id} ${c.origin === "file" ? "" : `${c.origin} `}${c.title} (n=${subtreeNuggets(c).length})${c.locked ? " (locked)" : ""}\n`);
-    }
-  }
+  for (const s of skills) renderSkill(s, out);
 }
 
 function renderNodeDetail(n: TreeNode, path: string[]): string {
@@ -598,52 +495,6 @@ function renderNodeDetail(n: TreeNode, path: string[]): string {
     lines.push("", `## #${c.id} ${c.title}  (n=${subtreeNuggets(c).length})`);
     if (c.summary) lines.push(c.summary);
     nuggetLines(c.nuggets, "  ");
-  }
-  return `${lines.join("\n")}\n`;
-}
-
-function renderTopicList(list: TopicWithClusters[], out: (s: string) => void): void {
-  const sorted = [...list].sort((a, b) => b.score - a.score || a.id - b.id);
-  for (const t of sorted) {
-    const st = t.stats as TopicStats | undefined;
-    out(
-      `#${String(t.id).padEnd(3)} ${t.status.padEnd(9)} score=${String(t.score).padStart(3)} ` +
-        `s=${st?.sessions ?? "?"} a=${st?.agents.length ?? "?"} d=${st?.days ?? "?"} n=${t.members.length}  ` +
-        `[${t.scope === "global" ? "global" : `repo ${shortPath(t.repo)}`}] ${t.title}${t.declared ? " (declared)" : ""}${t.locked ? " (locked)" : ""}` +
-        `${t.clusters.length === 1 && t.clusters[0]!.title === t.title ? `  [cluster ${t.clusters[0]!.id}]` : ""}\n` +
-        (t.target ? `      → ${t.target}${t.targetLocked ? " (set by hand)" : ""}\n` : ""),
-    );
-    if (t.clusters.length > 1 || (t.clusters[0] && t.clusters[0].title !== t.title)) {
-      for (const c of t.clusters) out(`      · cluster ${c.id}: ${c.title} (${c.members.length})\n`);
-    }
-  }
-  out(`\n${list.length} topic(s). s=sessions a=agents d=days n=nuggets. Details: lbg topics show <id>\n`);
-}
-
-function renderTopicDetail(t: TopicWithClusters): string {
-  const st = t.stats as TopicStats | undefined;
-  const lines = [
-    `#${t.id} ${t.title}${t.name ? `  [${t.name}]` : ""}${t.declared ? "  (declared)" : ""}${t.locked ? "  (locked)" : ""}`,
-    `status: ${t.status}   score: ${t.score}   scope: ${t.scope}${t.repo ? ` (${t.repo})` : ""}`,
-    `target: ${t.target ?? "(none yet)"}${t.targetLocked ? "  (set by hand)" : ""}`,
-  ];
-  if (t.description) lines.push(`description: ${t.description}`);
-  if (st) {
-    lines.push(
-      `seen in ${st.sessions} session(s), ${st.agents.length} agent(s) [${st.agents.join(", ")}], ${st.days} day(s)` +
-        `${st.firstSeen ? `, ${st.firstSeen.slice(0, 10)} → ${st.lastSeen!.slice(0, 10)}` : ""}` +
-        `${st.corrections ? `, ${st.corrections} correction(s)` : ""}${st.coveredBy.length ? `, covered by: ${st.coveredBy.join(", ")}` : ""}`,
-    );
-  }
-  for (const c of t.clusters) {
-    lines.push("", `## Cluster ${c.id}: ${c.title}  (${c.members.length} nugget(s))`, c.summary);
-    for (const m of c.members) {
-      lines.push(
-        "",
-        `  #${m.id} [${m.kind}] ${m.title}  (${m.agent}:${m.sessionId.slice(0, 12)}, conf ${m.confidence}${m.coveredBy ? `, covered by ${m.coveredBy}` : ""})`,
-      );
-      for (const e of m.evidence) lines.push(`      ${e.label}${e.ts ? ` ${e.ts.slice(0, 16).replace("T", " ")}` : ""}: "${e.quote}"`);
-    }
   }
   return `${lines.join("\n")}\n`;
 }

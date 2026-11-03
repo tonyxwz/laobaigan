@@ -1,4 +1,4 @@
-import type { NuggetRow, StateDb, TopicStatus } from "./db.ts";
+import type { NuggetRow, StateDb, Status } from "./db.ts";
 
 /**
  * The knowledge tree: one per scope (global, or one repo).
@@ -14,7 +14,7 @@ export const MAX_DEPTH = 2;
 export type Origin = "root" | "file" | "declared" | "latent";
 /** What a candidate skill would be proposed as. */
 export type ProposalKind = "new" | "update" | "fix-description";
-export type NodeStatus = TopicStatus;
+export type NodeStatus = Status;
 
 export interface NodeRow {
   id: number;

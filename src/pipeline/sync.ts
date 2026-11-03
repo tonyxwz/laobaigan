@@ -2,7 +2,6 @@ import type { DeclaredTopic } from "../config.ts";
 import type { ParsedAgentsMd, ParsedSection, ParsedSkill } from "../skills/parse.ts";
 import { parseRepo, parseSkillsDir } from "../skills/parse.ts";
 import { subtreeNuggets, Tree, type NodeRow, type Scope, type TreeNode } from "../state/tree.ts";
-import { titleFromName } from "./topics.ts";
 
 /**
  * Keep the tree in sync with files. Files are the source of truth for `file`
@@ -13,6 +12,12 @@ import { titleFromName } from "./topics.ts";
  * Nuggets never get lost: when a file node disappears, its nuggets move up to the
  * parent (sections) or the node turns latent (skills that hold evidence).
  */
+
+/** "dotfiles-management" → "Dotfiles management" */
+export function titleFromName(name: string): string {
+  const t = name.replace(/-/g, " ");
+  return t.charAt(0).toUpperCase() + t.slice(1);
+}
 
 export interface SyncReport {
   created: string[];

@@ -4,9 +4,7 @@ import { realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
-import { resolveRepoTargets } from "../src/pipeline/score.ts";
 import { isPackageWorkspace, resolveRepo } from "../src/skills/repo.ts";
-import { StateDb } from "../src/state/db.ts";
 
 let ws: string;
 let solo: string;
@@ -76,32 +74,5 @@ describe("resolveRepo", () => {
     expect(await resolveRepo(solo, "")).toMatchObject({ ok: true, root: join(solo, "src", "OnlyPkg") });
     expect(await resolveRepo(plain, "x")).toMatchObject({ ok: false, reason: expect.stringMatching(/not a git repo/) });
     expect(await resolveRepo("", "x")).toMatchObject({ ok: false });
-  });
-});
-
-describe("resolveRepoTargets", () => {
-  it("pins repo targets of candidates to a package, or marks them unresolved", async () => {
-    const db = new StateDb(":memory:");
-    const mk = (title: string, summary: string, target: string) => {
-      const id = db.getCluster(db.createCluster({ title, summary, scope: "repo", repo: ws }))!.topicId;
-      db.updateTopic(id, { status: "candidate", target });
-      return id;
-    };
-    const a = mk("Evals", "Datasets evals", `repo:skill:${ws}:run-evals`);
-    const b = mk("Roles", "Datasets vs Handbook", `repo:agents-md:${ws}`);
-    const open = db.getCluster(db.createCluster({ title: "x", summary: "Handbook", scope: "repo", repo: ws }))!.topicId;
-    db.updateTopic(open, { target: `repo:agents-md:${ws}` }); // not a candidate → untouched
-
-    const changes = await resolveRepoTargets(db);
-    expect(db.getTopic(a)!.target).toBe(`repo:skill:${join(ws, "src", "Datasets")}:run-evals`);
-    expect(db.getTopic(b)!.target).toBe(`repo:unresolved:${ws}`);
-    expect(db.getTopic(open)!.target).toBe(`repo:agents-md:${ws}`);
-    expect(changes.find((c) => c.id === b)?.candidates).toHaveLength(2);
-    // idempotent
-    expect(await resolveRepoTargets(db)).toEqual([]);
-    // locked targets are left alone even if unresolvable
-    db.updateTopic(b, { target: `repo:agents-md:${ws}`, targetLocked: true });
-    await resolveRepoTargets(db);
-    expect(db.getTopic(b)!.target).toBe(`repo:agents-md:${ws}`);
   });
 });

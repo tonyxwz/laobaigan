@@ -36,8 +36,11 @@ node src/cli.ts scan --session pi:01a19be3 --fresh --excerpt   # exact text the 
 node src/cli.ts extract                         # extract + persist (backfills everything on first run)
 node src/cli.ts extract --session pi:01a19be3 --dry-run --fresh  # prompt tuning on one session
 node src/cli.ts nuggets                         # stored nuggets
-node src/cli.ts cluster [--dry-run]             # group nuggets into clusters, score topics
-node src/cli.ts topics [show <id>]              # topics (future skills) by score
+node src/cli.ts tree [--status candidate]       # the knowledge tree: roots → skills → sections
+node src/cli.ts tree show <id>                  # one node: path, summary, sections, evidence
+node src/cli.ts tree insert [--all] [--dry-run] # sync skill files, route new nuggets into the tree, score
+                                                #   (lbg cluster is the same command)
+node src/cli.ts tree merge|split|move|rename|unlock ...   # curate by hand (locked; live files only change via proposals)
 node src/cli.ts status                          # db counts + run log (tokens, cost)
 ```
 
@@ -452,7 +455,7 @@ systemd/
 1. **M0: Read-only inventory.** Adapters for Claude, pi, and opencode; `sessions` and `show` commands. ✅
 2. **M1: State + prefilter + extract.** Change detection, fingerprint dedup, redaction, nuggets in SQLite; `scan` and `extract --dry-run`. Tune the prompt on real sessions. ✅
 3. **M2: Cluster + score.** A `status` view of the top recurring clusters. This is the first point where we can see whether the idea works. ✅ (two-level topics/clusters, declared topics, curation, regroup)
-4. **M2.6: Knowledge tree.** Replace topics/clusters with one tree per scope: parse existing skills, batched top-down insert, recursive scoring, rebalance with budgets, curation on nodes. See [The knowledge tree](#5-the-knowledge-tree-insert-score-rebalance).
+4. **M2.6: Knowledge tree.** Replace topics/clusters with one tree per scope: parse existing skills, batched top-down insert, recursive scoring, rebalance with budgets, curation on nodes. See [The knowledge tree](#5-the-knowledge-tree-insert-score-rebalance). (Done except rebalance; topics/clusters removed.)
 5. **M3: Render + git workflow.** Branch + worktree per proposal, `proposals` CLI. (`src/git/worktree.ts` is done and tested against a bare dotfiles-style repo and a normal repo.)
 6. **M4: systemd timer**, budgets, run log, notifications. (Timer, lock, run log, error-abort done; notifications pending.)
 7. **M5:** Codex and Kiro adapters.
