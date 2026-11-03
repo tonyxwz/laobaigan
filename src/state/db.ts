@@ -217,10 +217,37 @@ export const MIGRATIONS: string[] = [
    CREATE INDEX proposal_status ON proposal (status);
    CREATE UNIQUE INDEX proposal_one_active ON proposal (node_id) WHERE status IN ('drafting', 'open');
    CREATE UNIQUE INDEX proposal_branch ON proposal (branch, COALESCE(git_dir, work_tree));`,
+  // 11: lbg doesn't use git. A proposal is a snapshot of drafted files in the db; accepting
+  // writes them to the target, and I commit with git (or not) myself. (No proposals existed yet.)
+  `DROP TABLE proposal;
+   CREATE TABLE proposal (
+     id            INTEGER PRIMARY KEY AUTOINCREMENT,
+     node_id       INTEGER NOT NULL REFERENCES node (id),
+     kind          TEXT NOT NULL,          -- new | update | fix-description
+     status        TEXT NOT NULL,          -- drafting | open | accepted | rejected | failed
+     scope         TEXT NOT NULL,
+     repo          TEXT,
+     skill_name    TEXT,
+     target_root   TEXT NOT NULL,          -- directory the file paths are relative to
+     writable      TEXT NOT NULL,          -- JSON: paths the drafting session could write
+     files         TEXT NOT NULL DEFAULT '[]', -- JSON [{path, baseHash|null, content|null}]
+     summary       TEXT,                   -- the drafter's note for the reviewer
+     nugget_ids    TEXT NOT NULL,
+     sessions      INTEGER NOT NULL,
+     usage         TEXT,
+     detail        TEXT,                   -- error, or reject reason
+     created_at    INTEGER NOT NULL,
+     updated_at    INTEGER NOT NULL,
+     closed_at     INTEGER
+   );
+   CREATE INDEX proposal_node ON proposal (node_id);
+   CREATE INDEX proposal_status ON proposal (status);
+   CREATE UNIQUE INDEX proposal_one_active ON proposal (node_id) WHERE status IN ('drafting', 'open');
+   UPDATE node SET status = 'open' WHERE status = 'merged';`,
 ];
 
-/** Lifecycle of a skill: open → candidate (earned a proposal) → proposed → merged, or rejected. */
-export const STATUSES = ["open", "candidate", "proposed", "merged", "rejected"] as const;
+/** Lifecycle of a skill: open → candidate (earned a proposal) → proposed → open again (accepted: it's live now) or rejected. */
+export const STATUSES = ["open", "candidate", "proposed", "rejected"] as const;
 export type Status = (typeof STATUSES)[number];
 
 export interface NuggetRow {

@@ -25,7 +25,7 @@ function sub(tree: Tree, id: number): TreeNode {
 
 /** Nodes in the proposal lifecycle can't be reshaped until it ends. */
 function assertFree(n: NodeRow, what: string): void {
-  if (n.status === "proposed" || n.status === "merged") {
+  if (n.status === "proposed") {
     throw new Error(`${what}: #${n.id} is ${n.status}; finish or reject its proposal first`);
   }
 }

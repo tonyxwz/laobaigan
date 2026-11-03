@@ -55,7 +55,7 @@ class FakeRunner implements PiRunner {
 
 const cfg: Config = {
   ...DEFAULT_CONFIG,
-  skillsRepo: { ...DEFAULT_CONFIG.skillsRepo, workTree: "/nonexistent" },
+  skillsDir: "/nonexistent",
   settleMinutes: 0,
 };
 
@@ -129,11 +129,10 @@ describe("loadConfig", () => {
   it("merges the file over defaults and expands ~", async () => {
     const dir = await mkdtemp(join(tmpdir(), "lbg-cfg-"));
     const path = join(dir, "config.json");
-    await writeFile(path, `{\n  // comment\n  "skillsRepo": { "baseBranch": "mainline" },\n  "models": { "extract": "x" }\n}`);
+    await writeFile(path, `{\n  // comment\n  "skillsDir": "~/my-skills",\n  "models": { "extract": "x" }\n}`);
     const c = loadConfig(path);
-    expect(c.skillsRepo.baseBranch).toBe("mainline");
-    expect(c.skillsRepo.skillsPath).toBe(".config/opencode/skills");
-    expect(c.skillsRepo.gitDir).not.toContain("~");
+    expect(c.skillsDir).toMatch(/\/my-skills$/);
+    expect(c.skillsDir).not.toContain("~");
     expect(c.models).toMatchObject({ extract: "x", distill: DEFAULT_CONFIG.models.distill });
   });
 

@@ -15,6 +15,9 @@ import { subtreeNuggets, Tree, type TreeNode } from "./state/tree.ts";
 import { syncTree, type SyncReport } from "./pipeline/sync.ts";
 import { detachLatent, insertNuggets } from "./pipeline/insert.ts";
 import { scoreTree, type TreeScoreResult } from "./pipeline/treescore.ts";
+import { draftCandidates } from "./pipeline/render.ts";
+import { acceptProposal, conflicts, proposalDiff, rejectProposal } from "./pipeline/accept.ts";
+import { PROPOSAL_STATUSES, Proposals, type ProposalRow, type ProposalStatus } from "./state/proposals.ts";
 import { parseDuration, parseSince } from "./util/time.ts";
 
 const USAGE = `lbg (laobaigan 老白干) — distill repeated explanations from agent sessions into skills
@@ -55,6 +58,13 @@ files change only through proposals; every edit re-scores right away):
   lbg nuggets move <nugget> <node>
 
   lbg nuggets [--json]                                       List stored nuggets
+
+Proposals (lbg never runs git: accept writes the files; commit them yourself if you like):
+  lbg draft [<skill-id>...] [--max N]          Draft candidate skills with pi into proposals (default: top candidates)
+  lbg proposals [--status open,accepted,...]  List proposals (default: open)
+  lbg proposal show <id>                       Summary, evidence, and the diff against the live files
+  lbg proposal accept <id> [--force]           Write the files into the skills dir / repo (--force: even if they changed since)
+  lbg proposal reject <id> [--reason "..."]
   lbg status                                                 State db counts and recent runs
 
 Options:
@@ -83,6 +93,9 @@ async function main(argv: string[]): Promise<number> {
       all: { type: "boolean", default: false },
       "max-calls": { type: "string" },
       status: { type: "string" },
+      max: { type: "string" },
+      force: { type: "boolean", default: false },
+      reason: { type: "string" },
       title: { type: "string" },
       name: { type: "string" },
       help: { type: "boolean", short: "h", default: false },
@@ -273,7 +286,7 @@ async function main(argv: string[]): Promise<number> {
           }
         }
         if (rest[0] === "insert") {
-          await syncTree(tree, { skillsDir: join(cfg.skillsRepo.workTree, cfg.skillsRepo.skillsPath), declared: cfg.topics });
+          await syncTree(tree, { skillsDir: cfg.skillsDir, declared: cfg.topics });
           if (values.all) out(`re-inserting ${detachLatent(tree).length} nugget(s) from latent skills\n`);
           const r = await insertNuggets(tree, new BedrockPiRunner(), cfg, {
             ...(values["max-calls"] ? { maxCalls: Number(values["max-calls"]) } : {}),
@@ -300,7 +313,7 @@ async function main(argv: string[]): Promise<number> {
         }
         if (rest[0] === "sync") {
           const r = await syncTree(tree, {
-            skillsDir: join(cfg.skillsRepo.workTree, cfg.skillsRepo.skillsPath),
+            skillsDir: cfg.skillsDir,
             declared: cfg.topics,
           });
           if (values.json) return json(r), 0;
@@ -344,6 +357,95 @@ async function main(argv: string[]): Promise<number> {
           rmSync(tmp, { recursive: true, force: true });
         }
         real.close();
+      }
+    }
+
+    case "draft": {
+      const cfg = loadConfig();
+      const db = new StateDb(join(cfg.stateDir, "state.db"));
+      try {
+        const tree = new Tree(db);
+        await syncTree(tree, { skillsDir: cfg.skillsDir, declared: cfg.topics });
+        scoreTree(tree, cfg.score);
+        const ids = rest.map((x) => Number(x.replace(/^#/, "")));
+        if (ids.some((x) => !Number.isInteger(x))) throw new Error("draft expects skill ids");
+        const outcomes = await draftCandidates(tree, new BedrockPiRunner(), cfg, {
+          ...(ids.length ? { nodeIds: ids } : {}),
+          ...(values.max ? { max: Number(values.max) } : {}),
+          log: (m) => process.stderr.write(`${m}\n`),
+        });
+        if (values.json) return json(outcomes), 0;
+        if (!outcomes.length) out("no candidates to draft (see: lbg tree --status candidate)\n");
+        for (const o of outcomes) {
+          const t = tree.getNode(o.nodeId);
+          const label = `#${o.nodeId} ${t?.name ?? t?.title ?? ""}`;
+          if (o.status === "open") out(`proposal #${o.proposalId} ${label}: ${o.files.length} file(s), cost≈$${o.usage.cost.toFixed(4)} — lbg proposal show ${o.proposalId}\n`);
+          else if (o.status === "failed") out(`failed ${label}: ${o.reason}\n`);
+          else out(`skipped ${label}: ${o.reason}\n`);
+        }
+        return outcomes.some((o) => o.status === "failed") ? 2 : 0;
+      } finally {
+        db.close();
+      }
+    }
+
+    case "proposals":
+    case "proposal": {
+      const cfg = loadConfig();
+      const db = new StateDb(join(cfg.stateDir, "state.db"));
+      try {
+        const tree = new Tree(db);
+        const props = new Proposals(db);
+        const sub = cmd === "proposals" ? "list" : (rest[0] ?? "list");
+        const id = Number((cmd === "proposals" ? "" : (rest[1] ?? "")).replace(/^#/, ""));
+        if (sub === "list") {
+          const statuses = (values.status?.split(",") ?? ["open", "drafting"]) as ProposalStatus[];
+          for (const st of statuses) if (!PROPOSAL_STATUSES.includes(st)) throw new Error(`Bad status ${st}`);
+          const list = props.list(statuses);
+          if (values.json) return json(list), 0;
+          for (const p of list) out(renderProposalLine(p, tree));
+          out(`\n${list.length} proposal(s). Details: lbg proposal show <id>\n`);
+          return 0;
+        }
+        if (!Number.isInteger(id) || id <= 0) throw new Error(`proposal ${sub} expects <id>`);
+        if (sub === "show") {
+          const p = props.mustGet(id);
+          if (values.json) return json(p), 0;
+          out(renderProposalLine(p, tree));
+          out(`target: ${p.targetRoot}   writable: ${p.writable.join(", ")}\n`);
+          if (p.summary) out(`\n${p.summary}\n`);
+          if (p.detail) out(`\n${p.status === "failed" ? "error" : "note"}: ${p.detail}\n`);
+          const evidence = db.nuggets().filter((n) => p.nuggetIds.includes(n.id));
+          if (evidence.length) {
+            out(`\nEvidence (${evidence.length}):\n`);
+            for (const n of evidence) {
+              const e = n.evidence[0];
+              out(`  - ${n.agent}:${n.sessionId.slice(0, 8)}${e?.ts ? ` ${e.ts.slice(0, 10)}` : ""} ${n.title}${e ? `\n      "${truncate(e.quote, 160)}"` : ""}\n`);
+            }
+          }
+          if (p.files.length) {
+            const stale = await conflicts(p);
+            if (stale.length && p.status === "open") out(`\n⚠ stale: ${stale.map((c) => `${c.path} ${c.reason}`).join("; ")}\n`);
+            out(`\n${await proposalDiff(p)}`);
+          }
+          return 0;
+        }
+        if (sub === "accept") {
+          const r = await acceptProposal(tree, cfg, id, { force: values.force });
+          scoreTree(tree, cfg.score);
+          out(`accepted #${id}: wrote ${r.written.length} file(s)${r.deleted.length ? `, deleted ${r.deleted.length}` : ""}\n`);
+          for (const p of r.paths) out(`  ${p}\n`);
+          out(`\nlbg doesn't run git. To commit, for example:\n  git add -- <paths above> && git commit -F - <<'MSG'\n${r.commitMessage}\nMSG\n`);
+          return 0;
+        }
+        if (sub === "reject") {
+          rejectProposal(tree, id, values.reason);
+          out(`rejected #${id}${values.reason ? `: ${values.reason}` : ""}. The skill comes back only with evidence from new sessions.\n`);
+          return 0;
+        }
+        throw new Error(`Unknown proposal subcommand: ${sub} (show | accept | reject)`);
+      } finally {
+        db.close();
       }
     }
 
@@ -443,6 +545,16 @@ function shortPath(p: string | undefined): string {
 
 function sessionsOf(n: TreeNode): number {
   return new Set(subtreeNuggets(n).map((m) => `${m.agent}:${m.sessionId}`)).size;
+}
+
+function renderProposalLine(p: ProposalRow, tree: Tree): string {
+  const node = tree.getNode(p.nodeId);
+  const where = p.scope === "global" ? "global" : `repo ${shortPath(p.repo)}`;
+  const cost = (p.usage as { cost?: number } | undefined)?.cost;
+  return (
+    `#${String(p.id).padEnd(3)} ${p.status.padEnd(8)} ${p.kind.padEnd(15)} ${p.skillName ?? node?.title ?? `node ${p.nodeId}`}  ` +
+    `[${where}] ${p.files.length} file(s), ${p.sessions} session(s)${cost !== undefined ? `, $${cost.toFixed(2)}` : ""}  ${p.createdAt.toISOString().slice(0, 16).replace("T", " ")}\n`
+  );
 }
 
 function renderScore(r: TreeScoreResult, out: (s: string) => void): void {

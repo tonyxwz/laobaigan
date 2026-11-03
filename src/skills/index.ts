@@ -1,10 +1,6 @@
-import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
-import { promisify } from "node:util";
+import { dirname, join, resolve } from "node:path";
 import { exists, subdirs } from "../util/fs.ts";
-
-const run = promisify(execFile);
 
 export interface SkillInfo {
   name: string;
@@ -58,14 +54,16 @@ export async function loadSkillsDir(dir: string, scope: SkillInfo["scope"]): Pro
   return out.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-/** Git top-level for `dir`, or undefined if it isn't inside a repo (or doesn't exist). */
-export async function gitTopLevel(dir: string): Promise<string | undefined> {
+/**
+ * The project (repository) root containing `dir`: the nearest ancestor with a `.git`
+ * entry (directory, or file for worktrees/submodules). Plain filesystem walk; lbg never
+ * runs git. Undefined if there is none (or `dir` doesn't exist).
+ */
+export async function projectRoot(dir: string): Promise<string | undefined> {
   if (!dir || !(await exists(dir))) return undefined;
-  try {
-    const { stdout } = await run("git", ["-C", dir, "rev-parse", "--show-toplevel"]);
-    return stdout.trim() || undefined;
-  } catch {
-    return undefined;
+  for (let d = resolve(dir); ; d = dirname(d)) {
+    if (await exists(join(d, ".git"))) return d;
+    if (dirname(d) === d) return undefined;
   }
 }
 
@@ -76,7 +74,7 @@ export function repoContext(dir: string): Promise<RepoContext | undefined> {
   let p = repoCache.get(dir);
   if (!p) {
     p = (async () => {
-      const root = await gitTopLevel(dir);
+      const root = await projectRoot(dir);
       if (!root) return undefined;
       const skills = await loadSkillsDir(join(root, ".agents", "skills"), "repo");
       for (const name of ["AGENTS.md", "CLAUDE.md"]) {

@@ -2,11 +2,11 @@
 
 *老白干 (lǎo bái gān) is a classic northern Chinese baijiu, a strong clear spirit made by distillation. This project does the same with conversations: it boils the repeated explanations in my agent sessions down into skills.*
 
-CLI: **`lbg`**. Package: `laobaigan`. State: `~/.local/state/laobaigan/`. Config: `~/.config/laobaigan/config.json`. Env overrides: `LBG_*`. Proposal branches: `laobaigan/<slug>-<date>`.
+CLI: **`lbg`**. Package: `laobaigan`. State: `~/.local/state/laobaigan/`. Config: `~/.config/laobaigan/config.json`. Env overrides: `LBG_*`.
 
-A background service that periodically scans chat sessions from all my AI coding agents, finds the knowledge **I keep explaining over and over**, and distills it into reusable [skills](https://pi.dev/docs/latest/skills). Every change is proposed on its **own git branch + worktree**, and I review and merge it myself.
+A background service that periodically scans chat sessions from all my AI coding agents, finds the knowledge **I keep explaining over and over**, and distills it into reusable [skills](https://pi.dev/docs/latest/skills). Every change is a **proposal** stored in its database; I review it with `lbg proposal` and accept or reject it. lbg never runs git: accepting writes the files, and I commit them myself if I want.
 
-> Status: M0 (session inventory), M1 (incremental extraction via pi/Bedrock) and M2 (grouping and scoring) are done. **In progress: M2.6, the knowledge-tree model.** The git branch + worktree module for M3 is built and tested.
+> Status: M0 (session inventory), M1 (incremental extraction via pi/Bedrock) and M2 (grouping and scoring) are done. The knowledge tree (M2.6) is in place except rebalancing. **In progress: M3, drafting and reviewing proposals.**
 
 ## Development
 
@@ -103,7 +103,7 @@ I keep re-explaining the same things in new sessions, often across different age
 3. **Distill into the right place:**
    - knowledge that applies everywhere → a **global skill** in the shared skills directory
    - knowledge about one repo → that **repo's own** `AGENTS.md` or `.agents/skills/<name>/SKILL.md`
-4. **Never update skills automatically.** Every proposal is a commit on a fresh branch in a fresh git worktree. I review it and merge it into main myself.
+4. **Never update skills automatically.** Every change is a proposal (drafted files kept in lbg's database). I review it with `lbg proposal show` and accept or reject it. **lbg doesn't use git**: accepting only writes the target files; committing is up to me.
 5. **All AI reasoning goes through the pi SDK** (`@earendil-works/pi-coding-agent`), using the **Amazon Bedrock provider only**. This repo has no direct LLM API clients.
 
 ## Non-goals (for now)
@@ -123,7 +123,7 @@ I keep re-explaining the same things in new sessions, often across different age
 | Provider | `amazon-bedrock` only. Enforced in code: a model that doesn't resolve to that provider is a hard error. |
 | Models | Extract: `global.openai.gpt-6.1-sol`. Draft: `global.anthropic.claude-opus-5-5`. Both configurable. |
 | Skill granularity | **Few** global skills, each about one coherent topic (e.g. "Gradle builds", not "Gradle release flags"). Laobaigan prefers extending an existing skill over creating a new one. |
-| Apply | No auto-update. One branch + worktree per proposal; the git dir / work tree / base branch are configurable (supports the `~/.cfg` bare dotfiles repo). |
+| Apply | No auto-update, and no git. A proposal is a snapshot of drafted files (with hashes of the originals) in SQLite; `lbg proposal accept` writes them into the skills dir or repo, refusing if the files changed since. I commit with git myself (e.g. in the `~/.cfg` bare dotfiles repo). |
 
 ### Should extraction use a cheaper model?
 
@@ -149,9 +149,9 @@ If we need the savings later, the plan is a **two-tier extract**: a cheap model 
                 │                                                                                │
   ┌──────────┐  │  ┌───────────┐   ┌────────────┐   ┌─────────────┐   ┌───────────┐   ┌─────────┐ │
   │ Claude   │──┼─▶│           │   │            │   │             │   │           │   │         │ │
-  │ pi       │──┼─▶│  Source   │──▶│ Normalize  │──▶│  Extract    │──▶│ Aggregate │──▶│ Distill │─┼─▶ git branch +
-  │ opencode │──┼─▶│ adapters  │   │ + prefilter│   │ (pi, per    │   │ (cluster, │   │ (pi, in │ │   worktree per
-  │ codex    │──┼─▶│           │   │ + redact   │   │  session)   │   │  score)   │   │ worktree│ │   proposal
+  │ pi       │──┼─▶│  Source   │──▶│ Normalize  │──▶│  Extract    │──▶│ Aggregate │──▶│ Distill │─┼─▶ proposal in
+  │ opencode │──┼─▶│ adapters  │   │ + prefilter│   │ (pi, per    │   │ (cluster, │   │ (pi, in │ │   the db; I   
+  │ codex    │──┼─▶│           │   │ + redact   │   │  session)   │   │  score)   │   │ scratch)│ │   accept it
   │ kiro     │──┼─▶│           │   │            │   │             │   │           │   │         │ │      │
   └──────────┘  │  └───────────┘   └────────────┘   └─────────────┘   └───────────┘   └─────────┘ │      ▼
                 │        ▲                                  │               │                     │  I review +
@@ -253,7 +253,7 @@ interface Nugget {
 - The model reports results **only** through a custom tool (`report_knowledge`), whose result sets `terminate: true` so the run ends right after. That gives us schema-validated output (TypeBox) instead of parsing JSON out of free text.
 - No built-in tools (`noTools: "all"`). Everything the model needs is in the prompt.
 - The prompt includes the **existing skill index** (global skills + the session repo's `.agents/skills` and `AGENTS.md` headings), so the model can set `coveredBySkill`.
-- `scope` rule of thumb: "would this help in a *different* repo?" If not, it's `repo`. The repo is the git top-level of the session's `cwd`, or a path the evidence refers to.
+- `scope` rule of thumb: "would this help in a *different* repo?" If not, it's `repo`. The repo is the nearest ancestor with a `.git` entry of the session's `cwd`, or a path the evidence refers to.
 
 ### 5. The knowledge tree (insert, score, rebalance)
 
@@ -271,9 +271,9 @@ Depth is capped at 2 below the root. Agents don't reliably follow deeper "see re
 **Budgets** (`config.tree`): at most `maxSkills` depth-1 nodes in the global tree (the always-loaded cost every agent pays), at most `maxSections` children per skill, and size limits per node. Breaking a limit triggers a rebalance of *that node only*.
 
 **Where nodes come from**
-- **Parsed from files (`live`).** Every run starts by parsing `~/.config/opencode/skills` (each skill becomes a depth-1 node; its `##` sections and `references/*.md` become depth-2 nodes) and each known repo's `AGENTS.md` and `.agents/skills`. Files are the source of truth: my hand edits and merged proposals are picked up with no sync logic, and new knowledge is routed into my existing skills.
+- **Parsed from files (`live`).** Every run starts by parsing `~/.config/opencode/skills` (each skill becomes a depth-1 node; its `##` sections and `references/*.md` become depth-2 nodes) and each known repo's `AGENTS.md` and `.agents/skills`. Files are the source of truth: my hand edits and accepted proposals are picked up with no sync logic, and new knowledge is routed into my existing skills.
 - **Declared (`config.topics`).** Pinned depth-1 nodes that exist before they have any nuggets.
-- **Grown by lbg (`latent`).** Created while inserting; invisible to agents until promoted and merged.
+- **Grown by lbg (`latent`).** Created while inserting; invisible to agents until promoted and accepted.
 
 **Operations**, the same at every level:
 
@@ -303,50 +303,46 @@ score = distinct_sessions × w1 + extra_agents × w2 + extra_days × w3 + correc
 
 Repo trees use the same model. Short facts at depth 1 render as `AGENTS.md` sections, longer procedures as `.agents/skills/<name>/SKILL.md`. Multi-package workspace roots (a `packageInfo` file and per-package repos under `src/`) are mapped to the package the evidence names.
 
-### 6. Render a subtree (pi SDK, agentic, inside a git worktree)
+### 6. Render a subtree (pi SDK, agentic, in a scratch copy)
 
-For each candidate (a promoted latent skill, or a live skill with enough new evidence):
+For each candidate (a promoted latent skill, or a live skill with enough new evidence), `lbg draft`:
 
-1. **Create a branch and a worktree** in the target repository (see [Git workflow](#git-workflow)).
-2. Run a pi session with `cwd` = the worktree, guarded file tools that can only touch the subtree's paths (`<skillsPath>/<name>/…`, or the repo's `AGENTS.md` / `.agents/skills/<name>/…`), and model `claude-opus-5-5`. It writes the skill **folder**: `SKILL.md` with the routing description and the shared workflow, plus `references/<section>.md` for sections that are too big for the body. House rules:
+1. **Resolves the target**: the global skills dir (`skillsDir`) → `<name>/`, or the repo (nearest ancestor with `.git`) → `AGENTS.md` and/or `.agents/skills/<name>/`. Evidence filed under a multi-package workspace root is skipped for now.
+2. **Copies only those paths** into a scratch dir and runs a pi session there with guarded file tools (read the copy, write only the target paths, no bash) and model `claude-opus-5-5`. It writes the skill **folder**: `SKILL.md` with the routing description and the shared workflow, plus `references/<section>.md` for subtopics agents only need sometimes. House rules:
    - `description` is specific about *when* to trigger
    - real commands and paths instead of vague prose
    - no secrets, no session-specific trivia
-   - within the node's size budget
-3. **Verify** deterministically: only the subtree's paths changed, frontmatter `name`/`description` valid (lowercase-hyphen name ≤ 64 chars, description ≤ 1024), no redaction patterns match.
-4. **Commit** on the branch with the evidence (agent, session, date, short quotes) in the message.
-5. Record the proposal. After I merge, the next parse turns the latent node into a live one.
+   - `SKILL.md` within `render.maxSkillLines`
+3. **Verifies** deterministically: only the target paths changed; frontmatter `name` = folder name (lowercase-hyphen, ≤ 64 chars) and `description` ≤ 1024; for `AGENTS.md`, every other section and the preamble are unchanged; no secrets or `[REDACTED]` placeholders.
+4. **Stores the changed files** on the proposal (path, hash of the original, new content), deletes the scratch dir, and marks the proposal `open`. Nothing live has changed yet.
 
 ### 7. Review (me)
 
 ```
-lbg proposals                  # list open proposals: branch, worktree, target, evidence
-lbg proposal show <id>         # diff vs. base + evidence
-lbg proposal done <id>         # after I merged or rejected: remove worktree, delete branch if merged
-lbg proposal reject <id>       # suppress the cluster until enough new evidence appears
+lbg proposals                          # open proposals: skill, kind, target, sessions, cost
+lbg proposal show <id>                 # summary, evidence, diff against the live files (warns if they changed since)
+lbg proposal accept <id> [--force]     # write the files; refuses if the live files changed since the draft
+lbg proposal reject <id> --reason ...  # the skill comes back only with evidence from new sessions
 ```
 
-I review the diff in the worktree, edit it if I want, and merge into the base branch myself, e.g. `cfg merge skills/make-20261103`. Laobaigan never pushes, merges, or touches the base branch. If I merge a branch outside the CLI, the next run notices (the branch is reachable from base) and marks the proposal `merged`.
+Accepting writes the files and syncs the tree, so the skill is live immediately (its evidence counts as absorbed). lbg prints the paths and a suggested commit message; committing is up to me, e.g. in the dotfiles repo:
 
-### Git workflow
+```bash
+git --git-dir=$HOME/.cfg --work-tree=$HOME add .config/opencode/skills/dotfiles-management
+git --git-dir=$HOME/.cfg --work-tree=$HOME commit -m "skills: add dotfiles-management"
+```
 
-Targets are described in config, so the git commands work for normal repos and for the bare dotfiles repo:
+### Configuration
 
 ```jsonc
-// ~/.config/laobaigan/config.json
+// ~/.config/laobaigan/config.json (all optional)
 {
-  "skillsRepo": {
-    "gitDir": "~/.cfg",                     // --git-dir; omit for a normal repo
-    "workTree": "~",                        // --work-tree of the main checkout
-    "skillsPath": ".config/opencode/skills",// skills dir, relative to workTree
-    "baseBranch": "main"
-  },
-  "worktreesDir": "~/.local/state/laobaigan/worktrees",
-  "branchPrefix": "laobaigan/",
+  "skillsDir": "~/.config/opencode/skills",   // the global skills every agent loads
   "models": {
     "extract": "global.openai.gpt-6.1-sol",
     "distill": "global.anthropic.claude-opus-5-5"
-  }
+  },
+  "render": { "maxPerRun": 2, "maxSkillLines": 300 }
 }
 ```
 
@@ -367,18 +363,6 @@ Steering the grouping (optional):
 }
 ```
 
-Per proposal:
-
-```bash
-git --git-dir=~/.cfg worktree add -b laobaigan/<slug>-<date> <worktreesDir>/<slug>-<date> main
-# pi edits <worktree>/.config/opencode/skills/...
-git --git-dir=~/.cfg --work-tree=<worktree> commit ...   # commit happens in the worktree only
-```
-
-- For **repo-scoped** targets the repo is detected from the session `cwd` (`git rev-parse --show-toplevel`), and the base branch is the repo's current default branch. Same branch + worktree flow.
-- A worktree of the dotfiles repo checks out all tracked dotfiles, not just skills. That's fine (they're small) and keeps the commit a normal commit on the real history.
-- One proposal = one branch = one worktree, so proposals never conflict with each other, and rejecting one is just deleting its branch.
-
 ### Scheduling
 
 - A **systemd user timer** (`~/.config/systemd/user/laobaigan.{service,timer}`), running hourly by default. Each run is one process that does its work and exits. Simple, observable (`journalctl --user -u laobaigan`), and there's no daemon to babysit.
@@ -393,9 +377,8 @@ git --git-dir=~/.cfg --work-tree=<worktree> commit ...   # commit happens in the
 | `session` | `(agent, session_id)` → `version`, location, cwd, timestamps, prefilter signals, last status |
 | `turn_seen` | user-turn fingerprint → first `(agent, session_id)` it was seen in; drives dedup across resumes |
 | `nugget` | extracted nuggets + evidence (agent, session, turn label, quote) |
-| `proposal` | one branch + worktree per drafted skill: node, kind (`new` / `update` / `fix-description`), status (`drafting` → `open` → `merged` / `rejected`, or `failed`), repo / git dir / base commit, branch, worktree, commit, writable paths, evidence, cost |
+| `proposal` | one drafted change per skill: node, kind (`new` / `update` / `fix-description`), status (`drafting` → `open` → `accepted` / `rejected`, or `failed`), target root + writable paths, drafted files (path, hash of the original, content), summary, evidence, cost |
 | `node` | the knowledge tree: parent, depth, scope/repo, name, description, summary (lazy), origin (`file` / `declared` / `latent`), status, score, locks, source path |
-| `proposal` | cluster, target, repo, branch, worktree, commit, status |
 | `run` | run log: counts, token usage and cost per stage, errors |
 
 ---
@@ -431,22 +414,24 @@ Answered SDK questions:
 
 ```
 src/
-  cli.ts                    # sessions | show | scan | run | proposals | ...
+  cli.ts                    # sessions | show | scan | extract | run | tree | draft | proposals | ...
   config.ts                 # defaults + ~/.config/laobaigan/config.json
   sources/                  # one adapter per agent
-  state/db.ts               # node:sqlite schema + queries
+  state/db.ts               # node:sqlite schema, migrations, nuggets
+  state/tree.ts             # the knowledge tree (nodes)
+  state/proposals.ts        # proposals and their lifecycle
   pipeline/
-    fingerprint.ts
-    prefilter.ts            # excerpt, signals, chunking
-    redact.ts
-    extract.ts              # pi
-    cluster.ts              # pi (v1)
-    score.ts
-    distill.ts              # pi, in a worktree
-  skills/index.ts           # global + repo-local skill index
-  git/worktree.ts           # branch + worktree per proposal, bare-repo aware
+    fingerprint.ts prefilter.ts redact.ts
+    extract.ts              # pi: nuggets from sessions
+    sync.ts                 # skill files → live tree nodes
+    insert.ts               # pi: route nuggets top-down into the tree
+    treescore.ts stats.ts   # recursive scoring
+    curate.ts               # hand edits (locked)
+    render.ts               # pi: draft a skill in a scratch copy → proposal
+    accept.ts               # diff, accept (write files), reject
+  skills/                   # parse SKILL.md / AGENTS.md, repo resolution
   pi/run-pi.ts              # Bedrock-only SDK wrapper
-  pi/models.ts
+  pi/guard.ts               # guarded file tools for drafting
 test/
 systemd/
 ```
@@ -457,11 +442,11 @@ systemd/
 2. **M1: State + prefilter + extract.** Change detection, fingerprint dedup, redaction, nuggets in SQLite; `scan` and `extract --dry-run`. Tune the prompt on real sessions. ✅
 3. **M2: Cluster + score.** A `status` view of the top recurring clusters. This is the first point where we can see whether the idea works. ✅ (two-level topics/clusters, declared topics, curation, regroup)
 4. **M2.6: Knowledge tree.** Replace topics/clusters with one tree per scope: parse existing skills, batched top-down insert, recursive scoring, rebalance with budgets, curation on nodes. See [The knowledge tree](#5-the-knowledge-tree-insert-score-rebalance). (Done except rebalance; topics/clusters removed.)
-5. **M3: Render + git workflow.** Branch + worktree per proposal, `proposals` CLI. (`src/git/worktree.ts` is done and tested against a bare dotfiles-style repo and a normal repo.)
+5. **M3: Draft + review proposals.** Draft in a scratch copy, proposals in the db, `lbg draft` / `lbg proposals` / `lbg proposal show|accept|reject`. No git. (Next: `revise` and `edit`.)
 6. **M4: systemd timer**, budgets, run log, notifications. (Timer, lock, run log, error-abort done; notifications pending.)
 7. **M5:** Codex and Kiro adapters.
 
 ## Open questions
 
-- **Skill quality feedback.** Track whether a merged skill actually reduces repeat explanations, and propose a `fix-description` when it doesn't.
-- **Dotfiles worktree size.** If checking out the whole dotfiles repo per proposal becomes slow, switch to a sparse checkout limited to `skillsPath`.
+- **Skill quality feedback.** Track whether an accepted skill actually reduces repeat explanations, and propose a `fix-description` when it doesn't.
+- **Workspace roots.** Evidence filed under a multi-package workspace root (not a repo) isn't drafted yet.

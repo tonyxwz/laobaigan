@@ -68,7 +68,7 @@ export async function processSessions(
   const persist = !opts.plan && !opts.dryRun;
   const runId = persist ? db.startRun("extract", false) : 0;
 
-  const globalSkills = await loadSkillsDir(join(cfg.skillsRepo.workTree, cfg.skillsRepo.skillsPath), "global");
+  const globalSkills = await loadSkillsDir(cfg.skillsDir, "global");
   const found = await scan(adapters, {
     ...(opts.since ? { since: opts.since } : {}),
     ...(opts.agents ? { agents: opts.agents } : {}),

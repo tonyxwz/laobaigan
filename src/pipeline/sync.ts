@@ -5,10 +5,10 @@ import { subtreeNuggets, Tree, type NodeRow, type Scope, type TreeNode } from ".
 
 /**
  * Keep the tree in sync with files. Files are the source of truth for `file`
- * nodes: my hand edits and merged proposals show up here with no other sync logic.
+ * nodes: my hand edits and accepted proposals show up here with no other sync logic.
  *
  * Matching, in order: same source path → a latent/declared node with the same name
- * (skills) or title (sections), which is how a merged proposal becomes live → new node.
+ * (skills) or title (sections), which is how an accepted proposal becomes live → new node.
  * Nuggets never get lost: when a file node disappears, its nuggets move up to the
  * parent (sections) or the node turns latent (skills that hold evidence).
  */
@@ -74,8 +74,8 @@ export function syncSkills(tree: Tree, scope: Scope, parsed: ParsedSkill[], opts
           report.adopted.push(p.name);
         } else if (adopted || node.sourceHash !== p.hash) {
           // Edited (by me, or a merged proposal): evidence so far counts as absorbed.
-          // An adopted latent node (or a merged update) is now a live skill with no open proposal.
-          tree.updateNode(id, { ...fields, sourceHash: p.hash, renderedAt: new Date(), summaryDirty: false, ...(adopted || node.status === "merged" ? { status: "open" as const } : {}) });
+          // An adopted latent node is now a live skill with no open proposal.
+          tree.updateNode(id, { ...fields, sourceHash: p.hash, renderedAt: new Date(), summaryDirty: false, ...(adopted ? { status: "open" as const } : {}) });
           (adopted ? report.adopted : report.updated).push(p.name);
         } else {
           report.unchanged++;

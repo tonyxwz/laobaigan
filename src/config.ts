@@ -32,21 +32,6 @@ export const DEFAULT_PATHS = {
   stateDir: process.env.LBG_STATE_DIR ?? join(home, ".local", "state", "laobaigan"),
 };
 
-/** A git repository that proposals are committed to. */
-export interface RepoTarget {
-  /** `--git-dir`. Omit for a normal (non-bare) repo; then `workTree/.git` is used. */
-  gitDir?: string;
-  /** Root of the main checkout (for a bare dotfiles repo: usually `~`). */
-  workTree: string;
-  /** Branch proposals are based on. I merge into it myself. */
-  baseBranch: string;
-}
-
-export interface SkillsRepo extends RepoTarget {
-  /** Global skills directory, relative to `workTree`. */
-  skillsPath: string;
-}
-
 /** Model ids, always resolved against the `amazon-bedrock` provider. */
 export interface ModelConfig {
   extract: string;
@@ -56,10 +41,8 @@ export interface ModelConfig {
 }
 
 export interface Config {
-  skillsRepo: SkillsRepo;
-  /** Where proposal worktrees are created. */
-  worktreesDir: string;
-  branchPrefix: string;
+  /** The global skills directory every agent loads (here: ~/.config/opencode/skills, symlinked from pi and Claude). */
+  skillsDir: string;
   stateDir: string;
   models: ModelConfig;
   /** Skip sessions modified more recently than this (minutes). */
@@ -71,6 +54,12 @@ export interface Config {
     maxCallsPerRun: number;
   };
   score: ScoreConfig;
+  render: {
+    /** Max proposals drafted per run (each is one opus session). */
+    maxPerRun: number;
+    /** SKILL.md longer than this fails verification (move detail into references/). */
+    maxSkillLines: number;
+  };
   /** Topics I want to exist (future skills / AGENTS.md sections); always offered as homes. */
   topics: DeclaredTopic[];
   clustering: {
@@ -124,14 +113,7 @@ export interface ScoreConfig {
 }
 
 export const DEFAULT_CONFIG: Config = {
-  skillsRepo: {
-    gitDir: "~/.cfg",
-    workTree: "~",
-    skillsPath: ".config/opencode/skills",
-    baseBranch: "main",
-  },
-  worktreesDir: join(DEFAULT_PATHS.stateDir, "worktrees"),
-  branchPrefix: "laobaigan/",
+  skillsDir: DEFAULT_PATHS.skillsDir,
   stateDir: DEFAULT_PATHS.stateDir,
   models: {
     extract: "global.openai.gpt-6.1-sol",
@@ -144,6 +126,7 @@ export const DEFAULT_CONFIG: Config = {
     chunkTokens: 40_000,
     maxCallsPerRun: 50,
   },
+  render: { maxPerRun: 2, maxSkillLines: 300 },
   score: {
     weights: { session: 3, extraAgent: 3, extraDay: 1, correction: 1, covered: 2 },
     promote: { minSessions: 3, minSessionsCrossAgent: 2, reproposeAfterSessions: 2, updateMinSessions: 2, fixDescriptionMinSessions: 2 },
@@ -202,13 +185,8 @@ export function loadConfig(path = CONFIG_PATH): Config {
   const c = merge(DEFAULT_CONFIG, fileCfg);
   return {
     ...c,
-    skillsRepo: {
-      ...c.skillsRepo,
-      ...(c.skillsRepo.gitDir ? { gitDir: expandPath(c.skillsRepo.gitDir) } : {}),
-      workTree: expandPath(c.skillsRepo.workTree),
-    },
+    skillsDir: expandPath(c.skillsDir),
     topics: validateTopics(Array.isArray(c.topics) ? c.topics : []),
-    worktreesDir: expandPath(c.worktreesDir),
     stateDir: expandPath(c.stateDir),
   };
 }

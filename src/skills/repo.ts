@@ -1,7 +1,7 @@
 import { stat } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { exists, subdirs } from "../util/fs.ts";
-import { gitTopLevel } from "./index.ts";
+import { projectRoot } from "./index.ts";
 
 export type RepoResolution =
   | { ok: true; root: string; via: "git" | "workspace-package" }
@@ -32,12 +32,12 @@ function countMentions(text: string, name: string): number {
  */
 export async function resolveRepo(path: string, text: string): Promise<RepoResolution> {
   if (!path) return { ok: false, reason: "no repository path", candidates: [] };
-  const top = await gitTopLevel(path);
+  const top = await projectRoot(path);
   if (top) return { ok: true, root: top, via: "git" };
   if (!(await isPackageWorkspace(path))) return { ok: false, reason: `${path} is not a git repo or a multi-package workspace`, candidates: [] };
 
   const packages: string[] = [];
-  for (const d of await subdirs(join(path, "src"))) if ((await gitTopLevel(d)) === d) packages.push(d);
+  for (const d of await subdirs(join(path, "src"))) if ((await projectRoot(d)) === d) packages.push(d);
   if (packages.length === 0) return { ok: false, reason: `workspace ${path} has no package repos under src/`, candidates: [] };
   if (packages.length === 1) return { ok: true, root: packages[0]!, via: "workspace-package" };
 

@@ -30,7 +30,7 @@ export function skillStats(skill: TreeNode): SkillStats {
   const base = evidenceStats({ members });
   if (skill.origin !== "file") return base;
   const since = skill.renderedAt?.getTime() ?? 0;
-  // Both kinds only count since the last render: a merged proposal absorbs them.
+  // Both kinds only count since the last render: an accepted proposal absorbs them.
   const sinceRender = members.filter((n) => (n.attachedAt?.getTime() ?? Infinity) > since);
   const covered = sinceRender.filter((n) => n.coveredNodeId !== undefined);
   const fresh = sinceRender.filter((n) => n.coveredNodeId === undefined);
@@ -63,7 +63,7 @@ export interface TreeScoreResult {
  * Score every skill (depth 1) of every tree. Status rules:
  *  - open → candidate when a proposal is earned; candidate → open when it no longer is
  *  - rejected → candidate again only after `reproposeAfterSessions` new sessions
- *  - proposed / merged are left alone (the proposal lifecycle owns them)
+ *  - proposed is left alone (the proposal lifecycle owns it)
  */
 export function scoreTree(tree: Tree, cfg: ScoreConfig): TreeScoreResult {
   const res: TreeScoreResult = { scored: 0, promoted: [], demoted: [] };
@@ -76,7 +76,7 @@ export function scoreTree(tree: Tree, cfg: ScoreConfig): TreeScoreResult {
         let kind = earnedProposal(skill, stats, cfg);
         if (skill.status === "rejected" && stats.sessions < (skill.rejectedSessions ?? 0) + cfg.promote.reproposeAfterSessions) kind = undefined;
 
-        if (skill.status === "proposed" || skill.status === "merged") {
+        if (skill.status === "proposed") {
           tree.updateNode(skill.id, { stats, score });
         } else if (kind) {
           tree.updateNode(skill.id, { stats, score, status: "candidate", proposalKind: kind });

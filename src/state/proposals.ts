@@ -1,19 +1,34 @@
-import type { ProposalKind } from "./tree.ts";
+import { createHash } from "node:crypto";
 import type { StateDb } from "./db.ts";
+import type { ProposalKind } from "./tree.ts";
 
 /**
- * A proposal: one branch + worktree in the target repo, drafted by pi for one
- * depth-1 node (skill or AGENTS.md section). I review and merge it myself.
+ * A proposal: drafted file contents for one depth-1 node (skill or AGENTS.md
+ * section), stored in the db. lbg never runs git: accepting writes the files
+ * to the target and I commit (or not) myself.
  *
- *   drafting ─┬─► open ─┬─► merged     (branch reached the base branch)
- *             │         └─► rejected   (I said no; node waits for new evidence)
- *             └─► failed               (drafting or verification failed; node stays a candidate)
+ *   drafting ─┬─► open ─┬─► accepted   files written to the target
+ *             │         └─► rejected   node waits for new evidence
+ *             └─► failed               node stays a candidate
  *
- * At most one drafting/open proposal per node. While it is active the node is
- * `proposed`, which freezes it against curation and rebalancing.
+ * At most one drafting/open proposal per node; while active the node is
+ * `proposed` (frozen against curation and re-scoring).
  */
-export const PROPOSAL_STATUSES = ["drafting", "open", "merged", "rejected", "failed"] as const;
+export const PROPOSAL_STATUSES = ["drafting", "open", "accepted", "rejected", "failed"] as const;
 export type ProposalStatus = (typeof PROPOSAL_STATUSES)[number];
+
+/** One file of a draft. Paths are relative to the proposal's `targetRoot`. */
+export interface DraftFile {
+  path: string;
+  /** Hash of the file when drafting started; null = it didn't exist. */
+  baseHash: string | null;
+  /** New content; null = delete the file. */
+  content: string | null;
+}
+
+export function hashContent(s: string): string {
+  return createHash("sha256").update(s).digest("hex").slice(0, 16);
+}
 
 export interface ProposalRow {
   id: number;
@@ -23,25 +38,21 @@ export interface ProposalRow {
   scope: "global" | "repo";
   repo?: string;
   skillName?: string;
-  gitDir?: string;
-  workTree: string;
-  baseBranch: string;
-  baseCommit: string;
-  branch: string;
-  worktree: string;
-  commit?: string;
+  targetRoot: string;
   writable: string[];
+  files: DraftFile[];
+  summary?: string;
   nuggetIds: number[];
   sessions: number;
   usage?: unknown;
   detail?: string;
-  worktreeRemoved: boolean;
   createdAt: Date;
   updatedAt: Date;
   closedAt?: Date;
 }
 
-export type NewProposal = Omit<ProposalRow, "id" | "status" | "commit" | "usage" | "detail" | "worktreeRemoved" | "createdAt" | "updatedAt" | "closedAt">;
+export type NewProposal = Pick<ProposalRow, "nodeId" | "kind" | "scope" | "targetRoot" | "writable" | "nuggetIds" | "sessions"> &
+  Partial<Pick<ProposalRow, "repo" | "skillName">>;
 
 type Row = Record<string, unknown>;
 
@@ -54,26 +65,19 @@ function toProposal(r: Row): ProposalRow {
     scope: r.scope as "global" | "repo",
     ...(r.repo ? { repo: String(r.repo) } : {}),
     ...(r.skill_name ? { skillName: String(r.skill_name) } : {}),
-    ...(r.git_dir ? { gitDir: String(r.git_dir) } : {}),
-    workTree: String(r.work_tree),
-    baseBranch: String(r.base_branch),
-    baseCommit: String(r.base_commit),
-    branch: String(r.branch),
-    worktree: String(r.worktree),
-    ...(r.commit_sha ? { commit: String(r.commit_sha) } : {}),
+    targetRoot: String(r.target_root),
     writable: JSON.parse(String(r.writable)) as string[],
+    files: JSON.parse(String(r.files)) as DraftFile[],
+    ...(r.summary ? { summary: String(r.summary) } : {}),
     nuggetIds: JSON.parse(String(r.nugget_ids)) as number[],
     sessions: Number(r.sessions),
     ...(r.usage ? { usage: JSON.parse(String(r.usage)) as unknown } : {}),
     ...(r.detail ? { detail: String(r.detail) } : {}),
-    worktreeRemoved: Number(r.worktree_removed) === 1,
     createdAt: new Date(Number(r.created_at)),
     updatedAt: new Date(Number(r.updated_at)),
     ...(r.closed_at != null ? { closedAt: new Date(Number(r.closed_at)) } : {}),
   };
 }
-
-const ACTIVE: ProposalStatus[] = ["drafting", "open"];
 
 export class Proposals {
   readonly db: StateDb;
@@ -89,7 +93,7 @@ export class Proposals {
     return r ? toProposal(r) : undefined;
   }
 
-  private mustGet(id: number): ProposalRow {
+  mustGet(id: number): ProposalRow {
     const p = this.get(id);
     if (!p) throw new Error(`No proposal ${id}`);
     return p;
@@ -104,7 +108,6 @@ export class Proposals {
     return rows.map(toProposal);
   }
 
-  /** The drafting/open proposal for a node, if any. */
   active(nodeId: number): ProposalRow | undefined {
     const r = this.sql.prepare("SELECT * FROM proposal WHERE node_id = ? AND status IN ('drafting', 'open')").get(nodeId) as Row | undefined;
     return r ? toProposal(r) : undefined;
@@ -114,40 +117,23 @@ export class Proposals {
     return (this.sql.prepare("SELECT * FROM proposal WHERE node_id = ? ORDER BY id").all(nodeId) as Row[]).map(toProposal);
   }
 
-  /** Start a proposal (status drafting) and mark the node `proposed`. */
+  /** Start a proposal (drafting) and mark the node `proposed`. */
   create(p: NewProposal): number {
-    const node = this.sql.prepare("SELECT depth, status FROM node WHERE id = ?").get(p.nodeId) as Row | undefined;
+    const node = this.sql.prepare("SELECT depth FROM node WHERE id = ?").get(p.nodeId) as Row | undefined;
     if (!node) throw new Error(`No node ${p.nodeId}`);
     if (Number(node.depth) !== 1) throw new Error(`Proposals are for skills (depth 1); node ${p.nodeId} is depth ${node.depth}`);
     const existing = this.active(p.nodeId);
-    if (existing) throw new Error(`Node ${p.nodeId} already has ${existing.status} proposal #${existing.id} (${existing.branch})`);
+    if (existing) throw new Error(`Node ${p.nodeId} already has ${existing.status} proposal #${existing.id}`);
     const now = Date.now();
     return this.db.tx(() => {
       const id = Number(
         this.sql
           .prepare(
-            `INSERT INTO proposal (node_id, kind, status, scope, repo, skill_name, git_dir, work_tree, base_branch, base_commit,
-                                   branch, worktree, writable, nugget_ids, sessions, created_at, updated_at)
-             VALUES (?, ?, 'drafting', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            `INSERT INTO proposal (node_id, kind, status, scope, repo, skill_name, target_root, writable, nugget_ids, sessions, created_at, updated_at)
+             VALUES (?, ?, 'drafting', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           )
-          .run(
-            p.nodeId,
-            p.kind,
-            p.scope,
-            p.repo ?? null,
-            p.skillName ?? null,
-            p.gitDir ?? null,
-            p.workTree,
-            p.baseBranch,
-            p.baseCommit,
-            p.branch,
-            p.worktree,
-            JSON.stringify(p.writable),
-            JSON.stringify(p.nuggetIds),
-            p.sessions,
-            now,
-            now,
-          ).lastInsertRowid,
+          .run(p.nodeId, p.kind, p.scope, p.repo ?? null, p.skillName ?? null, p.targetRoot, JSON.stringify(p.writable), JSON.stringify(p.nuggetIds), p.sessions, now, now)
+          .lastInsertRowid,
       );
       this.setNodeStatus(p.nodeId, "proposed");
       return id;
@@ -163,18 +149,22 @@ export class Proposals {
     const p = this.mustGet(id);
     if (!from.includes(p.status)) throw new Error(`Proposal #${id} is ${p.status}; can't mark it ${to}`);
     const now = Date.now();
-    const closing = to === "merged" || to === "rejected" || to === "failed";
+    const closing = to !== "drafting" && to !== "open";
     const cols = { status: to, updated_at: now, ...(closing ? { closed_at: now } : {}), ...fields };
     this.sql.prepare(`UPDATE proposal SET ${Object.keys(cols).map((k) => `${k} = ?`).join(", ")} WHERE id = ?`).run(...Object.values(cols), id);
     return p;
   }
 
-  /** Drafting finished and verified: the branch has a commit to review. */
-  markOpen(id: number, commit: string, usage?: unknown): void {
-    this.transition(id, ["drafting"], "open", { commit_sha: commit, ...(usage !== undefined ? { usage: JSON.stringify(usage) } : {}) });
+  /** Drafting finished and verified: store the files for review. Also used to replace an open draft (revise / edit). */
+  markOpen(id: number, files: DraftFile[], summary: string, usage?: unknown): void {
+    this.transition(id, ["drafting", "open"], "open", {
+      files: JSON.stringify(files),
+      summary,
+      ...(usage !== undefined ? { usage: JSON.stringify(usage) } : {}),
+    });
   }
 
-  /** Drafting or verification failed: the node is a candidate again (retried on a later run). */
+  /** Drafting failed: the node is a candidate again. */
   markFailed(id: number, detail: string, usage?: unknown): void {
     this.db.tx(() => {
       const p = this.transition(id, ["drafting", "open"], "failed", { detail, ...(usage !== undefined ? { usage: JSON.stringify(usage) } : {}) });
@@ -182,36 +172,19 @@ export class Proposals {
     });
   }
 
-  /** I merged the branch. The node is `merged` until the next sync picks up the new files. */
-  markMerged(id: number): void {
+  /** The files were written to the target. The next sync makes the node live (it is `open` again now). */
+  markAccepted(id: number): void {
     this.db.tx(() => {
-      const p = this.transition(id, ["open"], "merged");
-      this.setNodeStatus(p.nodeId, "merged");
+      const p = this.transition(id, ["open"], "accepted");
+      this.setNodeStatus(p.nodeId, "open");
     });
   }
 
-  /**
-   * I rejected it. The node waits until the topic comes up in new sessions
-   * (`rejected_sessions` records how many it had).
-   */
+  /** I said no. The node returns only after the topic comes up in new sessions. */
   markRejected(id: number, reason?: string): void {
     this.db.tx(() => {
       const p = this.transition(id, ["drafting", "open"], "rejected", reason ? { detail: reason } : {});
       this.setNodeStatus(p.nodeId, "rejected", { rejected_sessions: p.sessions });
     });
-  }
-
-  markWorktreeRemoved(id: number): void {
-    this.mustGet(id);
-    this.sql.prepare("UPDATE proposal SET worktree_removed = 1, updated_at = ? WHERE id = ?").run(Date.now(), id);
-  }
-
-  /** Closed proposals whose worktree is still on disk (for cleanup). */
-  needingCleanup(): ProposalRow[] {
-    return this.list(["merged", "rejected", "failed"]).filter((p) => !p.worktreeRemoved);
-  }
-
-  isActive(p: ProposalRow): boolean {
-    return ACTIVE.includes(p.status);
   }
 }
