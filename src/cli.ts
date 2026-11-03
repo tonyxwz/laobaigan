@@ -16,6 +16,7 @@ import { ALL_AGENTS, defaultAdapters, scan, type AgentId, type Transcript } from
 import { StateDb } from "./state/db.ts";
 import { acquireLock } from "./util/lock.ts";
 import { truncate } from "./util/text.ts";
+import { subtreeNuggets, Tree, type TreeNode } from "./state/tree.ts";
 import { parseDuration, parseSince } from "./util/time.ts";
 
 const USAGE = `lbg (laobaigan 老白干) — distill repeated explanations from agent sessions into skills
@@ -40,6 +41,7 @@ Pipeline:
       topics on the union of their clusters and promote recurring ones with a target.
       --regroup  also re-place existing (unlocked) clusters under declared / umbrella topics
       --dry-run  run against a temporary copy of the state db, then discard it
+  lbg tree [show <id>] [--json]                        The knowledge tree: roots → skills → sections
   lbg topics [--status candidate,open,...] [--json]    Topics (future skills) by score, with their clusters
   lbg topics show <id> [--json]                         Summary, clusters, members, evidence
   lbg topics retarget <id> <target>                     Set the target by hand, e.g.
@@ -254,6 +256,30 @@ async function main(argv: string[]): Promise<number> {
       }
     }
 
+    case "tree": {
+      const cfg = loadConfig();
+      const db = new StateDb(join(cfg.stateDir, "state.db"));
+      try {
+        const tree = new Tree(db);
+        if (rest[0] === "show") {
+          const n = tree.subtree(Number(rest[1]));
+          if (!n) throw new Error(`No node ${rest[1]}`);
+          if (values.json) return json(n), 0;
+          out(renderNodeDetail(n, tree.path(n.id).map((p) => p.title)));
+          return 0;
+        }
+        if (rest[0]) throw new Error(`Unknown tree subcommand: ${rest[0]} (show)`);
+        const roots = tree.trees();
+        if (values.json) return json(roots), 0;
+        for (const r of roots) renderTree(r, out);
+        const unplaced = tree.unplacedNuggets().length;
+        out(`\n${unplaced ? `${unplaced} nugget(s) not placed yet. ` : ""}s=sessions n=nuggets. Details: lbg tree show <id>\n`);
+        return 0;
+      } finally {
+        db.close();
+      }
+    }
+
     case "clusters":
     case "topics": {
       const cfg = loadConfig();
@@ -452,6 +478,49 @@ function shortPath(p: string | undefined): string {
   if (!p) return "?";
   const home = process.env.HOME ?? "";
   return home && p.startsWith(home) ? `~${p.slice(home.length)}` : p.replace(/^\/local\/home\/[^/]+/, "~");
+}
+
+function sessionsOf(n: TreeNode): number {
+  return new Set(subtreeNuggets(n).map((m) => `${m.agent}:${m.sessionId}`)).size;
+}
+
+function renderTree(root: TreeNode, out: (s: string) => void): void {
+  out(`\n${root.scope === "global" ? "Global skills" : `repo ${shortPath(root.repo)}`}  (root #${root.id}, ${root.children.length} skill(s))\n`);
+  const skills = [...root.children].sort((a, b) => b.score - a.score || a.id - b.id);
+  for (const s of skills) {
+    out(
+      `  #${String(s.id).padEnd(4)} ${s.origin.padEnd(8)} ${s.status.padEnd(9)} score=${String(s.score).padStart(3)} ` +
+        `s=${sessionsOf(s)} n=${subtreeNuggets(s).length}  ${s.name ? `${s.name} — ` : ""}${s.title}${s.locked ? " (locked)" : ""}\n`,
+    );
+    for (const c of s.children) out(`        · #${c.id} ${c.title} (n=${subtreeNuggets(c).length})${c.locked ? " (locked)" : ""}\n`);
+  }
+}
+
+function renderNodeDetail(n: TreeNode, path: string[]): string {
+  const lines = [
+    `#${n.id} ${n.title}${n.name ? `  [${n.name}]` : ""}`,
+    `path: ${path.join(" › ")}`,
+    `depth: ${n.depth}   origin: ${n.origin}   status: ${n.status}   score: ${n.score}${n.locked ? "   (locked)" : ""}${n.summaryDirty ? "   (summary stale)" : ""}`,
+  ];
+  if (n.description) lines.push(`description: ${n.description}`);
+  if (n.sourcePath) lines.push(`source: ${n.sourcePath}`);
+  if (n.summary) lines.push("", "## Summary", n.summary);
+  const nuggetLines = (ns: TreeNode["nuggets"], pad: string) => {
+    for (const m of ns) {
+      lines.push("", `${pad}#${m.id} [${m.kind}] ${m.title}  (${m.agent}:${m.sessionId.slice(0, 12)}, conf ${m.confidence}${m.coveredBy ? `, covered by ${m.coveredBy}` : ""})`);
+      for (const e of m.evidence) lines.push(`${pad}    ${e.label}${e.ts ? ` ${e.ts.slice(0, 16).replace("T", " ")}` : ""}: "${e.quote}"`);
+    }
+  };
+  if (n.nuggets.length) {
+    lines.push("", `## Nuggets (${n.nuggets.length})`);
+    nuggetLines(n.nuggets, "");
+  }
+  for (const c of n.children) {
+    lines.push("", `## #${c.id} ${c.title}  (n=${subtreeNuggets(c).length})`);
+    if (c.summary) lines.push(c.summary);
+    nuggetLines(c.nuggets, "  ");
+  }
+  return `${lines.join("\n")}\n`;
 }
 
 function renderTopicList(list: TopicWithClusters[], out: (s: string) => void): void {

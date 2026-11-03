@@ -108,6 +108,69 @@ export const MIGRATIONS: string[] = [
   // stays in its cluster. Regroup and consolidation never move them.
   `ALTER TABLE cluster ADD COLUMN locked INTEGER NOT NULL DEFAULT 0;
    ALTER TABLE nugget ADD COLUMN assignment_locked INTEGER NOT NULL DEFAULT 0;`,
+  // 6: the knowledge tree (one per scope, mirrors the skills files). Filled from topics/clusters:
+  // each topic becomes a depth-1 node with the SAME id; single-cluster topics hold their nuggets
+  // directly, multi-cluster topics get one depth-2 section per cluster. topic/cluster tables stay
+  // until the CLI switches over to the tree (lbg-lb3.6).
+  `CREATE TABLE node (
+     id            INTEGER PRIMARY KEY AUTOINCREMENT,
+     parent_id     INTEGER REFERENCES node (id),
+     scope         TEXT NOT NULL,          -- global | repo
+     repo          TEXT,
+     depth         INTEGER NOT NULL,       -- 0 root, 1 skill, 2 section
+     name          TEXT,                   -- skill name (depth 1)
+     title         TEXT NOT NULL,
+     description   TEXT,                   -- routing description (skill) / when to read (section)
+     summary       TEXT NOT NULL DEFAULT '',
+     summary_dirty INTEGER NOT NULL DEFAULT 0,
+     origin        TEXT NOT NULL,          -- root | file | declared | latent
+     status        TEXT NOT NULL DEFAULT 'open',
+     score         REAL NOT NULL DEFAULT 0,
+     stats         TEXT,
+     rejected_sessions INTEGER,
+     locked        INTEGER NOT NULL DEFAULT 0,
+     source_path   TEXT,                   -- file it was parsed from / renders to
+     source_hash   TEXT,
+     rendered_at   INTEGER,                -- evidence after this counts as "new" for live skills
+     legacy_cluster_id INTEGER,            -- provenance from migration 6
+     created_at    INTEGER NOT NULL,
+     updated_at    INTEGER NOT NULL,
+     CHECK (depth BETWEEN 0 AND 2),
+     CHECK ((depth = 0) = (parent_id IS NULL))
+   );
+   CREATE INDEX node_parent ON node (parent_id);
+   CREATE INDEX node_scope ON node (scope, repo, depth);
+   ALTER TABLE nugget ADD COLUMN node_id INTEGER REFERENCES node (id);
+   CREATE INDEX nugget_node ON nugget (node_id);
+
+   -- roots: one per scope/repo in use, with ids after every topic id
+   INSERT INTO node (id, scope, repo, depth, title, origin, created_at, updated_at)
+     SELECT (SELECT COALESCE(max(id), 0) FROM topic) + row_number() OVER (ORDER BY scope, repo),
+            scope, repo, 0, CASE WHEN scope = 'global' THEN 'Global skills' ELSE repo END, 'root', 0, 0
+     FROM (SELECT DISTINCT scope, repo FROM topic);
+   -- skills keep their topic ids
+   INSERT INTO node (id, parent_id, scope, repo, depth, name, title, description, origin, status, score, stats,
+                     rejected_sessions, locked, summary, summary_dirty, legacy_cluster_id, created_at, updated_at)
+     SELECT t.id,
+            (SELECT r.id FROM node r WHERE r.depth = 0 AND r.scope = t.scope AND r.repo IS t.repo),
+            t.scope, t.repo, 1, t.name, t.title, t.description,
+            CASE WHEN t.declared = 1 THEN 'declared' ELSE 'latent' END, t.status, t.score, t.stats,
+            t.rejected_sessions, t.locked,
+            CASE WHEN (SELECT count(*) FROM cluster c WHERE c.topic_id = t.id) = 1
+                 THEN (SELECT c.summary FROM cluster c WHERE c.topic_id = t.id) ELSE '' END,
+            CASE WHEN (SELECT count(*) FROM cluster c WHERE c.topic_id = t.id) > 1 THEN 1 ELSE 0 END,
+            CASE WHEN (SELECT count(*) FROM cluster c WHERE c.topic_id = t.id) = 1
+                 THEN (SELECT c.id FROM cluster c WHERE c.topic_id = t.id) END,
+            t.created_at, t.updated_at
+     FROM topic t;
+   -- sections: one per cluster of a multi-cluster topic
+   INSERT INTO node (parent_id, scope, repo, depth, title, summary, origin, locked, legacy_cluster_id, created_at, updated_at)
+     SELECT c.topic_id, c.scope, c.repo, 2, c.title, c.summary, 'latent', c.locked, c.id, c.created_at, c.updated_at
+     FROM cluster c WHERE (SELECT count(*) FROM cluster c2 WHERE c2.topic_id = c.topic_id) > 1;
+   -- nuggets: to the section of their cluster, or straight to the skill of a single-cluster topic
+   UPDATE nugget SET node_id = (SELECT n.id FROM node n WHERE n.legacy_cluster_id = nugget.cluster_id
+                                ORDER BY n.depth DESC LIMIT 1)
+     WHERE cluster_id IS NOT NULL;`,
 ];
 
 export const TOPIC_STATUSES = ["open", "candidate", "proposed", "merged", "rejected"] as const;
@@ -131,6 +194,8 @@ export interface NuggetRow {
   clusterId?: number;
   /** Placed by hand; regroup/consolidation keep it in its cluster. */
   assignmentLocked: boolean;
+  /** Knowledge-tree node (skill or section) it is attached to. */
+  nodeId?: number;
   createdAt: Date;
 }
 
@@ -608,6 +673,7 @@ function toNugget(r: Row): NuggetRow {
     evidence: parseJson(r.evidence, [] as NuggetRow["evidence"]),
     ...(r.cluster_id != null ? { clusterId: Number(r.cluster_id) } : {}),
     assignmentLocked: Number(r.assignment_locked ?? 0) === 1,
+    ...(r.node_id != null ? { nodeId: Number(r.node_id) } : {}),
     createdAt: new Date(Number(r.created_at)),
   };
 }
