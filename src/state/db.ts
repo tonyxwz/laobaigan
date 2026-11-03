@@ -187,6 +187,36 @@ export const MIGRATIONS: string[] = [
    DROP INDEX IF EXISTS topic_status;
    DROP TABLE topic;
    ALTER TABLE node DROP COLUMN legacy_cluster_id;`,
+  // 10: proposals. One branch + worktree per proposal for a depth-1 node; I review and merge.
+  `CREATE TABLE proposal (
+     id            INTEGER PRIMARY KEY AUTOINCREMENT,
+     node_id       INTEGER NOT NULL REFERENCES node (id),
+     kind          TEXT NOT NULL,          -- new | update | fix-description
+     status        TEXT NOT NULL,          -- drafting | open | merged | rejected | failed
+     scope         TEXT NOT NULL,
+     repo          TEXT,                   -- repo root for repo scopes
+     skill_name    TEXT,
+     git_dir       TEXT,                   -- --git-dir when the repo is bare (~/.cfg)
+     work_tree     TEXT NOT NULL,          -- main checkout of the target repo
+     base_branch   TEXT NOT NULL,
+     base_commit   TEXT NOT NULL,
+     branch        TEXT NOT NULL,
+     worktree      TEXT NOT NULL,
+     commit_sha    TEXT,
+     writable      TEXT NOT NULL,          -- JSON: paths the drafting session could write
+     nugget_ids    TEXT NOT NULL,          -- JSON: evidence used
+     sessions      INTEGER NOT NULL,       -- distinct sessions of that evidence
+     usage         TEXT,                   -- JSON token usage / cost of drafting
+     detail        TEXT,                   -- error, or reject reason
+     worktree_removed INTEGER NOT NULL DEFAULT 0,
+     created_at    INTEGER NOT NULL,
+     updated_at    INTEGER NOT NULL,
+     closed_at     INTEGER
+   );
+   CREATE INDEX proposal_node ON proposal (node_id);
+   CREATE INDEX proposal_status ON proposal (status);
+   CREATE UNIQUE INDEX proposal_one_active ON proposal (node_id) WHERE status IN ('drafting', 'open');
+   CREATE UNIQUE INDEX proposal_branch ON proposal (branch, COALESCE(git_dir, work_tree));`,
 ];
 
 /** Lifecycle of a skill: open → candidate (earned a proposal) → proposed → merged, or rejected. */
@@ -408,6 +438,7 @@ export class StateDb {
       skills: one("SELECT count(*) n FROM node WHERE depth = 1"),
       liveSkills: one("SELECT count(*) n FROM node WHERE depth = 1 AND origin = 'file'"),
       candidates: one("SELECT count(*) n FROM node WHERE depth = 1 AND status = 'candidate'"),
+      openProposals: one("SELECT count(*) n FROM proposal WHERE status IN ('drafting', 'open')"),
     };
   }
 

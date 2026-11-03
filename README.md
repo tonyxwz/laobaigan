@@ -393,6 +393,7 @@ git --git-dir=~/.cfg --work-tree=<worktree> commit ...   # commit happens in the
 | `session` | `(agent, session_id)` → `version`, location, cwd, timestamps, prefilter signals, last status |
 | `turn_seen` | user-turn fingerprint → first `(agent, session_id)` it was seen in; drives dedup across resumes |
 | `nugget` | extracted nuggets + evidence (agent, session, turn label, quote) |
+| `proposal` | one branch + worktree per drafted skill: node, kind (`new` / `update` / `fix-description`), status (`drafting` → `open` → `merged` / `rejected`, or `failed`), repo / git dir / base commit, branch, worktree, commit, writable paths, evidence, cost |
 | `node` | the knowledge tree: parent, depth, scope/repo, name, description, summary (lazy), origin (`file` / `declared` / `latent`), status, score, locks, source path |
 | `proposal` | cluster, target, repo, branch, worktree, commit, status |
 | `run` | run log: counts, token usage and cost per stage, errors |
