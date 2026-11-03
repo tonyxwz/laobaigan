@@ -4,6 +4,8 @@ import { parseArgs } from "node:util";
 import { loadConfig } from "./config.ts";
 import { BedrockPiRunner } from "./pi/run-pi.ts";
 import { clusterNuggets } from "./pipeline/cluster.ts";
+import { scoreClusters } from "./pipeline/score.ts";
+import { loadSkillsDir } from "./skills/index.ts";
 import { processSessions, type ProcessOptions, type SessionOutcome } from "./pipeline/process.ts";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -31,7 +33,8 @@ Pipeline:
       One unattended pipeline pass (what the systemd timer runs): takes a lock, processes
       new/changed sessions, logs a summary. Exit 0 ok, 2 some sessions failed, 3 aborted, 75 locked.
   lbg cluster [--dry-run] [--max-calls N] [--json]
-      Group unclustered nuggets into topic clusters with pi (Bedrock).
+      Group unclustered nuggets into topic clusters with pi (Bedrock), then score them and
+      promote recurring topics to candidates with a target.
       --dry-run  run against a temporary copy of the state db, then discard it
   lbg nuggets [--json]                                       List stored nuggets
   lbg status                                                 State db counts and recent runs
@@ -194,11 +197,18 @@ async function main(argv: string[]): Promise<number> {
           ...(values["max-calls"] ? { maxCalls: Number(values["max-calls"]) } : {}),
           log: (m) => process.stderr.write(`${m}\n`),
         });
-        if (values.json) return json({ ...res, clusters: db.clusters() }), 0;
-        for (const c of db.clusters()) {
-          out(`#${c.id} [${c.scope}${c.repo ? `:${c.repo}` : ""}] ${c.title}  (${c.members.length} nugget(s))\n`);
-          for (const m of c.members) out(`    - #${m.id} ${m.agent}:${m.sessionId.slice(0, 8)} ${m.title}\n`);
+        const skills = await loadSkillsDir(join(cfg.skillsRepo.workTree, cfg.skillsRepo.skillsPath), "global");
+        const scored = scoreClusters(db, skills, cfg.score);
+        if (values.json) return json({ ...res, scored, clusters: db.clusters() }), 0;
+        for (const c of db.clusters().sort((a, b) => b.score - a.score)) {
+          const st = c.stats as { sessions: number; agents: string[] } | undefined;
+          out(
+            `#${c.id} ${c.status.padEnd(9)} score=${String(c.score).padStart(3)} ` +
+              `sessions=${st?.sessions ?? "?"} agents=${st?.agents.join(",") ?? "?"}  [${c.scope}${c.repo ? `:${c.repo}` : ""}] ${c.title}\n` +
+              (c.target ? `    → ${c.target}\n` : ""),
+          );
         }
+        for (const p of scored.promoted) out(`promoted #${p.id} ${p.title} → ${p.target}\n`);
         out(
           `\n${res.calls} model call(s), ${res.created} cluster(s) created, ${res.assigned} nugget(s) assigned, ` +
             `cost≈$${res.usage.cost.toFixed(4)}${tmp ? "  (dry run: nothing persisted)" : ""}\n`,

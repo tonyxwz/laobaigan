@@ -1,0 +1,218 @@
+import type { ScoreConfig } from "../config.ts";
+import type { SkillInfo } from "../skills/index.ts";
+import type { ClusterWithMembers, StateDb } from "../state/db.ts";
+
+export interface ClusterStats {
+  nuggets: number;
+  /** Distinct (agent, session) pairs. Resumed copies are already deduped upstream by fingerprint. */
+  sessions: number;
+  agents: string[];
+  /** Distinct calendar days (UTC) of the evidence turns. */
+  days: number;
+  corrections: number;
+  /** Existing skills / AGENTS.md the extractor said already cover members. `?x` = unverified name. */
+  coveredBy: string[];
+  firstSeen?: string;
+  lastSeen?: string;
+}
+
+/**
+ * Where a cluster's knowledge should land:
+ *  - global:new:<name>              new global skill
+ *  - global:update:<skill>          extend an existing global skill
+ *  - global:fix-description:<skill> content exists, but the skill didn't trigger
+ *  - repo:agents-md:<repo>          short repo facts/rules → <repo>/AGENTS.md
+ *  - repo:skill:<repo>:<name>       repo procedure → <repo>/.agents/skills/<name>/SKILL.md
+ */
+export type Target =
+  | { kind: "global:new"; name: string }
+  | { kind: "global:update"; skill: string }
+  | { kind: "global:fix-description"; skill: string }
+  | { kind: "repo:agents-md"; repo: string }
+  | { kind: "repo:skill"; repo: string; name: string };
+
+export function formatTarget(t: Target): string {
+  switch (t.kind) {
+    case "global:new":
+      return `global:new:${t.name}`;
+    case "global:update":
+      return `global:update:${t.skill}`;
+    case "global:fix-description":
+      return `global:fix-description:${t.skill}`;
+    case "repo:agents-md":
+      return `repo:agents-md:${t.repo}`;
+    case "repo:skill":
+      return `repo:skill:${t.repo}:${t.name}`;
+  }
+}
+
+export function parseTarget(s: string): Target {
+  const [scope, kind, ...rest] = s.split(":");
+  const tail = rest.join(":");
+  const k = `${scope}:${kind}`;
+  if (k === "global:new") return { kind: k, name: tail };
+  if (k === "global:update" || k === "global:fix-description") return { kind: k, skill: tail };
+  if (k === "repo:agents-md") return { kind: k, repo: tail };
+  if (k === "repo:skill") {
+    const i = tail.lastIndexOf(":");
+    return { kind: k, repo: tail.slice(0, i), name: tail.slice(i + 1) };
+  }
+  throw new Error(`Bad target: ${s}`);
+}
+
+export function clusterStats(c: ClusterWithMembers): ClusterStats {
+  const sessions = new Set<string>();
+  const agents = new Set<string>();
+  const days = new Set<string>();
+  const covered = new Set<string>();
+  const stamps: string[] = [];
+  let corrections = 0;
+  for (const n of c.members) {
+    sessions.add(`${n.agent}:${n.sessionId}`);
+    agents.add(n.agent);
+    if (n.kind === "correction") corrections++;
+    if (n.coveredBy) covered.add(n.coveredBy);
+    const ts = n.evidence.map((e) => e.ts).filter((x): x is string => !!x);
+    if (ts.length === 0) ts.push(n.createdAt.toISOString());
+    for (const t of ts) {
+      days.add(t.slice(0, 10));
+      stamps.push(t);
+    }
+  }
+  stamps.sort();
+  return {
+    nuggets: c.members.length,
+    sessions: sessions.size,
+    agents: [...agents].sort(),
+    days: days.size,
+    corrections,
+    coveredBy: [...covered].sort(),
+    ...(stamps.length ? { firstSeen: stamps[0]!, lastSeen: stamps[stamps.length - 1]! } : {}),
+  };
+}
+
+export function scoreOf(s: ClusterStats, w: ScoreConfig["weights"]): number {
+  return (
+    s.sessions * w.session +
+    Math.max(0, s.agents.length - 1) * w.extraAgent +
+    Math.max(0, s.days - 1) * w.extraDay +
+    s.corrections * w.correction -
+    (s.coveredBy.length ? w.covered : 0)
+  );
+}
+
+export function meetsPromotion(s: ClusterStats, p: ScoreConfig["promote"]): boolean {
+  return s.sessions >= p.minSessions || (s.sessions >= p.minSessionsCrossAgent && s.agents.length >= 2);
+}
+
+/** Valid pi/Agent Skills name: lowercase letters, digits, single hyphens, ≤ 64 chars. */
+export function skillName(title: string): string {
+  const stop = new Set(["the", "a", "an", "and", "or", "of", "for", "to", "in", "on", "with", "by", "is", "are"]);
+  const words = title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .split(/\s+/)
+    .filter((w) => w && !stop.has(w));
+  let name = "";
+  for (const w of words) {
+    const next = name ? `${name}-${w}` : w;
+    if (next.length > 40) break;
+    name = next;
+  }
+  return name || "skill";
+}
+
+const STOPWORDS = new Set(
+  "the and for with from that this when what where which into onto use uses using used not but are was were has have had you your its it's can will should must how why any all one two via per about over under than then them they their there here also only just more most other such".split(
+    " ",
+  ),
+);
+
+function tokens(s: string): Set<string> {
+  return new Set(
+    s
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter((t) => t.length > 2 && !STOPWORDS.has(t)),
+  );
+}
+
+/**
+ * Overlap coefficient |A∩B| / min(|A|,|B|) between content-word sets.
+ * Fewer than 2 shared words counts as unrelated (a single shared word is noise).
+ */
+export function similarity(a: string, b: string): number {
+  const A = tokens(a);
+  const B = tokens(b);
+  if (!A.size || !B.size) return 0;
+  let inter = 0;
+  for (const t of A) if (B.has(t)) inter++;
+  return inter < 2 ? 0 : inter / Math.min(A.size, B.size);
+}
+
+export function pickTarget(
+  c: ClusterWithMembers,
+  skills: SkillInfo[],
+  cfg: Pick<ScoreConfig, "updateSimilarity" | "agentsMdMaxChars">,
+): Target {
+  if (c.scope === "repo") {
+    const repo = c.repo ?? "";
+    const procedural = c.members.filter((m) => m.kind === "procedure").length;
+    const longForm = c.summary.length > cfg.agentsMdMaxChars;
+    return longForm && procedural >= Math.ceil(c.members.length / 2)
+      ? { kind: "repo:skill", repo, name: skillName(c.title) }
+      : { kind: "repo:agents-md", repo };
+  }
+
+  // A verified "already covered by <skill>" on most members → the skill didn't trigger.
+  const names = new Set(skills.map((s) => s.name));
+  const coveredVotes = new Map<string, number>();
+  for (const m of c.members) if (m.coveredBy && names.has(m.coveredBy)) coveredVotes.set(m.coveredBy, (coveredVotes.get(m.coveredBy) ?? 0) + 1);
+  const [topCovered, votes] = [...coveredVotes].sort((a, b) => b[1] - a[1])[0] ?? [];
+  if (topCovered && votes! * 2 >= c.members.length) return { kind: "global:fix-description", skill: topCovered };
+  if (topCovered) return { kind: "global:update", skill: topCovered };
+
+  // Otherwise extend the most similar existing skill, if similar enough.
+  const text = `${c.title} ${c.summary}`;
+  const best = skills
+    .map((s) => ({ s, sim: similarity(`${s.name.replace(/-/g, " ")} ${s.description}`, text) }))
+    .sort((a, b) => b.sim - a.sim)[0];
+  if (best && best.sim >= cfg.updateSimilarity) return { kind: "global:update", skill: best.s.name };
+
+  return { kind: "global:new", name: skillName(c.title) };
+}
+
+export interface ScoreResult {
+  scored: number;
+  promoted: { id: number; title: string; target: string; score: number }[];
+}
+
+/**
+ * Recompute stats/score for every cluster; promote `open` (or re-promote
+ * grown `rejected`) clusters that meet the thresholds, and set their target.
+ * `proposed` / `merged` clusters keep their status and target.
+ */
+export function scoreClusters(db: StateDb, skills: SkillInfo[], cfg: ScoreConfig): ScoreResult {
+  const res: ScoreResult = { scored: 0, promoted: [] };
+  db.tx(() => {
+    for (const c of db.clusters()) {
+      const stats = clusterStats(c);
+      const score = scoreOf(stats, cfg.weights);
+      res.scored++;
+      const eligible =
+        meetsPromotion(stats, cfg.promote) &&
+        (c.status === "open" ||
+          c.status === "candidate" ||
+          (c.status === "rejected" && stats.sessions >= (c.rejectedSessions ?? 0) + cfg.promote.reproposeAfterSessions));
+      if (eligible) {
+        const target = formatTarget(pickTarget(c, skills, cfg));
+        db.updateCluster(c.id, { stats, score, status: "candidate", target });
+        if (c.status !== "candidate") res.promoted.push({ id: c.id, title: c.title, target, score });
+      } else {
+        db.updateCluster(c.id, { stats, score });
+      }
+    }
+  });
+  return res;
+}

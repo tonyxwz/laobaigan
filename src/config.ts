@@ -70,6 +70,34 @@ export interface Config {
     /** Max extract calls per run (the rest waits for the next run). */
     maxCallsPerRun: number;
   };
+  score: ScoreConfig;
+}
+
+export interface ScoreConfig {
+  weights: {
+    /** Per distinct session the topic came up in. */
+    session: number;
+    /** Per additional agent (explained to Claude AND pi is a strong signal). */
+    extraAgent: number;
+    /** Per additional distinct day. */
+    extraDay: number;
+    /** Per correction-kind nugget ("no, do X"). */
+    correction: number;
+    /** Subtracted when an existing skill already covers it (it then needs a description fix, not content). */
+    covered: number;
+  };
+  promote: {
+    /** Promote when the topic came up in at least this many sessions… */
+    minSessions: number;
+    /** …or in at least this many sessions across ≥ 2 different agents. */
+    minSessionsCrossAgent: number;
+    /** A rejected cluster is re-proposed only after this many *new* sessions. */
+    reproposeAfterSessions: number;
+  };
+  /** Min token-overlap (0..1) with an existing skill's name+description to target it for an update. */
+  updateSimilarity: number;
+  /** Repo topics with summaries up to this many chars go into AGENTS.md; longer ones become repo skills. */
+  agentsMdMaxChars: number;
 }
 
 export const DEFAULT_CONFIG: Config = {
@@ -92,6 +120,12 @@ export const DEFAULT_CONFIG: Config = {
   extract: {
     chunkTokens: 40_000,
     maxCallsPerRun: 50,
+  },
+  score: {
+    weights: { session: 3, extraAgent: 3, extraDay: 1, correction: 1, covered: 2 },
+    promote: { minSessions: 3, minSessionsCrossAgent: 2, reproposeAfterSessions: 2 },
+    updateSimilarity: 0.25,
+    agentsMdMaxChars: 1200,
   },
 };
 
