@@ -81,9 +81,8 @@ describe("scoreTree", () => {
     expect(scoreTree(tree, S).promoted.map((p) => p.kind)).toEqual(["update"]);
     expect(tree.getNode(gradle)).toMatchObject({ status: "candidate", proposalKind: "update", stats: { fresh: { sessions: 2 }, covered: { sessions: 2 } } });
 
-    // the proposal is merged: sync re-renders → nothing is fresh any more → back to open
+    // the proposal is merged: sync re-renders → nothing fresh or covered counts any more → back to open
     tree.updateNode(gradle, { renderedAt: new Date(Date.now() + 1000) });
-    for (const id of cov) tree.setCovered(id, undefined);
     const r = scoreTree(tree, S);
     expect(r.demoted).toEqual([{ id: gradle, title: "git-worktree" }]);
     expect(tree.getNode(gradle)!.status).toBe("open");

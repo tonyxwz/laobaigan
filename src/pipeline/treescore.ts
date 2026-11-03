@@ -16,7 +16,7 @@ import { meetsPromotion, scoreOf, topicStats, type TopicStats } from "./score.ts
 export interface SkillStats extends TopicStats {
   /** Live skills: evidence attached after the last render that isn't already covered. */
   fresh?: { nuggets: number; sessions: number; agents: string[] };
-  /** Live skills: evidence the file already states. */
+  /** Live skills: evidence (since the last render) that the file already states. */
   covered?: { nuggets: number; sessions: number };
 }
 
@@ -36,8 +36,10 @@ export function skillStats(skill: TreeNode): SkillStats {
   });
   if (skill.origin !== "file") return base;
   const since = skill.renderedAt?.getTime() ?? 0;
-  const covered = members.filter((n) => n.coveredNodeId !== undefined);
-  const fresh = members.filter((n) => n.coveredNodeId === undefined && (n.attachedAt?.getTime() ?? Infinity) > since);
+  // Both kinds only count since the last render: a merged proposal absorbs them.
+  const sinceRender = members.filter((n) => (n.attachedAt?.getTime() ?? Infinity) > since);
+  const covered = sinceRender.filter((n) => n.coveredNodeId !== undefined);
+  const fresh = sinceRender.filter((n) => n.coveredNodeId === undefined);
   return {
     ...base,
     fresh: { nuggets: fresh.length, sessions: sessionsOf(fresh), agents: [...new Set(fresh.map((n) => n.agent))].sort() },
