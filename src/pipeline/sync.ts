@@ -62,7 +62,8 @@ export function syncSkills(tree: Tree, scope: Scope, parsed: ParsedSkill[], opts
         id = node.id;
         if (adopted || node.sourceHash !== p.hash) {
           // Edited (by me, or a merged proposal): evidence so far counts as absorbed.
-          tree.updateNode(id, { ...fields, sourceHash: p.hash, renderedAt: new Date(), summaryDirty: false });
+          // An adopted latent node is now a live skill with no open proposal.
+          tree.updateNode(id, { ...fields, sourceHash: p.hash, renderedAt: new Date(), summaryDirty: false, ...(adopted ? { status: "open" as const } : {}) });
           (adopted ? report.adopted : report.updated).push(p.name);
         } else {
           report.unchanged++;

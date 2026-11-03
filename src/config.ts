@@ -112,6 +112,10 @@ export interface ScoreConfig {
     minSessionsCrossAgent: number;
     /** A rejected cluster is re-proposed only after this many *new* sessions. */
     reproposeAfterSessions: number;
+    /** A live skill gets an update proposal when evidence since its last render spans this many sessions. */
+    updateMinSessions: number;
+    /** …and a description fix when "already covered" evidence spans this many sessions. */
+    fixDescriptionMinSessions: number;
   };
   /** Min token-overlap (0..1) with an existing skill's name+description to target it for an update. */
   updateSimilarity: number;
@@ -142,7 +146,7 @@ export const DEFAULT_CONFIG: Config = {
   },
   score: {
     weights: { session: 3, extraAgent: 3, extraDay: 1, correction: 1, covered: 2 },
-    promote: { minSessions: 3, minSessionsCrossAgent: 2, reproposeAfterSessions: 2 },
+    promote: { minSessions: 3, minSessionsCrossAgent: 2, reproposeAfterSessions: 2, updateMinSessions: 2, fixDescriptionMinSessions: 2 },
     updateSimilarity: 0.25,
     agentsMdMaxChars: 1200,
   },

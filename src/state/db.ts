@@ -174,6 +174,11 @@ export const MIGRATIONS: string[] = [
   // 7: insert found the nugget already written in a live node: I had to explain something
   // the skill already says, so that skill's description isn't triggering.
   `ALTER TABLE nugget ADD COLUMN covered_node_id INTEGER REFERENCES node (id);`,
+  // 8: when a nugget was attached (evidence after a live skill's last render is "new"),
+  // and which kind of proposal a candidate skill is for.
+  `ALTER TABLE nugget ADD COLUMN attached_at INTEGER;
+   UPDATE nugget SET attached_at = CAST(strftime('%s', 'now') AS INTEGER) * 1000 WHERE node_id IS NOT NULL;
+   ALTER TABLE node ADD COLUMN proposal_kind TEXT;`,
 ];
 
 export const TOPIC_STATUSES = ["open", "candidate", "proposed", "merged", "rejected"] as const;
@@ -201,6 +206,8 @@ export interface NuggetRow {
   nodeId?: number;
   /** Live node that already contained this knowledge when it was inserted. */
   coveredNodeId?: number;
+  /** When it was attached to its node. */
+  attachedAt?: Date;
   createdAt: Date;
 }
 
@@ -680,6 +687,7 @@ function toNugget(r: Row): NuggetRow {
     assignmentLocked: Number(r.assignment_locked ?? 0) === 1,
     ...(r.node_id != null ? { nodeId: Number(r.node_id) } : {}),
     ...(r.covered_node_id != null ? { coveredNodeId: Number(r.covered_node_id) } : {}),
+    ...(r.attached_at != null ? { attachedAt: new Date(Number(r.attached_at)) } : {}),
     createdAt: new Date(Number(r.created_at)),
   };
 }

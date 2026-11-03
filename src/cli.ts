@@ -19,6 +19,7 @@ import { truncate } from "./util/text.ts";
 import { subtreeNuggets, Tree, type TreeNode } from "./state/tree.ts";
 import { syncTree, type SyncReport } from "./pipeline/sync.ts";
 import { detachLatent, insertNuggets } from "./pipeline/insert.ts";
+import { scoreTree, type TreeScoreResult } from "./pipeline/treescore.ts";
 import { parseDuration, parseSince } from "./util/time.ts";
 
 const USAGE = `lbg (laobaigan 老白干) — distill repeated explanations from agent sessions into skills
@@ -43,7 +44,8 @@ Pipeline:
       topics on the union of their clusters and promote recurring ones with a target.
       --regroup  also re-place existing (unlocked) clusters under declared / umbrella topics
       --dry-run  run against a temporary copy of the state db, then discard it
-  lbg tree [show <id>] [--json]                        The knowledge tree: roots → skills → sections
+  lbg tree [--status candidate,...] [show <id>] [--json]  The knowledge tree: roots → skills → sections
+  lbg tree score                                       Recompute scores; promote skills that earned a proposal
   lbg tree sync [--dry-run]                            Mirror skill files (global + known repos) and declared topics into the tree
   lbg tree insert [--all] [--dry-run] [--max-calls N]  Sync, then route unplaced nuggets top-down into skills and sections (pi)
       --all  first take the nuggets out of latent skills and insert them again
@@ -276,14 +278,23 @@ async function main(argv: string[]): Promise<number> {
             ...(values["max-calls"] ? { maxCalls: Number(values["max-calls"]) } : {}),
             log: (m) => process.stderr.write(`${m}\n`),
           });
-          if (values.json) return json({ ...r, trees: tree.trees() }), 0;
+          const scored = scoreTree(tree, cfg.score);
+          if (values.json) return json({ ...r, scored, trees: tree.trees() }), 0;
           for (const t of tree.trees()) if (subtreeNuggets(t).length) renderTree(t, out, { onlyWithEvidence: true });
+          renderScore(scored, out);
           out(
             `\nplaced ${r.placed} nugget(s)${r.deferred ? `, ${r.deferred} deferred` : ""}; ` +
               `new skills: ${r.skillsCreated.join(", ") || "none"}; new sections: ${r.sectionsCreated.length}; ` +
               `already covered by live text: ${r.covered}; ${r.calls} model call(s), cost≈$${r.usage.cost.toFixed(4)}` +
               `${tmp ? "  (dry run: nothing persisted)" : ""}\n`,
           );
+          return 0;
+        }
+        if (rest[0] === "score") {
+          const scored = scoreTree(tree, cfg.score);
+          if (values.json) return json(scored), 0;
+          renderScore(scored, out);
+          out(`${scored.scored} skill(s) scored${tmp ? "  (dry run: nothing persisted)" : ""}\n`);
           return 0;
         }
         if (rest[0] === "sync") {
@@ -318,7 +329,11 @@ async function main(argv: string[]): Promise<number> {
         if (rest[0]) throw new Error(`Unknown tree subcommand: ${rest[0]} (show)`);
         const roots = tree.trees();
         if (values.json) return json(roots), 0;
-        for (const r of roots) renderTree(r, out);
+        const statuses = values.status?.split(",");
+        for (const r of roots) {
+          if (statuses && !r.children.some((c) => statuses.includes(c.status))) continue;
+          renderTree(r, out, statuses ? { statuses } : {});
+        }
         const unplaced = tree.unplacedNuggets().length;
         out(`\n${unplaced ? `${unplaced} nugget(s) not placed yet. ` : ""}s=sessions n=nuggets. Details: lbg tree show <id>\n`);
         return 0;
@@ -535,14 +550,20 @@ function sessionsOf(n: TreeNode): number {
   return new Set(subtreeNuggets(n).map((m) => `${m.agent}:${m.sessionId}`)).size;
 }
 
-function renderTree(root: TreeNode, out: (s: string) => void, opts: { onlyWithEvidence?: boolean } = {}): void {
+function renderScore(r: TreeScoreResult, out: (s: string) => void): void {
+  for (const p of r.promoted) out(`candidate: #${p.id} ${p.title} → ${p.kind} (score ${p.score})\n`);
+  for (const d of r.demoted) out(`no longer a candidate: #${d.id} ${d.title}\n`);
+}
+
+function renderTree(root: TreeNode, out: (s: string) => void, opts: { onlyWithEvidence?: boolean; statuses?: string[] } = {}): void {
   out(`\n${root.scope === "global" ? "Global skills" : `repo ${shortPath(root.repo)}`}  (root #${root.id}, ${root.children.length} skill(s))\n`);
   const skills = [...root.children]
     .filter((s) => !opts.onlyWithEvidence || subtreeNuggets(s).length > 0)
+    .filter((s) => !opts.statuses || opts.statuses.includes(s.status))
     .sort((a, b) => sessionsOf(b) - sessionsOf(a) || b.score - a.score || a.id - b.id);
   for (const s of skills) {
     out(
-      `  #${String(s.id).padEnd(4)} ${s.origin.padEnd(8)} ${s.status.padEnd(9)} score=${String(s.score).padStart(3)} ` +
+      `  #${String(s.id).padEnd(4)} ${s.origin.padEnd(8)} ${(s.status + (s.proposalKind ? `:${s.proposalKind}` : "")).padEnd(25)} score=${String(s.score).padStart(3)} ` +
         `s=${sessionsOf(s)} n=${subtreeNuggets(s).length}  ${s.name ? `${s.name} — ` : ""}${s.title}${s.locked ? " (locked)" : ""}` +
         `${s.origin === "file" && s.children.length ? `  [${s.children.length} section(s)]` : ""}\n`,
     );

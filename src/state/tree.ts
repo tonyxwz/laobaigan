@@ -12,6 +12,8 @@ export type Depth = 0 | 1 | 2;
 export const MAX_DEPTH = 2;
 
 export type Origin = "root" | "file" | "declared" | "latent";
+/** What a candidate skill would be proposed as. */
+export type ProposalKind = "new" | "update" | "fix-description";
 export type NodeStatus = TopicStatus;
 
 export interface NodeRow {
@@ -35,6 +37,7 @@ export interface NodeRow {
   sourcePath?: string;
   sourceHash?: string;
   renderedAt?: Date;
+  proposalKind?: ProposalKind;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -74,6 +77,7 @@ function toNode(r: Row): NodeRow {
     ...(r.source_path ? { sourcePath: String(r.source_path) } : {}),
     ...(r.source_hash ? { sourceHash: String(r.source_hash) } : {}),
     ...(r.rendered_at != null ? { renderedAt: new Date(Number(r.rendered_at)) } : {}),
+    ...(r.proposal_kind ? { proposalKind: r.proposal_kind as ProposalKind } : {}),
     createdAt: new Date(Number(r.created_at)),
     updatedAt: new Date(Number(r.updated_at)),
   };
@@ -180,6 +184,7 @@ export class Tree {
         | "sourcePath"
         | "sourceHash"
         | "renderedAt"
+        | "proposalKind"
       >
     >,
   ): void {
@@ -198,6 +203,7 @@ export class Tree {
       sourcePath: "source_path",
       sourceHash: "source_hash",
       renderedAt: "rendered_at",
+      proposalKind: "proposal_kind",
     };
     const sets: string[] = [];
     const vals: (string | number | null)[] = [];
@@ -245,7 +251,7 @@ export class Tree {
     if (!n) throw new Error(`No nugget ${nuggetId}`);
     const ns = { scope: String(n.scope), ...(n.repo ? { repo: String(n.repo) } : {}) };
     if (!sameScope(ns, node)) throw new Error(`Scope mismatch: nugget ${nuggetId} (${label(ns)}) vs node ${nodeId} (${label(node)})`);
-    this.sql.prepare("UPDATE nugget SET node_id = ? WHERE id = ?").run(nodeId, nuggetId);
+    this.sql.prepare("UPDATE nugget SET node_id = ?, attached_at = ? WHERE id = ?").run(nodeId, Date.now(), nuggetId);
     if (opts.lock !== undefined) this.sql.prepare("UPDATE nugget SET assignment_locked = ? WHERE id = ?").run(opts.lock ? 1 : 0, nuggetId);
     if (n.node_id != null) this.markDirty(Number(n.node_id));
     this.markDirty(nodeId);
@@ -255,7 +261,7 @@ export class Tree {
   detachNugget(nuggetId: number): void {
     const n = this.db.getNugget(nuggetId);
     if (!n) throw new Error(`No nugget ${nuggetId}`);
-    this.sql.prepare("UPDATE nugget SET node_id = NULL, covered_node_id = NULL WHERE id = ?").run(nuggetId);
+    this.sql.prepare("UPDATE nugget SET node_id = NULL, covered_node_id = NULL, attached_at = NULL WHERE id = ?").run(nuggetId);
     if (n.nodeId !== undefined) this.markDirty(n.nodeId);
   }
 
