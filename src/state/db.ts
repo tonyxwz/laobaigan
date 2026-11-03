@@ -171,6 +171,9 @@ export const MIGRATIONS: string[] = [
    UPDATE nugget SET node_id = (SELECT n.id FROM node n WHERE n.legacy_cluster_id = nugget.cluster_id
                                 ORDER BY n.depth DESC LIMIT 1)
      WHERE cluster_id IS NOT NULL;`,
+  // 7: insert found the nugget already written in a live node: I had to explain something
+  // the skill already says, so that skill's description isn't triggering.
+  `ALTER TABLE nugget ADD COLUMN covered_node_id INTEGER REFERENCES node (id);`,
 ];
 
 export const TOPIC_STATUSES = ["open", "candidate", "proposed", "merged", "rejected"] as const;
@@ -196,6 +199,8 @@ export interface NuggetRow {
   assignmentLocked: boolean;
   /** Knowledge-tree node (skill or section) it is attached to. */
   nodeId?: number;
+  /** Live node that already contained this knowledge when it was inserted. */
+  coveredNodeId?: number;
   createdAt: Date;
 }
 
@@ -674,6 +679,7 @@ function toNugget(r: Row): NuggetRow {
     ...(r.cluster_id != null ? { clusterId: Number(r.cluster_id) } : {}),
     assignmentLocked: Number(r.assignment_locked ?? 0) === 1,
     ...(r.node_id != null ? { nodeId: Number(r.node_id) } : {}),
+    ...(r.covered_node_id != null ? { coveredNodeId: Number(r.covered_node_id) } : {}),
     createdAt: new Date(Number(r.created_at)),
   };
 }

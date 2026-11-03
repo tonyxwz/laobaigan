@@ -18,6 +18,7 @@ import { acquireLock } from "./util/lock.ts";
 import { truncate } from "./util/text.ts";
 import { subtreeNuggets, Tree, type TreeNode } from "./state/tree.ts";
 import { syncTree, type SyncReport } from "./pipeline/sync.ts";
+import { detachLatent, insertNuggets } from "./pipeline/insert.ts";
 import { parseDuration, parseSince } from "./util/time.ts";
 
 const USAGE = `lbg (laobaigan 老白干) — distill repeated explanations from agent sessions into skills
@@ -44,6 +45,8 @@ Pipeline:
       --dry-run  run against a temporary copy of the state db, then discard it
   lbg tree [show <id>] [--json]                        The knowledge tree: roots → skills → sections
   lbg tree sync [--dry-run]                            Mirror skill files (global + known repos) and declared topics into the tree
+  lbg tree insert [--all] [--dry-run] [--max-calls N]  Sync, then route unplaced nuggets top-down into skills and sections (pi)
+      --all  first take the nuggets out of latent skills and insert them again
   lbg topics [--status candidate,open,...] [--json]    Topics (future skills) by score, with their clusters
   lbg topics show <id> [--json]                         Summary, clusters, members, evidence
   lbg topics retarget <id> <target>                     Set the target by hand, e.g.
@@ -86,6 +89,7 @@ async function main(argv: string[]): Promise<number> {
       fresh: { type: "boolean", default: false },
       excerpt: { type: "boolean", default: false },
       regroup: { type: "boolean", default: false },
+      all: { type: "boolean", default: false },
       "max-calls": { type: "string" },
       status: { type: "string" },
       title: { type: "string" },
@@ -265,6 +269,23 @@ async function main(argv: string[]): Promise<number> {
       const db = tmp ? real.snapshotTo(join(tmp, "state.db")) : real;
       try {
         const tree = new Tree(db);
+        if (rest[0] === "insert") {
+          await syncTree(tree, { skillsDir: join(cfg.skillsRepo.workTree, cfg.skillsRepo.skillsPath), declared: cfg.topics });
+          if (values.all) out(`re-inserting ${detachLatent(tree).length} nugget(s) from latent skills\n`);
+          const r = await insertNuggets(tree, new BedrockPiRunner(), cfg, {
+            ...(values["max-calls"] ? { maxCalls: Number(values["max-calls"]) } : {}),
+            log: (m) => process.stderr.write(`${m}\n`),
+          });
+          if (values.json) return json({ ...r, trees: tree.trees() }), 0;
+          for (const t of tree.trees()) if (subtreeNuggets(t).length) renderTree(t, out, { onlyWithEvidence: true });
+          out(
+            `\nplaced ${r.placed} nugget(s)${r.deferred ? `, ${r.deferred} deferred` : ""}; ` +
+              `new skills: ${r.skillsCreated.join(", ") || "none"}; new sections: ${r.sectionsCreated.length}; ` +
+              `already covered by live text: ${r.covered}; ${r.calls} model call(s), cost≈$${r.usage.cost.toFixed(4)}` +
+              `${tmp ? "  (dry run: nothing persisted)" : ""}\n`,
+          );
+          return 0;
+        }
         if (rest[0] === "sync") {
           const r = await syncTree(tree, {
             skillsDir: join(cfg.skillsRepo.workTree, cfg.skillsRepo.skillsPath),
@@ -514,9 +535,11 @@ function sessionsOf(n: TreeNode): number {
   return new Set(subtreeNuggets(n).map((m) => `${m.agent}:${m.sessionId}`)).size;
 }
 
-function renderTree(root: TreeNode, out: (s: string) => void): void {
+function renderTree(root: TreeNode, out: (s: string) => void, opts: { onlyWithEvidence?: boolean } = {}): void {
   out(`\n${root.scope === "global" ? "Global skills" : `repo ${shortPath(root.repo)}`}  (root #${root.id}, ${root.children.length} skill(s))\n`);
-  const skills = [...root.children].sort((a, b) => b.score - a.score || a.id - b.id);
+  const skills = [...root.children]
+    .filter((s) => !opts.onlyWithEvidence || subtreeNuggets(s).length > 0)
+    .sort((a, b) => sessionsOf(b) - sessionsOf(a) || b.score - a.score || a.id - b.id);
   for (const s of skills) {
     out(
       `  #${String(s.id).padEnd(4)} ${s.origin.padEnd(8)} ${s.status.padEnd(9)} score=${String(s.score).padStart(3)} ` +

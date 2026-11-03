@@ -251,6 +251,19 @@ export class Tree {
     this.markDirty(nodeId);
   }
 
+  /** Take a nugget out of the tree (e.g. to re-insert it). */
+  detachNugget(nuggetId: number): void {
+    const n = this.db.getNugget(nuggetId);
+    if (!n) throw new Error(`No nugget ${nuggetId}`);
+    this.sql.prepare("UPDATE nugget SET node_id = NULL, covered_node_id = NULL WHERE id = ?").run(nuggetId);
+    if (n.nodeId !== undefined) this.markDirty(n.nodeId);
+  }
+
+  /** Record that a live node already contained this nugget's knowledge (or clear it). */
+  setCovered(nuggetId: number, nodeId: number | undefined): void {
+    this.sql.prepare("UPDATE nugget SET covered_node_id = ? WHERE id = ?").run(nodeId ?? null, nuggetId);
+  }
+
   /** Nuggets not yet placed in the tree, oldest first. */
   unplacedNuggets(): NuggetRow[] {
     return this.db.nuggets().filter((n) => n.nodeId === undefined);
