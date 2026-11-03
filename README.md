@@ -6,7 +6,7 @@ CLI: **`lbg`**. Package: `laobaigan`. State: `~/.local/state/laobaigan/`. Config
 
 A background service that periodically scans chat sessions from all my AI coding agents, finds the knowledge **I keep explaining over and over**, and distills it into reusable [skills](https://pi.dev/docs/latest/skills). Every change is proposed on its **own git branch + worktree**, and I review and merge it myself.
 
-> Status: **M0 + M1 done** (session inventory; change detection, fingerprint dedup, prefilter, redaction, extraction via pi/Bedrock). The git branch + worktree module for M3 is built and tested. **Next: M2** (cluster + score).
+> Status: M0 (session inventory), M1 (incremental extraction via pi/Bedrock) and M2 (grouping and scoring) are done. **In progress: M2.6, the knowledge-tree model.** The git branch + worktree module for M3 is built and tested.
 
 ## Development
 
@@ -252,50 +252,67 @@ interface Nugget {
 - The prompt includes the **existing skill index** (global skills + the session repo's `.agents/skills` and `AGENTS.md` headings), so the model can set `coveredBySkill`.
 - `scope` rule of thumb: "would this help in a *different* repo?" If not, it's `repo`. The repo is the git top-level of the session's `cwd`, or a path the evidence refers to.
 
-### 5. Aggregate and score (deterministic + light pi)
+### 5. The knowledge tree (insert, score, rebalance)
 
-Two levels:
+The skills directory is already a tree with progressive disclosure, so lbg keeps one **knowledge tree per scope** and mirrors it 1:1 onto files:
 
 ```
-topic    = one skill (or one AGENTS.md section)      e.g. "Dotfiles management"
-└ cluster = a subtopic: a section or references/x.md  e.g. "tmux", "zsh profiles", "pi config"
-  └ nugget = one thing I taught an agent, with evidence
+depth 0  root            global: the skill list every agent loads   repo: <repo>/AGENTS.md (always loaded in that repo)
+depth 1  skill           name + description (always loaded)          repo: an AGENTS.md section, or .agents/skills/<name>
+depth 2  section         a SKILL.md section or references/<x>.md (loaded on demand)
+leaves   nuggets         things I taught an agent, with evidence (never shown to agents)
 ```
 
-Recurrence is counted at the **topic** level, so an umbrella topic surfaces even when each subtopic came up only once.
+Depth is capped at 2 below the root. Agents don't reliably follow deeper "see references/x.md" chains, and the cap bounds the cost: every operation looks at one node's children, never the whole tree.
 
-1. **Cluster** nuggets that say the same thing.
-   - v1: ask pi to assign each new nugget to an existing cluster or start a new one, using compact cluster summaries.
-   - A new cluster gets its own topic until it's grouped under a broader one (declared topics, curation, or the consolidation pass).
-2. **Score** each topic on the union of its clusters' nuggets:
-   ```
-   score = distinct_sessions × w1
-         + distinct_agents   × w2     // explained to Claude AND pi → strong signal
-         + distinct_days     × w3
-         + correction_bonus           // "I told you…", rewinds
-         − already_covered_penalty    // an existing skill already covers it
-   ```
-3. **Promote** a cluster to a candidate when `distinct_sessions ≥ 3`, or `≥ 2` across different agents (configurable). Fingerprint dedup means a resumed copy of a session doesn't inflate the count.
-4. **Pick the target:**
-   - `global:new`: no existing global skill fits **and** the topic is coherent enough to stand on its own. Otherwise prefer:
-   - `global:update:<skill>`: extend the closest existing skill.
-   - `global:fix-description:<skill>`: the skill already has the content, but I still had to explain it, so its `description` probably doesn't trigger when it should.
-   - `repo:agents-md:<repo>`: short repo facts/rules → the repo's `AGENTS.md`.
-   - `repo:skill:<repo>/<name>`: a repo-specific procedure → `<repo>/.agents/skills/<name>/SKILL.md`.
+**Budgets** (`config.tree`): at most `maxSkills` depth-1 nodes in the global tree (the always-loaded cost every agent pays), at most `maxSections` children per skill, and size limits per node. Breaking a limit triggers a rebalance of *that node only*.
 
-### 6. Distill (pi SDK, agentic, inside a git worktree)
+**Where nodes come from**
+- **Parsed from files (`live`).** Every run starts by parsing `~/.config/opencode/skills` (each skill becomes a depth-1 node; its `##` sections and `references/*.md` become depth-2 nodes) and each known repo's `AGENTS.md` and `.agents/skills`. Files are the source of truth: my hand edits and merged proposals are picked up with no sync logic, and new knowledge is routed into my existing skills.
+- **Declared (`config.topics`).** Pinned depth-1 nodes that exist before they have any nuggets.
+- **Grown by lbg (`latent`).** Created while inserting; invisible to agents until promoted and merged.
 
-For each candidate:
+**Operations**, the same at every level:
+
+```
+insert(batch):            route new nuggets top-down, one batched model call per level:
+                          root → which skill (or "new skill")? → which section (or "new section" / skill body)?
+                          A call is skipped when only one child could fit.
+score(node):              recurrence = distinct sessions / agents / days over the node's subtree.
+                          A latent skill is promoted (candidate) at ≥ 3 sessions, or ≥ 2 across agents.
+                          A live skill gets an update proposal when *new* evidence since its last render passes the threshold.
+rebalance(node):          only when a budget is clearly exceeded (hysteresis):
+                          too many sections → group into a reference / split the skill;
+                          root over maxSkills → propose merging the two closest skills.
+                          Locked and declared nodes are never moved; changes at depth 1 are always their own proposal.
+render(subtree) → files:  the drafting step (below). Only changed subtrees are rendered, so each proposal is a small, local diff.
+```
+
+Summaries are **lazy**: routing needs only names and one-line descriptions, so a node's full summary is rewritten only when its subtree is about to be rendered.
+
+**Curation** works on nodes: `merge`, `split`, `move`, `rename`, `unlock`, and moving a single nugget. Every hand edit is locked, so automation never undoes it.
+
+**Scoring weights** (unchanged):
+```
+score = distinct_sessions × w1 + extra_agents × w2 + extra_days × w3 + corrections × w4 − already_covered × w5
+```
+"Already covered" has a special meaning in the tree: if a nugget is routed to a live section that already contains it, I still had to explain it, so the skill's description isn't triggering. The proposal for that skill fixes its `description`, not its content.
+
+Repo trees use the same model. Short facts at depth 1 render as `AGENTS.md` sections, longer procedures as `.agents/skills/<name>/SKILL.md`. Multi-package workspace roots (a `packageInfo` file and per-package repos under `src/`) are mapped to the package the evidence names.
+
+### 6. Render a subtree (pi SDK, agentic, inside a git worktree)
+
+For each candidate (a promoted latent skill, or a live skill with enough new evidence):
 
 1. **Create a branch and a worktree** in the target repository (see [Git workflow](#git-workflow)).
-2. Run a pi session with `cwd` = the worktree and tools `read`, `edit`, `write`, `ls`, `find`, `grep` (no `bash`), with model `claude-opus-5-5`. It writes or edits the skill / `AGENTS.md` in the worktree, following our house rules:
+2. Run a pi session with `cwd` = the worktree, guarded file tools that can only touch the subtree's paths (`<skillsPath>/<name>/…`, or the repo's `AGENTS.md` / `.agents/skills/<name>/…`), and model `claude-opus-5-5`. It writes the skill **folder**: `SKILL.md` with the routing description and the shared workflow, plus `references/<section>.md` for sections that are too big for the body. House rules:
    - `description` is specific about *when* to trigger
    - real commands and paths instead of vague prose
    - no secrets, no session-specific trivia
-   - stay under a size budget; prefer extending a skill over adding one
-3. **Verify** the result deterministically: only allowed paths changed, the frontmatter has `name` and `description`, no redaction patterns match.
-4. **Commit** on the branch with a message that includes the cluster summary and evidence (agent, session id, date, short quotes).
-5. Record the proposal (`branch`, `worktree`, target, status `open`) in the state db.
+   - within the node's size budget
+3. **Verify** deterministically: only the subtree's paths changed, frontmatter `name`/`description` valid (lowercase-hyphen name ≤ 64 chars, description ≤ 1024), no redaction patterns match.
+4. **Commit** on the branch with the evidence (agent, session, date, short quotes) in the message.
+5. Record the proposal. After I merge, the next parse turns the latent node into a live one.
 
 ### 7. Review (me)
 
@@ -373,8 +390,7 @@ git --git-dir=~/.cfg --work-tree=<worktree> commit ...   # commit happens in the
 | `session` | `(agent, session_id)` → `version`, location, cwd, timestamps, prefilter signals, last status |
 | `turn_seen` | user-turn fingerprint → first `(agent, session_id)` it was seen in; drives dedup across resumes |
 | `nugget` | extracted nuggets + evidence (agent, session, turn label, quote) |
-| `topic` | one future skill / AGENTS.md section: title, declared name/description, score, status (`open` / `candidate` / `proposed` / `merged` / `rejected`), target, locks |
-| `cluster` | a subtopic under a topic: title, merged summary, member nuggets |
+| `node` | the knowledge tree: parent, depth, scope/repo, name, description, summary (lazy), origin (`file` / `declared` / `latent`), status, score, locks, source path |
 | `proposal` | cluster, target, repo, branch, worktree, commit, status |
 | `run` | run log: counts, token usage and cost per stage, errors |
 
@@ -435,10 +451,11 @@ systemd/
 
 1. **M0: Read-only inventory.** Adapters for Claude, pi, and opencode; `sessions` and `show` commands. ✅
 2. **M1: State + prefilter + extract.** Change detection, fingerprint dedup, redaction, nuggets in SQLite; `scan` and `extract --dry-run`. Tune the prompt on real sessions. ✅
-3. **M2: Cluster + score.** A `status` view of the top recurring clusters. This is the first point where we can see whether the idea works.
-4. **M3: Distill + git workflow.** Branch + worktree per proposal, `proposals` CLI. (`src/git/worktree.ts` is done and tested against a bare dotfiles-style repo and a normal repo.)
-5. **M4: systemd timer**, budgets, run log, notifications. (Timer, lock, run log, error-abort done; notifications pending.)
-6. **M5:** Codex and Kiro adapters.
+3. **M2: Cluster + score.** A `status` view of the top recurring clusters. This is the first point where we can see whether the idea works. ✅ (two-level topics/clusters, declared topics, curation, regroup)
+4. **M2.6: Knowledge tree.** Replace topics/clusters with one tree per scope: parse existing skills, batched top-down insert, recursive scoring, rebalance with budgets, curation on nodes. See [The knowledge tree](#5-the-knowledge-tree-insert-score-rebalance).
+5. **M3: Render + git workflow.** Branch + worktree per proposal, `proposals` CLI. (`src/git/worktree.ts` is done and tested against a bare dotfiles-style repo and a normal repo.)
+6. **M4: systemd timer**, budgets, run log, notifications. (Timer, lock, run log, error-abort done; notifications pending.)
+7. **M5:** Codex and Kiro adapters.
 
 ## Open questions
 
