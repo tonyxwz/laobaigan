@@ -71,6 +71,25 @@ export interface Config {
     maxCallsPerRun: number;
   };
   score: ScoreConfig;
+  /** Topics I want to exist (future skills / AGENTS.md sections); always offered as homes. */
+  topics: DeclaredTopic[];
+  clustering: {
+    /** Free-text policy appended to the clustering (and consolidation) prompt. */
+    guidance: string;
+  };
+}
+
+export interface DeclaredTopic {
+  /** Skill name: lowercase letters, digits, single hyphens, ≤ 64 chars. */
+  name: string;
+  /** Display title. Default: derived from the name. */
+  title?: string;
+  /** What the topic covers; the clustering model uses it to decide what belongs. */
+  description: string;
+  /** Default "global". */
+  scope?: "global" | "repo";
+  /** Required when scope is "repo": the repository root. */
+  repo?: string;
 }
 
 export interface ScoreConfig {
@@ -127,7 +146,27 @@ export const DEFAULT_CONFIG: Config = {
     updateSimilarity: 0.25,
     agentsMdMaxChars: 1200,
   },
+  topics: [],
+  clustering: { guidance: "" },
 };
+
+const SKILL_NAME = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+
+function validateTopics(topics: DeclaredTopic[]): DeclaredTopic[] {
+  const seen = new Set<string>();
+  return topics.map((t, i) => {
+    if (!t || typeof t.name !== "string" || !SKILL_NAME.test(t.name) || t.name.length > 64) {
+      throw new Error(`config.topics[${i}].name must be lowercase letters, digits and single hyphens (got ${JSON.stringify(t?.name)})`);
+    }
+    if (typeof t.description !== "string" || !t.description.trim()) throw new Error(`config.topics[${i}] (${t.name}) needs a description`);
+    const scope = t.scope ?? "global";
+    if (scope === "repo" && !t.repo) throw new Error(`config.topics[${i}] (${t.name}) has scope "repo" but no repo`);
+    const key = `${scope}:${t.repo ?? ""}:${t.name}`;
+    if (seen.has(key)) throw new Error(`config.topics: duplicate ${t.name}`);
+    seen.add(key);
+    return { ...t, scope, ...(t.repo ? { repo: expandPath(t.repo) } : {}) };
+  });
+}
 
 export const CONFIG_PATH =
   process.env.LBG_CONFIG ?? join(process.env.XDG_CONFIG_HOME ?? join(home, ".config"), "laobaigan", "config.json");
@@ -164,6 +203,7 @@ export function loadConfig(path = CONFIG_PATH): Config {
       ...(c.skillsRepo.gitDir ? { gitDir: expandPath(c.skillsRepo.gitDir) } : {}),
       workTree: expandPath(c.skillsRepo.workTree),
     },
+    topics: validateTopics(Array.isArray(c.topics) ? c.topics : []),
     worktreesDir: expandPath(c.worktreesDir),
     stateDir: expandPath(c.stateDir),
   };

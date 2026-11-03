@@ -330,6 +330,23 @@ Targets are described in config, so the git commands work for normal repos and f
 }
 ```
 
+Steering the grouping (optional):
+
+```jsonc
+{
+  // Topics I want to exist. Always offered as homes, even with no nuggets yet.
+  "topics": [
+    {
+      "name": "dotfiles-management",          // becomes the skill name
+      "description": "~/.cfg bare repo (ddd alias), zsh profiles, tmux, mise/Homebrew, agent configs for pi/opencode/Claude Code"
+    },
+    { "name": "run-evals", "scope": "repo", "repo": "~/code/my-service", "description": "..." }
+  ],
+  // Free-text policy appended to the grouping prompt.
+  "clustering": { "guidance": "Prefer one umbrella skill per ecosystem, with reference files per tool." }
+}
+```
+
 Per proposal:
 
 ```bash

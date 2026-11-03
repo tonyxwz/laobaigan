@@ -2,7 +2,9 @@ import type { Static, TSchema } from "typebox";
 import { describe, expect, it } from "vitest";
 import { DEFAULT_CONFIG } from "../src/config.ts";
 import type { PiRequest, PiResult, PiRunner } from "../src/pi/run-pi.ts";
-import { clusterNuggets, partitionKey, validatePlan, type AssignResult } from "../src/pipeline/cluster.ts";
+import { clusterNuggets, clusterSystemPrompt, partitionKey, validatePlan, type AssignResult } from "../src/pipeline/cluster.ts";
+import { syncDeclaredTopics, titleFromName } from "../src/pipeline/topics.ts";
+import type { Config } from "../src/config.ts";
 import { StateDb, type NuggetInsert } from "../src/state/db.ts";
 
 const nugget = (title: string, over: Partial<NuggetInsert> = {}): NuggetInsert => ({
@@ -23,12 +25,14 @@ const nugget = (title: string, over: Partial<NuggetInsert> = {}): NuggetInsert =
 /** Returns canned answers in order, recording prompts. */
 class ScriptedRunner implements PiRunner {
   prompts: string[] = [];
+  systemPrompts: string[] = [];
   private answers: ((prompt: string) => AssignResult)[];
   constructor(answers: ((prompt: string) => AssignResult)[]) {
     this.answers = answers;
   }
   async run<S extends TSchema>(req: PiRequest<S>): Promise<PiResult<Static<S>>> {
     this.prompts.push(req.prompt);
+    this.systemPrompts.push(req.systemPrompt);
     const next = this.answers.shift();
     if (!next) throw new Error("unexpected call");
     return { value: next(req.prompt) as Static<S>, usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: 0.001 } };
@@ -160,5 +164,98 @@ describe("StateDb.snapshotTo", () => {
     copy.createCluster({ title: "only in copy", summary: "", scope: "global" });
     expect(db.counts().clusters).toBe(0);
     expect(copy.counts()).toMatchObject({ clusters: 1, nuggets: 1 });
+  });
+});
+
+const DOTFILES = {
+  name: "dotfiles-management",
+  description: "~/.cfg bare repo (ddd alias), zsh profiles, tmux, mise/Homebrew, agent configs for pi/opencode/Claude Code",
+};
+
+describe("declared topics", () => {
+  it("syncs config.topics: create, update, un-declare", () => {
+    const db = new StateDb(":memory:");
+    expect(syncDeclaredTopics(db, [DOTFILES]).created).toEqual(["dotfiles-management"]);
+    const t = db.topics()[0]!;
+    expect(t).toMatchObject({ name: "dotfiles-management", title: "Dotfiles management", declared: true, description: DOTFILES.description });
+    expect(titleFromName("makes")).toBe("Gradle builds");
+
+    // unchanged → no-op; changed description → updated
+    expect(syncDeclaredTopics(db, [DOTFILES])).toEqual({ created: [], updated: [], undeclared: [] });
+    expect(syncDeclaredTopics(db, [{ ...DOTFILES, description: "dotfiles" }]).updated).toEqual(["dotfiles-management"]);
+
+    // removed from config: an empty topic disappears; one with clusters stays as an ordinary topic
+    const c = db.createCluster({ title: "tmux", summary: "s", scope: "global", topicId: t.id });
+    db.assignNugget(db.insertNugget(nugget("tmux")), c);
+    expect(syncDeclaredTopics(db, []).undeclared).toEqual(["dotfiles-management"]);
+    expect(db.getTopic(t.id)).toMatchObject({ declared: false, name: "dotfiles-management" });
+    // re-declaring adopts the same topic (matched by name)
+    syncDeclaredTopics(db, [DOTFILES]);
+    expect(db.topics().map((x) => [x.id, x.declared])).toEqual([[t.id, true]]);
+  });
+
+  it("offers declared topics (with description) as homes and appends guidance", async () => {
+    const db = new StateDb(":memory:");
+    const zsh = db.insertNugget(nugget("zsh profiles gated by hostname"));
+    const tmux = db.insertNugget(nugget("tmux config lives in ~/.tmux.conf.local"));
+    const cfg: Config = { ...DEFAULT_CONFIG, topics: [DOTFILES], clustering: { guidance: "Prefer one umbrella skill per ecosystem." } };
+
+    const runner = new ScriptedRunner([
+      (p) => {
+        const dot = Number(/<topic id="(\d+)" name="dotfiles-management" declared="yes">/.exec(p)![1]);
+        expect(p).toContain(`description: ${DOTFILES.description}`);
+        expect(p).toContain("(no clusters yet)");
+        return {
+          newClusters: [
+            { key: "z", title: "zsh", summary: "zsh", topicId: dot },
+            { key: "t", title: "tmux", summary: "tmux", topicId: dot },
+          ],
+          assignments: [
+            { nuggetId: zsh, newClusterKey: "z" },
+            { nuggetId: tmux, newClusterKey: "t" },
+          ],
+          updatedClusters: [],
+        };
+      },
+    ]);
+    await clusterNuggets(db, runner, cfg);
+    expect(runner.systemPrompts[0]).toContain("Guidance from the engineer (follow it):\nPrefer one umbrella skill per ecosystem.");
+    expect(runner.systemPrompts[0]).not.toContain("ssh-agent"); // old "keep separate" example is gone
+
+    const topics = db.topics();
+    expect(topics).toHaveLength(1);
+    expect(topics[0]).toMatchObject({ name: "dotfiles-management", declared: true });
+    expect(topics[0]!.clusters.map((c) => c.title)).toEqual(["zsh", "tmux"]);
+  });
+
+  it("asks the model even for a single nugget when a declared topic exists", async () => {
+    const db = new StateDb(":memory:");
+    const n = db.insertNugget(nugget("tmux"));
+    const runner = new ScriptedRunner([
+      (p) => {
+        const dot = Number(/<topic id="(\d+)"/.exec(p)![1]);
+        return { newClusters: [{ key: "t", title: "tmux", summary: "s", topicId: dot }], assignments: [{ nuggetId: n, newClusterKey: "t" }], updatedClusters: [] };
+      },
+    ]);
+    await clusterNuggets(db, runner, { ...DEFAULT_CONFIG, topics: [DOTFILES] });
+    expect(runner.prompts).toHaveLength(1);
+    expect(db.topics()[0]!.clusters).toHaveLength(1);
+  });
+
+  it("repairs an unknown topicId by starting a new topic", () => {
+    const db = new StateDb(":memory:");
+    const n = db.insertNugget(nugget("x"));
+    const plan = validatePlan(
+      "global",
+      { newClusters: [{ key: "k", title: "T", summary: "s", topicId: 999 }], assignments: [{ nuggetId: n, newClusterKey: "k" }], updatedClusters: [] },
+      db.unclusteredNuggets(),
+      [],
+    );
+    expect(plan.newClusters[0]!.topicId).toBeUndefined();
+    expect(plan.repairs).toContain("new cluster k: unknown topic 999; new topic");
+  });
+
+  it("keeps the base prompt when there is no guidance", () => {
+    expect(clusterSystemPrompt("  ")).toBe(clusterSystemPrompt());
   });
 });

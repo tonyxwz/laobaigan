@@ -2,15 +2,19 @@ import { Type, type Static } from "typebox";
 import type { Config } from "../config.ts";
 import type { PiRunner, Usage } from "../pi/run-pi.ts";
 import { addUsage, ZERO_USAGE } from "../pi/run-pi.ts";
-import type { ClusterWithMembers, NuggetRow, StateDb } from "../state/db.ts";
+import type { ClusterWithMembers, NuggetRow, StateDb, TopicWithClusters } from "../state/db.ts";
+import { syncDeclaredTopics } from "./topics.ts";
 import { truncate } from "../util/text.ts";
 
 export const AssignSchema = Type.Object({
   newClusters: Type.Array(
     Type.Object({
       key: Type.String({ description: "Short local id you invent, e.g. 'n1'. Referenced by assignments." }),
-      title: Type.String({ description: "Topic title, e.g. 'Building Gradle packages'." }),
+      title: Type.String({ description: "Subtopic title, e.g. 'tmux configuration'." }),
       summary: Type.String({ description: "The merged knowledge of all members, self-contained markdown." }),
+      topicId: Type.Optional(
+        Type.Integer({ description: "An EXISTING topic id to put this new cluster under. Omit to start a new topic." }),
+      ),
     }),
   ),
   assignments: Type.Array(
@@ -32,16 +36,26 @@ export const AssignSchema = Type.Object({
 });
 export type AssignResult = Static<typeof AssignSchema>;
 
-export const CLUSTER_SYSTEM_PROMPT = `You organize "knowledge nuggets" that a software engineer taught their AI coding agents into topic clusters.
+const BASE_SYSTEM_PROMPT = `You organize "knowledge nuggets" that a software engineer taught their AI coding agents.
 
-Each cluster will later become ONE skill (or one section of a repository's AGENTS.md). The engineer wants FEW skills, each about one coherent topic, but not so broad that the topic is vague.
+Structure:
+- A TOPIC becomes ONE skill (or one section of a repository's AGENTS.md).
+- A topic contains CLUSTERS (subtopics). Each cluster becomes a section of the skill or a reference file (references/<subtopic>.md) that agents load only when needed.
+- A cluster contains nuggets that say the same thing or belong in the same section.
+
+The engineer wants FEW skills. Breadth is handled by subtopics, so a topic can be an umbrella (e.g. "Dotfiles management" with clusters for zsh, tmux, and agent configs) as long as one description can say when to use it.
 
 Rules:
-- Put a new nugget in an existing cluster when the same skill/section should hold it: same tool, system, workflow, or convention. Example: "use make release" and "use git worktree, not git worktree" both belong to a "Build and worktree workflow" topic.
-- Start a new cluster only when no existing cluster is a natural home. A new cluster may hold several of the new nuggets.
-- Do NOT merge unrelated topics just to reduce the count (e.g. "tmux config" and "ssh-agent flags" stay separate).
+- Put a new nugget in an existing cluster when it belongs in that same section: same tool, file, workflow, or convention.
+- Otherwise create a new cluster. Put the new cluster under an existing topic (topicId) when that topic's skill should hold it. Topics marked declared="yes" were defined by the engineer: their description says what they cover, so prefer them whenever a nugget falls within that description.
+- Start a new topic (omit topicId) only when no existing topic is a natural home.
 - A cluster summary is the merged, de-duplicated knowledge of all its members: exact commands, paths, rules, and reasons. Keep conflicting statements and note the conflict; never invent facts.
 - Assign every new nugget exactly once. Report results ONLY by calling \`assign_clusters\` once.`;
+
+/** System prompt, with the engineer's clustering guidance (config.clustering.guidance) appended. */
+export function clusterSystemPrompt(guidance?: string): string {
+  return guidance?.trim() ? `${BASE_SYSTEM_PROMPT}\n\nGuidance from the engineer (follow it):\n${guidance.trim()}` : BASE_SYSTEM_PROMPT;
+}
 
 /** Nuggets and clusters only meet within the same partition (scope + repo). */
 export function partitionKey(x: { scope: "global" | "repo"; repo?: string | undefined }): string {
@@ -50,7 +64,7 @@ export function partitionKey(x: { scope: "global" | "repo"; repo?: string | unde
 
 export interface ClusterPlan {
   partition: string;
-  newClusters: { key: string; title: string; summary: string; nuggetIds: number[] }[];
+  newClusters: { key: string; title: string; summary: string; topicId?: number; nuggetIds: number[] }[];
   assignments: { nuggetId: number; clusterId: number }[];
   updatedClusters: { clusterId: number; title?: string; summary: string }[];
   /** Problems fixed up during validation (missing/duplicate assignments, bad ids). */
@@ -74,21 +88,26 @@ function renderNugget(n: NuggetRow): string {
 }
 
 function renderCluster(c: ClusterWithMembers): string {
+  return [`  <cluster id="${c.id}" members="${c.members.length}">`, `  title: ${c.title}`, truncate(c.summary, 1200), "  </cluster>"].join("\n");
+}
+
+function renderTopic(t: TopicWithClusters): string {
   return [
-    `<cluster id="${c.id}" members="${c.members.length}">`,
-    `title: ${c.title}`,
-    truncate(c.summary, 1500),
-    "</cluster>",
+    `<topic id="${t.id}"${t.name ? ` name="${t.name}"` : ""} declared="${t.declared ? "yes" : "no"}">`,
+    `title: ${t.title}`,
+    ...(t.description ? [`description: ${t.description}`] : []),
+    ...(t.clusters.length ? t.clusters.map(renderCluster) : ["  (no clusters yet)"]),
+    "</topic>",
   ].join("\n");
 }
 
-export function buildClusterPrompt(partition: string, clusters: ClusterWithMembers[], nuggets: NuggetRow[]): string {
+export function buildClusterPrompt(partition: string, topics: TopicWithClusters[], nuggets: NuggetRow[]): string {
   return [
     `Partition: ${partition === "global" ? "global knowledge (applies across repositories)" : `repository ${partition.slice(5)}`}`,
     "",
-    "<existing_clusters>",
-    clusters.length ? clusters.map(renderCluster).join("\n") : "(none)",
-    "</existing_clusters>",
+    "<existing_topics>",
+    topics.length ? topics.map(renderTopic).join("\n") : "(none)",
+    "</existing_topics>",
     "",
     "<new_nuggets>",
     nuggets.map(renderNugget).join("\n"),
@@ -106,15 +125,21 @@ export function validatePlan(
   partition: string,
   res: AssignResult,
   nuggets: NuggetRow[],
-  clusters: ClusterWithMembers[],
+  topics: TopicWithClusters[],
 ): ClusterPlan {
   const repairs: string[] = [];
   const nuggetIds = new Set(nuggets.map((n) => n.id));
-  const clusterIds = new Set(clusters.map((c) => c.id));
+  const clusterIds = new Set(topics.flatMap((t) => t.clusters.map((c) => c.id)));
+  const topicIds = new Set(topics.map((t) => t.id));
   const newByKey = new Map<string, ClusterPlan["newClusters"][number]>();
   for (const c of res.newClusters) {
-    if (newByKey.has(c.key)) repairs.push(`duplicate new cluster key ${c.key}`);
-    else newByKey.set(c.key, { ...c, nuggetIds: [] });
+    if (newByKey.has(c.key)) {
+      repairs.push(`duplicate new cluster key ${c.key}`);
+      continue;
+    }
+    const { topicId, ...rest } = c;
+    if (topicId !== undefined && !topicIds.has(topicId)) repairs.push(`new cluster ${c.key}: unknown topic ${topicId}; new topic`);
+    newByKey.set(c.key, { ...rest, ...(topicId !== undefined && topicIds.has(topicId) ? { topicId } : {}), nuggetIds: [] });
   }
 
   const assigned = new Set<number>();
@@ -168,7 +193,7 @@ export function applyPlan(db: StateDb, plan: ClusterPlan, scope: { scope: "globa
   const created: number[] = [];
   db.tx(() => {
     for (const c of plan.newClusters) {
-      const id = db.createCluster({ title: c.title, summary: c.summary, ...scope });
+      const id = db.createCluster({ title: c.title, summary: c.summary, ...scope, ...(c.topicId !== undefined ? { topicId: c.topicId } : {}) });
       created.push(id);
       for (const nid of c.nuggetIds) db.assignNugget(nid, id);
     }
@@ -189,7 +214,8 @@ export interface ClusterRunResult {
 /**
  * Assign every unclustered nugget to a cluster, partition by partition, applying
  * each batch before the next so later batches see the clusters it created.
- * A partition with a single nugget and no clusters needs no model call.
+ * Declared topics (config.topics) are synced first so they are offered as homes.
+ * A partition with a single nugget and no topics needs no model call.
  * Re-running with no unclustered nuggets makes no calls and changes nothing.
  */
 export async function clusterNuggets(
@@ -201,6 +227,10 @@ export async function clusterNuggets(
   const log = opts.log ?? (() => {});
   const batchSize = opts.batchSize ?? 30;
   const maxCalls = opts.maxCalls ?? Infinity;
+  const synced = syncDeclaredTopics(db, cfg.topics);
+  for (const n of synced.created) log(`topic declared: ${n}`);
+  for (const n of synced.updated) log(`topic updated from config: ${n}`);
+  for (const n of synced.undeclared) log(`topic no longer declared: ${n}`);
 
   const byPartition = new Map<string, NuggetRow[]>();
   for (const n of db.unclusteredNuggets()) {
@@ -213,9 +243,10 @@ export async function clusterNuggets(
     const scope = { scope: nuggets[0]!.scope, ...(nuggets[0]!.repo ? { repo: nuggets[0]!.repo } : {}) };
     for (let i = 0; i < nuggets.length; i += batchSize) {
       const batch = nuggets.slice(i, i + batchSize);
-      const clusters = db.clusters().filter((c) => partitionKey(c) === partition);
+      const topics = db.topics().filter((t) => partitionKey(t) === partition);
+      const clusterCount = topics.reduce((a, t) => a + t.clusters.length, 0);
       let plan: ClusterPlan;
-      if (batch.length === 1 && clusters.length === 0) {
+      if (batch.length === 1 && topics.length === 0) {
         const n = batch[0]!;
         plan = { partition, newClusters: [{ key: "solo", title: n.title, summary: n.knowledge, nuggetIds: [n.id] }], assignments: [], updatedClusters: [], repairs: [] };
       } else {
@@ -223,12 +254,12 @@ export async function clusterNuggets(
           log(`cluster: call budget (${maxCalls}) reached; rest waits for next run`);
           return out;
         }
-        log(`cluster ${partition}: ${batch.length} nugget(s) vs ${clusters.length} cluster(s)`);
+        log(`cluster ${partition}: ${batch.length} nugget(s) vs ${topics.length} topic(s), ${clusterCount} cluster(s)`);
         const res = await runner.run({
           model: cfg.models.extract,
           thinking: cfg.models.extractThinking,
-          systemPrompt: CLUSTER_SYSTEM_PROMPT,
-          prompt: buildClusterPrompt(partition, clusters, batch),
+          systemPrompt: clusterSystemPrompt(cfg.clustering.guidance),
+          prompt: buildClusterPrompt(partition, topics, batch),
           resultTool: {
             name: "assign_clusters",
             description: "Assign every new nugget to an existing or new cluster, and update summaries.",
@@ -237,7 +268,7 @@ export async function clusterNuggets(
         });
         out.calls++;
         out.usage = addUsage(out.usage, res.usage);
-        plan = validatePlan(partition, res.value, batch, clusters);
+        plan = validatePlan(partition, res.value, batch, topics);
       }
       const created = applyPlan(db, plan, scope);
       out.plans.push(plan);

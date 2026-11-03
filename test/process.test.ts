@@ -137,6 +137,22 @@ describe("loadConfig", () => {
     expect(c.models).toMatchObject({ extract: "x", distill: DEFAULT_CONFIG.models.distill });
   });
 
+  it("validates declared topics", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "lbg-cfg-"));
+    const path = join(dir, "config.json");
+    const write = (topics: unknown) => writeFile(path, JSON.stringify({ topics }));
+    await write([{ name: "dotfiles-management", description: "d", repo: "~/x", scope: "repo" }]);
+    expect(loadConfig(path).topics[0]).toMatchObject({ name: "dotfiles-management", scope: "repo", repo: expect.not.stringContaining("~") });
+    await write([{ name: "Dotfiles Management", description: "d" }]);
+    expect(() => loadConfig(path)).toThrow(/lowercase/);
+    await write([{ name: "x" }]);
+    expect(() => loadConfig(path)).toThrow(/needs a description/);
+    await write([{ name: "x", description: "d", scope: "repo" }]);
+    expect(() => loadConfig(path)).toThrow(/no repo/);
+    await write([{ name: "x", description: "d" }, { name: "x", description: "e" }]);
+    expect(() => loadConfig(path)).toThrow(/duplicate/);
+  });
+
   it("uses defaults when the file is missing", () => {
     expect(loadConfig("/nonexistent/config.json").models.extract).toBe("global.openai.gpt-6.1-sol");
   });

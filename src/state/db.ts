@@ -389,7 +389,17 @@ export class StateDb {
     patch: Partial<
       Pick<
         TopicRow,
-        "name" | "title" | "description" | "locked" | "status" | "score" | "target" | "targetLocked" | "stats" | "rejectedSessions"
+        | "name"
+        | "title"
+        | "description"
+        | "declared"
+        | "locked"
+        | "status"
+        | "score"
+        | "target"
+        | "targetLocked"
+        | "stats"
+        | "rejectedSessions"
       >
     >,
   ): void {
@@ -397,6 +407,7 @@ export class StateDb {
       name: "name",
       title: "title",
       description: "description",
+      declared: "declared",
       locked: "locked",
       status: "status",
       score: "score",
