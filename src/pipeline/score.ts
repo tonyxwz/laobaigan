@@ -1,6 +1,7 @@
 import type { ScoreConfig } from "../config.ts";
 import type { SkillInfo } from "../skills/index.ts";
 import type { ClusterWithMembers, StateDb } from "../state/db.ts";
+import { resolveRepo, type RepoResolution } from "../skills/repo.ts";
 
 export interface ClusterStats {
   nuggets: number;
@@ -29,7 +30,9 @@ export type Target =
   | { kind: "global:update"; skill: string }
   | { kind: "global:fix-description"; skill: string }
   | { kind: "repo:agents-md"; repo: string }
-  | { kind: "repo:skill"; repo: string; name: string };
+  | { kind: "repo:skill"; repo: string; name: string }
+  /** Repo-scoped, but the repository couldn't be determined (e.g. ambiguous multi-package workspace). Not drafted. */
+  | { kind: "repo:unresolved"; repo: string };
 
 export function formatTarget(t: Target): string {
   switch (t.kind) {
@@ -43,6 +46,8 @@ export function formatTarget(t: Target): string {
       return `repo:agents-md:${t.repo}`;
     case "repo:skill":
       return `repo:skill:${t.repo}:${t.name}`;
+    case "repo:unresolved":
+      return `repo:unresolved:${t.repo}`;
   }
 }
 
@@ -52,7 +57,7 @@ export function parseTarget(s: string): Target {
   const k = `${scope}:${kind}`;
   if (k === "global:new") return { kind: k, name: tail };
   if (k === "global:update" || k === "global:fix-description") return { kind: k, skill: tail };
-  if (k === "repo:agents-md") return { kind: k, repo: tail };
+  if (k === "repo:agents-md" || k === "repo:unresolved") return { kind: k, repo: tail };
   if (k === "repo:skill") {
     const i = tail.lastIndexOf(":");
     return { kind: k, repo: tail.slice(0, i), name: tail.slice(i + 1) };
@@ -215,4 +220,39 @@ export function scoreClusters(db: StateDb, skills: SkillInfo[], cfg: ScoreConfig
     }
   });
   return res;
+}
+
+/** Everything known about a topic, for resolving which package it refers to. */
+export function clusterText(c: ClusterWithMembers): string {
+  return [c.title, c.summary, ...c.members.flatMap((m) => [m.title, m.knowledge, m.cwd, ...m.evidence.map((e) => e.quote)])].join("\n");
+}
+
+/**
+ * For candidates with repo targets, pin the target to a real git repository
+ * (multi-package workspace roots → a package). Unresolvable ones get `repo:unresolved`
+ * and are not drafted until retargeted by hand.
+ */
+export async function resolveRepoTargets(
+  db: StateDb,
+  resolve: (path: string, text: string) => Promise<RepoResolution> = resolveRepo,
+): Promise<{ id: number; from: string; to: string; reason?: string; candidates?: string[] }[]> {
+  const changes: { id: number; from: string; to: string; reason?: string; candidates?: string[] }[] = [];
+  for (const c of db.clusters(["candidate"])) {
+    if (!c.target?.startsWith("repo:")) continue;
+    const t = parseTarget(c.target);
+    if (t.kind !== "repo:agents-md" && t.kind !== "repo:skill" && t.kind !== "repo:unresolved") continue;
+    const r = await resolve(t.repo, clusterText(c));
+    let next: Target;
+    if (r.ok) {
+      next = t.kind === "repo:skill" ? { ...t, repo: r.root } : t.kind === "repo:agents-md" ? { ...t, repo: r.root } : { kind: "repo:agents-md", repo: r.root };
+    } else {
+      next = { kind: "repo:unresolved", repo: t.repo };
+    }
+    const to = formatTarget(next);
+    if (to !== c.target) {
+      db.updateCluster(c.id, { target: to });
+      changes.push({ id: c.id, from: c.target, to, ...(r.ok ? {} : { reason: r.reason, candidates: r.candidates }) });
+    }
+  }
+  return changes;
 }

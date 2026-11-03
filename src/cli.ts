@@ -4,7 +4,7 @@ import { parseArgs } from "node:util";
 import { loadConfig } from "./config.ts";
 import { BedrockPiRunner } from "./pi/run-pi.ts";
 import { clusterNuggets } from "./pipeline/cluster.ts";
-import { scoreClusters } from "./pipeline/score.ts";
+import { resolveRepoTargets, scoreClusters } from "./pipeline/score.ts";
 import { loadSkillsDir } from "./skills/index.ts";
 import { processSessions, type ProcessOptions, type SessionOutcome } from "./pipeline/process.ts";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -199,7 +199,8 @@ async function main(argv: string[]): Promise<number> {
         });
         const skills = await loadSkillsDir(join(cfg.skillsRepo.workTree, cfg.skillsRepo.skillsPath), "global");
         const scored = scoreClusters(db, skills, cfg.score);
-        if (values.json) return json({ ...res, scored, clusters: db.clusters() }), 0;
+        const retargeted = await resolveRepoTargets(db);
+        if (values.json) return json({ ...res, scored, retargeted, clusters: db.clusters() }), 0;
         for (const c of db.clusters().sort((a, b) => b.score - a.score)) {
           const st = c.stats as { sessions: number; agents: string[] } | undefined;
           out(
@@ -209,6 +210,10 @@ async function main(argv: string[]): Promise<number> {
           );
         }
         for (const p of scored.promoted) out(`promoted #${p.id} ${p.title} → ${p.target}\n`);
+        for (const r of retargeted) {
+          out(`retargeted #${r.id}: ${r.from} → ${r.to}${r.reason ? `  (${r.reason})` : ""}\n`);
+          for (const c of r.candidates ?? []) out(`    candidate: ${c}\n`);
+        }
         out(
           `\n${res.calls} model call(s), ${res.created} cluster(s) created, ${res.assigned} nugget(s) assigned, ` +
             `cost≈$${res.usage.cost.toFixed(4)}${tmp ? "  (dry run: nothing persisted)" : ""}\n`,
