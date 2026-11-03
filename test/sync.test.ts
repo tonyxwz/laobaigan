@@ -116,6 +116,31 @@ describe("syncTree", () => {
     expect(tree.getNode(tmux.id)!.sourcePath).toBeUndefined();
   });
 
+  it("keeps nodes and evidence when the skills dir moves (matched by name)", async () => {
+    const { dir, write } = await skillsDir();
+    await write("gradle", "Intro.\n\n## Build\nbuild text", { "notes.md": "# Notes\nn" });
+    const db = new StateDb(":memory:");
+    const tree = new Tree(db);
+    await syncTree(tree, { skillsDir: dir, declared: [] });
+    const before = tree.trees()[0]!.children[0]!;
+    const n = db.insertNugget(nugget("a"));
+    tree.attachNugget(n, before.children[0]!.id);
+
+    const moved = await mkdtemp(join(tmpdir(), "lbg-moved-"));
+    await mkdir(join(moved, "gradle", "references"), { recursive: true });
+    await writeFile(join(moved, "gradle", "SKILL.md"), skillMd("gradle", "Intro.\n\n## Build\nbuild text"));
+    await writeFile(join(moved, "gradle", "references", "notes.md"), "# Notes\nn");
+    const r = await syncTree(tree, { skillsDir: moved, declared: [] });
+    expect(r.global).toMatchObject({ created: [], removed: [], adopted: ["gradle"] });
+    const after = tree.trees()[0]!.children;
+    expect(after.map((c) => [c.id, c.origin, c.sourcePath])).toEqual([[before.id, "file", join(moved, "gradle", "SKILL.md")]]);
+    expect(after[0]!.children.map((c) => [c.id, c.nuggets.map((x) => x.id)])).toEqual([
+      [before.children[0]!.id, [n]],
+      [before.children[1]!.id, []],
+    ]);
+    expect(after[0]!.renderedAt).toEqual(before.renderedAt); // a move isn't an edit
+  });
+
   it("deletes vanished skills without evidence; follows symlinked skill dirs", async () => {
     const { dir, write } = await skillsDir();
     const elsewhere = await mkdtemp(join(tmpdir(), "lbg-real-"));

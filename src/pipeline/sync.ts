@@ -43,13 +43,16 @@ export function syncSkills(tree: Tree, scope: Scope, parsed: ParsedSkill[], opts
     const rootId = tree.ensureRoot(scope);
     const root = tree.subtree(rootId)!;
     const byPath = new Map(root.children.filter((c) => c.sourcePath).map((c) => [c.sourcePath!, c]));
+    const parsedPaths = new Set(parsed.map((p) => p.sourcePath));
+    // A node can be taken over by name if it isn't a file node, or its file is gone (moved skills dir).
+    const adoptable = (c: TreeNode) => c.origin !== "file" || (owns(c) && !parsedPaths.has(c.sourcePath ?? ""));
     const seen = new Set<number>();
 
     for (const p of parsed) {
       let node = byPath.get(p.sourcePath);
       let adopted = false;
       if (!node) {
-        node = root.children.find((c) => c.origin !== "file" && !seen.has(c.id) && (c.name ?? "") === p.name);
+        node = root.children.find((c) => adoptable(c) && !seen.has(c.id) && (c.name ?? "") === p.name);
         adopted = !!node;
       }
       const fields = { name: p.name, title: p.title, description: p.description, summary: p.intro, origin: "file" as const, sourcePath: p.sourcePath };
@@ -60,7 +63,11 @@ export function syncSkills(tree: Tree, scope: Scope, parsed: ParsedSkill[], opts
         report.created.push(p.name);
       } else {
         id = node.id;
-        if (adopted || node.sourceHash !== p.hash) {
+        if (adopted && node.origin === "file" && node.sourceHash === p.hash) {
+          // Same file, new location (moved skills dir): not an edit, so evidence stays fresh.
+          tree.updateNode(id, { sourcePath: p.sourcePath });
+          report.adopted.push(p.name);
+        } else if (adopted || node.sourceHash !== p.hash) {
           // Edited (by me, or a merged proposal): evidence so far counts as absorbed.
           // An adopted latent node is now a live skill with no open proposal.
           tree.updateNode(id, { ...fields, sourceHash: p.hash, renderedAt: new Date(), summaryDirty: false, ...(adopted ? { status: "open" as const } : {}) });
@@ -87,10 +94,15 @@ export function syncSkills(tree: Tree, scope: Scope, parsed: ParsedSkill[], opts
 function syncSections(tree: Tree, skillId: number, sections: ParsedSection[]): void {
   const skill = tree.subtree(skillId)!;
   const byPath = new Map(skill.children.filter((c) => c.sourcePath).map((c) => [c.sourcePath!, c]));
+  const parsedPaths = new Set(sections.map((s) => s.sourcePath));
   const seen = new Set<number>();
   for (const s of sections) {
     let node = byPath.get(s.sourcePath);
-    if (!node) node = skill.children.find((c) => c.origin !== "file" && !seen.has(c.id) && c.title.toLowerCase() === s.title.toLowerCase());
+    if (!node) {
+      node = skill.children.find(
+        (c) => (c.origin !== "file" || !parsedPaths.has(c.sourcePath ?? "")) && !seen.has(c.id) && c.title.toLowerCase() === s.title.toLowerCase(),
+      );
+    }
     const fields = { title: s.title, description: s.description, summary: s.body, origin: "file" as const, sourcePath: s.sourcePath };
     if (!node) {
       const id = tree.createNode(skillId, { ...fields, sourceHash: s.hash });

@@ -164,7 +164,8 @@ export function parseSkill(
     intro: preamble,
     sections,
     sourcePath: skillMdPath,
-    hash: sha([md, ...references.map((r) => `${r.path}\n${r.content}`)].join("\n\0")),
+    // Relative names only: moving the skills dir isn't an edit.
+    hash: sha([md, ...references.map((r) => `${basename(r.path)}\n${r.content}`)].join("\n\0")),
     resources,
   };
 }
