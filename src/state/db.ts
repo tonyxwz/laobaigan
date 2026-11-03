@@ -171,6 +171,12 @@ export class StateDb {
     this.db.close();
   }
 
+  /** Consistent copy of the database (for dry runs that must behave like real ones). */
+  snapshotTo(path: string): StateDb {
+    this.db.prepare("VACUUM INTO ?").run(path);
+    return new StateDb(path);
+  }
+
   getSession(agent: AgentId, sessionId: string): SessionRow | undefined {
     return this.db
       .prepare("SELECT agent, session_id, version, status, detail FROM session WHERE agent = ? AND session_id = ?")

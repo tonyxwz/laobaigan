@@ -3,7 +3,10 @@ import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { loadConfig } from "./config.ts";
 import { BedrockPiRunner } from "./pi/run-pi.ts";
+import { clusterNuggets } from "./pipeline/cluster.ts";
 import { processSessions, type ProcessOptions, type SessionOutcome } from "./pipeline/process.ts";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { ALL_AGENTS, defaultAdapters, scan, type AgentId, type Transcript } from "./sources/index.ts";
 import { StateDb } from "./state/db.ts";
 import { acquireLock } from "./util/lock.ts";
@@ -27,6 +30,9 @@ Pipeline:
   lbg run     [--max-calls N]
       One unattended pipeline pass (what the systemd timer runs): takes a lock, processes
       new/changed sessions, logs a summary. Exit 0 ok, 2 some sessions failed, 3 aborted, 75 locked.
+  lbg cluster [--dry-run] [--max-calls N] [--json]
+      Group unclustered nuggets into topic clusters with pi (Bedrock).
+      --dry-run  run against a temporary copy of the state db, then discard it
   lbg nuggets [--json]                                       List stored nuggets
   lbg status                                                 State db counts and recent runs
 
@@ -175,6 +181,35 @@ async function main(argv: string[]): Promise<number> {
       } finally {
         db.close();
         release();
+      }
+    }
+
+    case "cluster": {
+      const cfg = loadConfig();
+      const real = new StateDb(join(cfg.stateDir, "state.db"));
+      const tmp = values["dry-run"] ? mkdtempSync(join(tmpdir(), "lbg-dry-")) : undefined;
+      const db = tmp ? real.snapshotTo(join(tmp, "state.db")) : real;
+      try {
+        const res = await clusterNuggets(db, new BedrockPiRunner(), cfg, {
+          ...(values["max-calls"] ? { maxCalls: Number(values["max-calls"]) } : {}),
+          log: (m) => process.stderr.write(`${m}\n`),
+        });
+        if (values.json) return json({ ...res, clusters: db.clusters() }), 0;
+        for (const c of db.clusters()) {
+          out(`#${c.id} [${c.scope}${c.repo ? `:${c.repo}` : ""}] ${c.title}  (${c.members.length} nugget(s))\n`);
+          for (const m of c.members) out(`    - #${m.id} ${m.agent}:${m.sessionId.slice(0, 8)} ${m.title}\n`);
+        }
+        out(
+          `\n${res.calls} model call(s), ${res.created} cluster(s) created, ${res.assigned} nugget(s) assigned, ` +
+            `cost≈$${res.usage.cost.toFixed(4)}${tmp ? "  (dry run: nothing persisted)" : ""}\n`,
+        );
+        return 0;
+      } finally {
+        if (tmp) {
+          db.close();
+          rmSync(tmp, { recursive: true, force: true });
+        }
+        real.close();
       }
     }
 
