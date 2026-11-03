@@ -6,7 +6,7 @@ CLI: **`lbg`**. Package: `laobaigan`. State: `~/.local/state/laobaigan/`. Config
 
 A background service that periodically scans chat sessions from all my AI coding agents, finds the knowledge **I keep explaining over and over**, and distills it into reusable [skills](https://pi.dev/docs/latest/skills). Every change is a **proposal** stored in its database; I review it with `lbg proposal` and accept or reject it. lbg never runs git: accepting writes the files, and I commit them myself if I want.
 
-> Status: M0 (session inventory), M1 (incremental extraction via pi/Bedrock) and M2 (grouping and scoring) are done. The knowledge tree (M2.6) is in place except rebalancing. **In progress: M3, drafting and reviewing proposals.**
+> Progress, milestones and open work are tracked in beads, not here: run `bd list --type epic` for the milestones, `bd ready` for what's next, and `bd show <id>` for details.
 
 ## Development
 
@@ -436,17 +436,13 @@ test/
 systemd/
 ```
 
-## Milestones
+## Milestones and open work
 
-1. **M0: Read-only inventory.** Adapters for Claude, pi, and opencode; `sessions` and `show` commands. ✅
-2. **M1: State + prefilter + extract.** Change detection, fingerprint dedup, redaction, nuggets in SQLite; `scan` and `extract --dry-run`. Tune the prompt on real sessions. ✅
-3. **M2: Cluster + score.** A `status` view of the top recurring clusters. This is the first point where we can see whether the idea works. ✅ (two-level topics/clusters, declared topics, curation, regroup)
-4. **M2.6: Knowledge tree.** Replace topics/clusters with one tree per scope: parse existing skills, batched top-down insert, recursive scoring, rebalance with budgets, curation on nodes. See [The knowledge tree](#5-the-knowledge-tree-insert-score-rebalance). (Done except rebalance; topics/clusters removed.)
-5. **M3: Draft + review proposals.** Draft in a scratch copy, proposals in the db, `lbg draft` / `lbg proposals` / `lbg proposal show|accept|reject`. No git. (Next: `revise` and `edit`.)
-6. **M4: systemd timer**, budgets, run log, notifications. (Timer, lock, run log, error-abort done; notifications pending.)
-7. **M5:** Codex and Kiro adapters.
+Tracked with [beads](https://github.com/gastownhall/beads) (`bd`) in this repo:
 
-## Open questions
-
-- **Skill quality feedback.** Track whether an accepted skill actually reduces repeat explanations, and propose a `fix-description` when it doesn't.
-- **Workspace roots.** Evidence filed under a multi-package workspace root (not a repo) isn't drafted yet.
+```bash
+bd list --type epic          # milestones
+bd ready                     # what can be worked on now
+bd ready --label mvp         # the path to a usable product
+bd show <id>                 # details, dependencies, acceptance criteria
+```
