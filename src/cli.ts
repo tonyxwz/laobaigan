@@ -4,6 +4,7 @@ import { parseArgs } from "node:util";
 import { loadConfig } from "./config.ts";
 import { BedrockPiRunner } from "./pi/run-pi.ts";
 import { clusterNuggets } from "./pipeline/cluster.ts";
+import * as curate from "./pipeline/curate.ts";
 import { parseTarget, resolveRepoTargets, scoreTopics, type TopicStats } from "./pipeline/score.ts";
 import { TOPIC_STATUSES, type TopicStatus, type TopicWithClusters } from "./state/db.ts";
 import { loadSkillsDir } from "./skills/index.ts";
@@ -42,6 +43,17 @@ Pipeline:
   lbg topics retarget <id> <target>                     Set the target by hand, e.g.
       global:new:<name> | global:update:<skill> | global:fix-description:<skill> |
       repo:agents-md:<repo> | repo:skill:<repo>:<name>
+
+Curating topics (every edit is locked, so automation never undoes it; re-scores right away):
+  lbg topics merge <into> <from>...                     Move all clusters of <from> topics under <into>
+  lbg topics split <topic> <cluster>... [--title T]     Move clusters out into a new topic
+  lbg topics rename <id> [--title T] [--name skill-name]
+  lbg topics unlock <id>                                Let automation reorganize the topic again
+  lbg clusters move <cluster> <topic>                   Put a cluster (subtopic) under another topic
+  lbg clusters merge <into> <from>...                   Fold clusters into one
+  lbg clusters rename <id> <title>
+  lbg nuggets move <nugget> <cluster>
+
   lbg nuggets [--json]                                       List stored nuggets
   lbg status                                                 State db counts and recent runs
 
@@ -69,6 +81,8 @@ async function main(argv: string[]): Promise<number> {
       excerpt: { type: "boolean", default: false },
       "max-calls": { type: "string" },
       status: { type: "string" },
+      title: { type: "string" },
+      name: { type: "string" },
       help: { type: "boolean", short: "h", default: false },
     },
   });
@@ -230,11 +244,76 @@ async function main(argv: string[]): Promise<number> {
 
     case "clusters":
     case "topics": {
-      if (cmd === "clusters") process.stderr.write("note: `lbg clusters` is now `lbg topics`\n");
       const cfg = loadConfig();
       const db = new StateDb(join(cfg.stateDir, "state.db"));
       try {
         const [sub, idArg, targetArg] = rest;
+        const ids = (xs: string[]) =>
+          xs.map((x) => {
+            const n = Number(x.replace(/^#/, ""));
+            if (!Number.isInteger(n)) throw new Error(`Not an id: ${x}`);
+            return n;
+          });
+        /** After a curation edit: re-score (no model calls) and show the affected topic. */
+        const after = async (topicId: number | undefined, msg: string) => {
+          const skills = await loadSkillsDir(join(cfg.skillsRepo.workTree, cfg.skillsRepo.skillsPath), "global");
+          const scored = scoreTopics(db, skills, cfg.score);
+          await resolveRepoTargets(db);
+          out(`${msg}\n`);
+          for (const p of scored.promoted) out(`promoted topic #${p.id} ${p.title} → ${p.target}\n`);
+          const t = topicId !== undefined ? db.getTopic(topicId) : undefined;
+          if (t) renderTopicList([t], out);
+        };
+
+        if (cmd === "clusters") {
+          if (sub === "move") {
+            const [c, t] = ids(rest.slice(1, 3));
+            curate.moveCluster(db, c!, t!);
+            return await after(t, `cluster ${c} → topic #${t}`), 0;
+          }
+          if (sub === "merge") {
+            const [into, ...from] = ids(rest.slice(1));
+            if (!from.length) throw new Error("clusters merge expects <into> <from>...");
+            curate.mergeClusters(db, into!, from);
+            return await after(db.getCluster(into!)?.topicId, `merged cluster(s) ${from.join(", ")} into ${into}`), 0;
+          }
+          if (sub === "rename") {
+            const [c] = ids([idArg ?? ""]);
+            const title = rest.slice(2).join(" ");
+            if (!title) throw new Error("clusters rename expects <id> <title>");
+            curate.renameCluster(db, c!, title);
+            return await after(db.getCluster(c!)?.topicId, `cluster ${c} renamed`), 0;
+          }
+          if (sub) throw new Error(`Unknown clusters subcommand: ${sub} (move | merge | rename)`);
+          process.stderr.write("note: to list, use `lbg topics`\n");
+        }
+
+        if (sub === "merge") {
+          const [into, ...from] = ids(rest.slice(1));
+          if (!from.length) throw new Error("topics merge expects <into> <from>...");
+          const r = curate.mergeTopics(db, into!, from);
+          return await after(into, `merged topic(s) ${from.join(", ")} into #${into}: ${r.moved.length} cluster(s) moved`), 0;
+        }
+        if (sub === "split") {
+          const [t, ...clusters] = ids(rest.slice(1));
+          if (!clusters.length) throw new Error("topics split expects <topic> <cluster>...");
+          const created = curate.splitTopic(db, t!, clusters, values.title);
+          await after(t, `split cluster(s) ${clusters.join(", ")} out of #${t} into new topic #${created}`);
+          const n = db.getTopic(created);
+          if (n) renderTopicList([n], out);
+          return 0;
+        }
+        if (sub === "rename") {
+          const [t] = ids([idArg ?? ""]);
+          if (!values.title && !values.name) throw new Error("topics rename expects --title and/or --name");
+          curate.renameTopic(db, t!, { ...(values.title ? { title: values.title } : {}), ...(values.name ? { name: values.name } : {}) });
+          return await after(t, `topic #${t} renamed`), 0;
+        }
+        if (sub === "unlock") {
+          const [t] = ids([idArg ?? ""]);
+          curate.unlockTopic(db, t!);
+          return await after(t, `topic #${t} unlocked`), 0;
+        }
         if (sub === "show") {
           const t = db.getTopic(Number(idArg));
           if (!t) throw new Error(`No topic ${idArg}`);
@@ -268,6 +347,17 @@ async function main(argv: string[]): Promise<number> {
       const cfg = loadConfig();
       const db = new StateDb(join(cfg.stateDir, "state.db"));
       try {
+        if (rest[0] === "move") {
+          const [n, c] = rest.slice(1, 3).map((x) => Number(x.replace(/^#/, "")));
+          if (!Number.isInteger(n) || !Number.isInteger(c)) throw new Error("nuggets move expects <nugget> <cluster>");
+          curate.moveNugget(db, n!, c!);
+          const skills = await loadSkillsDir(join(cfg.skillsRepo.workTree, cfg.skillsRepo.skillsPath), "global");
+          scoreTopics(db, skills, cfg.score);
+          await resolveRepoTargets(db);
+          out(`nugget #${n} → cluster ${c} (topic #${db.getCluster(c!)?.topicId})\n`);
+          return 0;
+        }
+        if (rest[0]) throw new Error(`Unknown nuggets subcommand: ${rest[0]} (move)`);
         const rows = db.db
           .prepare(
             "SELECT id, agent, session_id, kind, scope, repo, title, knowledge, triggers, covered_by, confidence, evidence FROM nugget ORDER BY id",
@@ -359,7 +449,8 @@ function renderTopicList(list: TopicWithClusters[], out: (s: string) => void): v
     out(
       `#${String(t.id).padEnd(3)} ${t.status.padEnd(9)} score=${String(t.score).padStart(3)} ` +
         `s=${st?.sessions ?? "?"} a=${st?.agents.length ?? "?"} d=${st?.days ?? "?"} n=${t.members.length}  ` +
-        `[${t.scope === "global" ? "global" : `repo ${shortPath(t.repo)}`}] ${t.title}${t.declared ? " (declared)" : ""}\n` +
+        `[${t.scope === "global" ? "global" : `repo ${shortPath(t.repo)}`}] ${t.title}${t.declared ? " (declared)" : ""}${t.locked ? " (locked)" : ""}` +
+        `${t.clusters.length === 1 && t.clusters[0]!.title === t.title ? `  [cluster ${t.clusters[0]!.id}]` : ""}\n` +
         (t.target ? `      → ${t.target}${t.targetLocked ? " (set by hand)" : ""}\n` : ""),
     );
     if (t.clusters.length > 1 || (t.clusters[0] && t.clusters[0].title !== t.title)) {

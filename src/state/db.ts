@@ -104,6 +104,10 @@ export const MIGRATIONS: string[] = [
    ALTER TABLE cluster DROP COLUMN stats;
    ALTER TABLE cluster DROP COLUMN rejected_sessions;
    CREATE INDEX cluster_topic ON cluster (topic_id);`,
+  // 5: hand curation locks. A locked cluster stays under its topic; a locked nugget
+  // stays in its cluster. Regroup and consolidation never move them.
+  `ALTER TABLE cluster ADD COLUMN locked INTEGER NOT NULL DEFAULT 0;
+   ALTER TABLE nugget ADD COLUMN assignment_locked INTEGER NOT NULL DEFAULT 0;`,
 ];
 
 export const TOPIC_STATUSES = ["open", "candidate", "proposed", "merged", "rejected"] as const;
@@ -125,6 +129,8 @@ export interface NuggetRow {
   confidence: number;
   evidence: { label: string; fingerprint?: string; ts?: string; quote: string }[];
   clusterId?: number;
+  /** Placed by hand; regroup/consolidation keep it in its cluster. */
+  assignmentLocked: boolean;
   createdAt: Date;
 }
 
@@ -136,6 +142,8 @@ export interface ClusterRow {
   summary: string;
   scope: "global" | "repo";
   repo?: string;
+  /** Placed by hand; regroup/consolidation keep it under its topic. */
+  locked: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -490,11 +498,12 @@ export class StateDb {
     if (!sameScope(t, scope)) throw new Error(`Scope mismatch: ${what} (${scopeLabel(scope)}) vs topic ${topicId} (${scopeLabel(t)})`);
   }
 
-  updateCluster(id: number, patch: Partial<Pick<ClusterRow, "title" | "summary">>): void {
+  updateCluster(id: number, patch: Partial<Pick<ClusterRow, "title" | "summary" | "locked">>): void {
     const sets: string[] = [];
     const vals: (string | number)[] = [];
     if (patch.title !== undefined) sets.push("title = ?"), vals.push(patch.title);
     if (patch.summary !== undefined) sets.push("summary = ?"), vals.push(patch.summary);
+    if (patch.locked !== undefined) sets.push("locked = ?"), vals.push(patch.locked ? 1 : 0);
     if (!sets.length) return;
     sets.push("updated_at = ?");
     vals.push(Date.now(), id);
@@ -511,7 +520,7 @@ export class StateDb {
   }
 
   /** Assign a nugget to a cluster. Scope/repo must match (never mix global with repo, or two repos). */
-  assignNugget(nuggetId: number, clusterId: number): void {
+  assignNugget(nuggetId: number, clusterId: number, opts: { lock?: boolean } = {}): void {
     const n = this.db.prepare("SELECT scope, repo FROM nugget WHERE id = ?").get(nuggetId) as Row | undefined;
     const c = this.db.prepare("SELECT scope, repo FROM cluster WHERE id = ?").get(clusterId) as Row | undefined;
     if (!n) throw new Error(`No nugget ${nuggetId}`);
@@ -520,7 +529,20 @@ export class StateDb {
       throw new Error(`Scope mismatch: nugget ${nuggetId} (${scopeLabel(n)}) vs cluster ${clusterId} (${scopeLabel(c)})`);
     }
     this.db.prepare("UPDATE nugget SET cluster_id = ? WHERE id = ?").run(clusterId, nuggetId);
+    if (opts.lock !== undefined) this.db.prepare("UPDATE nugget SET assignment_locked = ? WHERE id = ?").run(opts.lock ? 1 : 0, nuggetId);
     this.db.prepare("UPDATE cluster SET updated_at = ? WHERE id = ?").run(Date.now(), clusterId);
+  }
+
+  getNugget(id: number): NuggetRow | undefined {
+    const r = this.db.prepare("SELECT * FROM nugget WHERE id = ?").get(id) as Row | undefined;
+    return r ? toNugget(r) : undefined;
+  }
+
+  /** Delete a cluster that has no nuggets left. */
+  deleteCluster(id: number): void {
+    const n = Number((this.db.prepare("SELECT count(*) n FROM nugget WHERE cluster_id = ?").get(id) as { n: number }).n);
+    if (n > 0) throw new Error(`Cluster ${id} still has ${n} nugget(s)`);
+    this.db.prepare("DELETE FROM cluster WHERE id = ?").run(id);
   }
 
   getCluster(id: number): ClusterWithMembers | undefined {
@@ -585,6 +607,7 @@ function toNugget(r: Row): NuggetRow {
     confidence: Number(r.confidence),
     evidence: parseJson(r.evidence, [] as NuggetRow["evidence"]),
     ...(r.cluster_id != null ? { clusterId: Number(r.cluster_id) } : {}),
+    assignmentLocked: Number(r.assignment_locked ?? 0) === 1,
     createdAt: new Date(Number(r.created_at)),
   };
 }
@@ -597,6 +620,7 @@ function toCluster(r: Row): ClusterRow {
     summary: String(r.summary),
     scope: r.scope as "global" | "repo",
     ...(r.repo ? { repo: String(r.repo) } : {}),
+    locked: Number(r.locked ?? 0) === 1,
     createdAt: new Date(Number(r.created_at)),
     updatedAt: new Date(Number(r.updated_at)),
   };
