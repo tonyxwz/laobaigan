@@ -4,7 +4,8 @@ import { parseArgs } from "node:util";
 import { loadConfig } from "./config.ts";
 import { BedrockPiRunner } from "./pi/run-pi.ts";
 import { clusterNuggets } from "./pipeline/cluster.ts";
-import { resolveRepoTargets, scoreClusters } from "./pipeline/score.ts";
+import { parseTarget, resolveRepoTargets, scoreClusters, type ClusterStats } from "./pipeline/score.ts";
+import { CLUSTER_STATUSES, type ClusterStatus, type ClusterWithMembers } from "./state/db.ts";
 import { loadSkillsDir } from "./skills/index.ts";
 import { processSessions, type ProcessOptions, type SessionOutcome } from "./pipeline/process.ts";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -36,6 +37,11 @@ Pipeline:
       Group unclustered nuggets into topic clusters with pi (Bedrock), then score them and
       promote recurring topics to candidates with a target.
       --dry-run  run against a temporary copy of the state db, then discard it
+  lbg clusters [--status candidate,open,...] [--json]  Topic clusters by score
+  lbg clusters show <id> [--json]                       Summary, members, evidence
+  lbg clusters retarget <id> <target>                   Set the target by hand, e.g.
+      global:new:<name> | global:update:<skill> | global:fix-description:<skill> |
+      repo:agents-md:<repo> | repo:skill:<repo>:<name>
   lbg nuggets [--json]                                       List stored nuggets
   lbg status                                                 State db counts and recent runs
 
@@ -62,6 +68,7 @@ async function main(argv: string[]): Promise<number> {
       fresh: { type: "boolean", default: false },
       excerpt: { type: "boolean", default: false },
       "max-calls": { type: "string" },
+      status: { type: "string" },
       help: { type: "boolean", short: "h", default: false },
     },
   });
@@ -105,7 +112,7 @@ async function main(argv: string[]): Promise<number> {
     }
 
     case "show": {
-      const target = parseTarget(rest[0]);
+      const target = parseSessionTarget(rest[0]);
       const found = (await scan(adapters, { agents: [target.agent] })).filter(({ ref }) =>
         ref.sessionId.startsWith(target.idPrefix),
       );
@@ -128,7 +135,7 @@ async function main(argv: string[]): Promise<number> {
           fresh: values.fresh,
           ...(values.since && values.since !== "all" ? { since: parseSince(values.since) } : {}),
           ...(agents ? { agents } : {}),
-          ...(values.session ? { only: parseTarget(values.session) } : {}),
+          ...(values.session ? { only: parseSessionTarget(values.session) } : {}),
           ...(values["max-calls"] ? { maxCalls: Number(values["max-calls"]) } : {}),
           ...(values.settle ? { settleMinutes: parseDuration(values.settle) / 60e3 } : {}),
           log: (m) => process.stderr.write(`${m}\n`),
@@ -228,6 +235,49 @@ async function main(argv: string[]): Promise<number> {
       }
     }
 
+    case "clusters": {
+      const cfg = loadConfig();
+      const db = new StateDb(join(cfg.stateDir, "state.db"));
+      try {
+        const [sub, idArg, targetArg] = rest;
+        if (sub === "show") {
+          const c = db.getCluster(Number(idArg));
+          if (!c) throw new Error(`No cluster ${idArg}`);
+          if (values.json) return json(c), 0;
+          out(renderClusterDetail(c));
+          return 0;
+        }
+        if (sub === "retarget") {
+          const c = db.getCluster(Number(idArg));
+          if (!c) throw new Error(`No cluster ${idArg}`);
+          if (!targetArg) throw new Error("retarget expects <id> <target>");
+          const t = parseTarget(targetArg); // validates
+          if (t.kind.startsWith("global") !== (c.scope === "global")) throw new Error(`Target ${targetArg} doesn't match cluster scope ${c.scope}`);
+          db.updateCluster(c.id, { target: targetArg, targetLocked: true, ...(c.status === "open" ? { status: "candidate" as const } : {}) });
+          out(`#${c.id} → ${targetArg}${c.status === "open" ? " (promoted to candidate)" : ""}\n`);
+          return 0;
+        }
+        if (sub) throw new Error(`Unknown clusters subcommand: ${sub}`);
+        const statuses = values.status ? (values.status.split(",") as ClusterStatus[]) : undefined;
+        for (const st of statuses ?? []) if (!CLUSTER_STATUSES.includes(st)) throw new Error(`Bad status ${st}`);
+        const list = db.clusters(statuses).sort((a, b) => b.score - a.score || a.id - b.id);
+        if (values.json) return json(list), 0;
+        for (const c of list) {
+          const st = c.stats as ClusterStats | undefined;
+          out(
+            `#${String(c.id).padEnd(3)} ${c.status.padEnd(9)} score=${String(c.score).padStart(3)} ` +
+              `s=${st?.sessions ?? "?"} a=${st?.agents.length ?? "?"} d=${st?.days ?? "?"} n=${c.members.length}  ` +
+              `[${c.scope === "global" ? "global" : `repo ${shortPath(c.repo)}`}] ${c.title}\n` +
+              (c.target ? `      → ${c.target}\n` : ""),
+          );
+        }
+        out(`\n${list.length} cluster(s). s=sessions a=agents d=days n=nuggets. Details: lbg clusters show <id>\n`);
+        return 0;
+      } finally {
+        db.close();
+      }
+    }
+
     case "nuggets": {
       const cfg = loadConfig();
       const db = new StateDb(join(cfg.stateDir, "state.db"));
@@ -280,7 +330,7 @@ function parseAgents(s: string): AgentId[] {
   });
 }
 
-function parseTarget(s: string | undefined): { agent: AgentId; idPrefix: string } {
+function parseSessionTarget(s: string | undefined): { agent: AgentId; idPrefix: string } {
   const m = s && /^([a-z]+):(.+)$/.exec(s);
   if (!m) throw new Error("expected <agent>:<sessionId>");
   return { agent: parseAgents(m[1]!)[0]!, idPrefix: m[2]! };
@@ -308,6 +358,37 @@ function renderOutcomes(outcomes: SessionOutcome[], out: (s: string) => void): v
     }
   }
   out(`\n${Object.entries(counts).map(([k, v]) => `${k}=${v}`).join(" ")}\n`);
+}
+
+function shortPath(p: string | undefined): string {
+  if (!p) return "?";
+  const home = process.env.HOME ?? "";
+  return home && p.startsWith(home) ? `~${p.slice(home.length)}` : p.replace(/^\/local\/home\/[^/]+/, "~");
+}
+
+function renderClusterDetail(c: ClusterWithMembers): string {
+  const st = c.stats as ClusterStats | undefined;
+  const lines = [
+    `#${c.id} ${c.title}`,
+    `status: ${c.status}   score: ${c.score}   scope: ${c.scope}${c.repo ? ` (${c.repo})` : ""}`,
+    `target: ${c.target ?? "(none yet)"}${c.targetLocked ? "  (set by hand)" : ""}`,
+  ];
+  if (st) {
+    lines.push(
+      `seen in ${st.sessions} session(s), ${st.agents.length} agent(s) [${st.agents.join(", ")}], ${st.days} day(s)` +
+        `${st.firstSeen ? `, ${st.firstSeen.slice(0, 10)} → ${st.lastSeen!.slice(0, 10)}` : ""}` +
+        `${st.corrections ? `, ${st.corrections} correction(s)` : ""}${st.coveredBy.length ? `, covered by: ${st.coveredBy.join(", ")}` : ""}`,
+    );
+  }
+  lines.push("", "## Summary", c.summary, "", `## Members (${c.members.length})`);
+  for (const m of c.members) {
+    lines.push(
+      "",
+      `#${m.id} [${m.kind}] ${m.title}  (${m.agent}:${m.sessionId.slice(0, 12)}, conf ${m.confidence}${m.coveredBy ? `, covered by ${m.coveredBy}` : ""})`,
+    );
+    for (const e of m.evidence) lines.push(`    ${e.label}${e.ts ? ` ${e.ts.slice(0, 16).replace("T", " ")}` : ""}: "${e.quote}"`);
+  }
+  return `${lines.join("\n")}\n`;
 }
 
 function summarize(t: Transcript) {

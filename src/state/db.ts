@@ -68,6 +68,8 @@ export const MIGRATIONS: string[] = [
      updated_at   INTEGER NOT NULL
    );
    CREATE INDEX cluster_status ON cluster (status);`,
+  // 3: targets set by hand (lbg clusters retarget) survive re-scoring
+  `ALTER TABLE cluster ADD COLUMN target_locked INTEGER NOT NULL DEFAULT 0;`,
 ];
 
 export const CLUSTER_STATUSES = ["open", "candidate", "proposed", "merged", "rejected"] as const;
@@ -101,6 +103,8 @@ export interface ClusterRow {
   status: ClusterStatus;
   score: number;
   target?: string;
+  /** Set by hand; scoring and repo resolution leave it alone. */
+  targetLocked: boolean;
   stats?: unknown;
   rejectedSessions?: number;
   createdAt: Date;
@@ -299,7 +303,9 @@ export class StateDb {
   /** Update any subset of mutable cluster fields. */
   updateCluster(
     id: number,
-    patch: Partial<Pick<ClusterRow, "title" | "summary" | "status" | "score" | "target" | "stats" | "rejectedSessions">>,
+    patch: Partial<
+      Pick<ClusterRow, "title" | "summary" | "status" | "score" | "target" | "targetLocked" | "stats" | "rejectedSessions">
+    >,
   ): void {
     const cols: Record<string, string> = {
       title: "title",
@@ -307,6 +313,7 @@ export class StateDb {
       status: "status",
       score: "score",
       target: "target",
+      targetLocked: "target_locked",
       stats: "stats",
       rejectedSessions: "rejected_sessions",
     };
@@ -317,7 +324,7 @@ export class StateDb {
       if (!col || v === undefined) continue;
       if (k === "status" && !CLUSTER_STATUSES.includes(v as ClusterStatus)) throw new Error(`Bad cluster status: ${v}`);
       sets.push(`${col} = ?`);
-      vals.push(k === "stats" ? JSON.stringify(v) : (v as string | number | null));
+      vals.push(k === "stats" ? JSON.stringify(v) : typeof v === "boolean" ? (v ? 1 : 0) : (v as string | number | null));
     }
     if (!sets.length) return;
     sets.push("updated_at = ?");
@@ -422,6 +429,7 @@ function toCluster(r: Row): ClusterRow {
     status: r.status as ClusterStatus,
     score: Number(r.score),
     ...(r.target ? { target: String(r.target) } : {}),
+    targetLocked: Number(r.target_locked ?? 0) === 1,
     ...(r.stats ? { stats: parseJson(r.stats, undefined) } : {}),
     ...(r.rejected_sessions != null ? { rejectedSessions: Number(r.rejected_sessions) } : {}),
     createdAt: new Date(Number(r.created_at)),

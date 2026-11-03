@@ -147,6 +147,11 @@ describe("scoreClusters", () => {
     // idempotent: nothing newly promoted
     expect(scoreClusters(db, skills, S).promoted).toEqual([]);
 
+    // a hand-set target survives re-scoring
+    db.updateCluster(three.id, { target: "global:update:git-worktree", targetLocked: true });
+    scoreClusters(db, skills, S);
+    expect(db.getCluster(three.id)!.target).toBe("global:update:git-worktree");
+
     // the rejected topic comes up in 2 more sessions → candidate again
     for (const s of ["d", "e"]) db.assignNugget(db.insertNugget(nugget({ sessionId: s })), rejected.id);
     expect(scoreClusters(db, skills, S).promoted.map((p) => p.id)).toEqual([rejected.id]);

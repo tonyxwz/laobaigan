@@ -99,5 +99,9 @@ describe("resolveRepoTargets", () => {
     expect(changes.find((c) => c.id === b)?.candidates).toHaveLength(2);
     // idempotent
     expect(await resolveRepoTargets(db)).toEqual([]);
+    // locked targets are left alone even if unresolvable
+    db.updateCluster(b, { target: `repo:agents-md:${ws}`, targetLocked: true });
+    await resolveRepoTargets(db);
+    expect(db.getCluster(b)!.target).toBe(`repo:agents-md:${ws}`);
   });
 });

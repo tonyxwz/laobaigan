@@ -211,7 +211,7 @@ export function scoreClusters(db: StateDb, skills: SkillInfo[], cfg: ScoreConfig
           c.status === "candidate" ||
           (c.status === "rejected" && stats.sessions >= (c.rejectedSessions ?? 0) + cfg.promote.reproposeAfterSessions));
       if (eligible) {
-        const target = formatTarget(pickTarget(c, skills, cfg));
+        const target = c.targetLocked && c.target ? c.target : formatTarget(pickTarget(c, skills, cfg));
         db.updateCluster(c.id, { stats, score, status: "candidate", target });
         if (c.status !== "candidate") res.promoted.push({ id: c.id, title: c.title, target, score });
       } else {
@@ -238,7 +238,7 @@ export async function resolveRepoTargets(
 ): Promise<{ id: number; from: string; to: string; reason?: string; candidates?: string[] }[]> {
   const changes: { id: number; from: string; to: string; reason?: string; candidates?: string[] }[] = [];
   for (const c of db.clusters(["candidate"])) {
-    if (!c.target?.startsWith("repo:")) continue;
+    if (!c.target?.startsWith("repo:") || c.targetLocked) continue;
     const t = parseTarget(c.target);
     if (t.kind !== "repo:agents-md" && t.kind !== "repo:skill" && t.kind !== "repo:unresolved") continue;
     const r = await resolve(t.repo, clusterText(c));
