@@ -68,6 +68,17 @@ describe("parse", () => {
     ]);
   });
 
+  it("regression: a skill's hash doesn't depend on where the skills dir lives", () => {
+    const md = skillMd("gradle", "Intro.\n\n## Build\nbuild text");
+    const at = (dir: string) =>
+      parseSkill(`${dir}/gradle/SKILL.md`, md, [{ path: `${dir}/gradle/references/notes.md`, content: "# Notes\nn" }]).hash;
+    expect(at("/home/me/.config/opencode/skills")).toBe(at("/tmp/sandbox/skills"));
+    // …but it does change when a reference is renamed or edited
+    const renamed = parseSkill("/x/gradle/SKILL.md", md, [{ path: "/x/gradle/references/other.md", content: "# Notes\nn" }]).hash;
+    const edited = parseSkill("/x/gradle/SKILL.md", md, [{ path: "/x/gradle/references/notes.md", content: "# Notes\nchanged" }]).hash;
+    expect(new Set([at("/x"), renamed, edited]).size).toBe(3);
+  });
+
   it("takes the first sentence outside code for routing", () => {
     expect(firstSentence("```\ntree\n```\nThe layout is flat. Second.")).toBe("The layout is flat.");
   });
@@ -116,7 +127,7 @@ describe("syncTree", () => {
     expect(tree.getNode(tmux.id)!.sourcePath).toBeUndefined();
   });
 
-  it("keeps nodes and evidence when the skills dir moves (matched by name)", async () => {
+  it("regression: keeps nodes, evidence and render time when the skills dir moves (matched by name)", async () => {
     const { dir, write } = await skillsDir();
     await write("gradle", "Intro.\n\n## Build\nbuild text", { "notes.md": "# Notes\nn" });
     const db = new StateDb(":memory:");

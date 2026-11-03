@@ -88,6 +88,19 @@ describe("scoreTree", () => {
     expect(tree.getNode(gradle)!.status).toBe("open");
   });
 
+  it("regression: covered evidence from before the last render doesn't ask for another description fix", () => {
+    const { tree, root, add } = setup();
+    const skill = tree.createNode(root, { title: "Git worktrees", name: "git-worktree", origin: "file" });
+    for (const id of add(skill, ["s1", "s2"])) tree.setCovered(id, skill);
+    expect(scoreTree(tree, S).promoted.map((p) => p.kind)).toEqual(["fix-description"]);
+
+    // The fix is merged: sync re-renders the skill. The covered nuggets stay flagged as
+    // covered, but they are now absorbed and must not trigger a second fix.
+    tree.updateNode(skill, { renderedAt: new Date(Date.now() + 1000) });
+    expect(scoreTree(tree, S).demoted.map((d) => d.id)).toEqual([skill]);
+    expect(skillStats(tree.subtree(skill)!).covered).toEqual({ nuggets: 0, sessions: 0 });
+  });
+
   it("leaves proposed/merged alone and re-promotes rejected skills only after new sessions", () => {
     const { tree, root, add } = setup();
     const proposed = tree.createNode(root, { title: "P" });
