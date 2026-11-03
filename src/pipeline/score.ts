@@ -181,8 +181,11 @@ export function pickTarget(
       : { kind: "repo:agents-md", repo };
   }
 
-  // A verified "already covered by <skill>" on most members → the skill didn't trigger.
   const names = new Set(skills.map((s) => s.name));
+  // A named topic (declared, or renamed by hand) is that skill: extend it if it exists, else create it.
+  if (c.name) return names.has(c.name) ? { kind: "global:update", skill: c.name } : { kind: "global:new", name: c.name };
+
+  // A verified "already covered by <skill>" on most members → the skill didn't trigger.
   const coveredVotes = new Map<string, number>();
   for (const m of c.members) if (m.coveredBy && names.has(m.coveredBy)) coveredVotes.set(m.coveredBy, (coveredVotes.get(m.coveredBy) ?? 0) + 1);
   const [topCovered, votes] = [...coveredVotes].sort((a, b) => b[1] - a[1])[0] ?? [];
@@ -196,7 +199,7 @@ export function pickTarget(
     .sort((a, b) => b.sim - a.sim)[0];
   if (best && best.sim >= cfg.updateSimilarity) return { kind: "global:update", skill: best.s.name };
 
-  return { kind: "global:new", name: c.name ?? skillName(c.title) };
+  return { kind: "global:new", name: skillName(c.title) };
 }
 
 export interface ScoreResult {

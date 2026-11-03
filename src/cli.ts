@@ -2,9 +2,10 @@
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { loadConfig } from "./config.ts";
-import { BedrockPiRunner } from "./pi/run-pi.ts";
+import { addUsage, BedrockPiRunner } from "./pi/run-pi.ts";
 import { clusterNuggets } from "./pipeline/cluster.ts";
 import * as curate from "./pipeline/curate.ts";
+import { regroup } from "./pipeline/regroup.ts";
 import { parseTarget, resolveRepoTargets, scoreTopics, type TopicStats } from "./pipeline/score.ts";
 import { TOPIC_STATUSES, type TopicStatus, type TopicWithClusters } from "./state/db.ts";
 import { loadSkillsDir } from "./skills/index.ts";
@@ -34,9 +35,10 @@ Pipeline:
   lbg run     [--max-calls N]
       One unattended pipeline pass (what the systemd timer runs): takes a lock, processes
       new/changed sessions, logs a summary. Exit 0 ok, 2 some sessions failed, 3 aborted, 75 locked.
-  lbg cluster [--dry-run] [--max-calls N] [--json]
+  lbg cluster [--regroup] [--dry-run] [--max-calls N] [--json]
       Group unclustered nuggets into clusters (subtopics) with pi (Bedrock), then score
       topics on the union of their clusters and promote recurring ones with a target.
+      --regroup  also re-place existing (unlocked) clusters under declared / umbrella topics
       --dry-run  run against a temporary copy of the state db, then discard it
   lbg topics [--status candidate,open,...] [--json]    Topics (future skills) by score, with their clusters
   lbg topics show <id> [--json]                         Summary, clusters, members, evidence
@@ -79,6 +81,7 @@ async function main(argv: string[]): Promise<number> {
       "dry-run": { type: "boolean", default: false },
       fresh: { type: "boolean", default: false },
       excerpt: { type: "boolean", default: false },
+      regroup: { type: "boolean", default: false },
       "max-calls": { type: "string" },
       status: { type: "string" },
       title: { type: "string" },
@@ -218,6 +221,15 @@ async function main(argv: string[]): Promise<number> {
           ...(values["max-calls"] ? { maxCalls: Number(values["max-calls"]) } : {}),
           log: (m) => process.stderr.write(`${m}\n`),
         });
+        if (values.regroup) {
+          const rg = await regroup(db, new BedrockPiRunner(), cfg, { log: (m) => process.stderr.write(`${m}\n`) });
+          res.calls += rg.calls;
+          res.usage = addUsage(res.usage, rg.usage);
+          for (const p of rg.plans) {
+            for (const n of p.newTopics) out(`regroup: new topic "${n.title}" ← cluster(s) ${n.clusterIds.join(", ")}\n`);
+            for (const m of p.moves) out(`regroup: cluster ${m.clusterId} → topic #${m.topicId}\n`);
+          }
+        }
         const skills = await loadSkillsDir(join(cfg.skillsRepo.workTree, cfg.skillsRepo.skillsPath), "global");
         const scored = scoreTopics(db, skills, cfg.score);
         const retargeted = await resolveRepoTargets(db);

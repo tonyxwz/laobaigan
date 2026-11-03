@@ -117,6 +117,13 @@ describe("targets", () => {
     expect(pickTarget(similar, skills, S)).toEqual({ kind: "global:update", skill: "cloud-credentials" });
   });
 
+  it("global: a named topic targets its own name, whatever its members are covered by", () => {
+    const db = new StateDb(":memory:");
+    const t = cluster(db, "Dotfiles", "x", [{ coveredBy: "git-worktree" }, {}]);
+    expect(pickTarget({ ...t, name: "dotfiles-management" }, skills, S)).toEqual({ kind: "global:new", name: "dotfiles-management" });
+    expect(pickTarget({ ...t, name: "git-worktree" }, skills, S)).toEqual({ kind: "global:update", skill: "git-worktree" });
+  });
+
   it("global: new for unrelated topics; unverified coverage (?name) doesn't count", () => {
     const db = new StateDb(":memory:");
     const c = cluster(db, "User tmux configuration", "custom config lives in ~/.tmux.conf.local", [{ coveredBy: "?tmux" }]);
