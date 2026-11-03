@@ -17,6 +17,7 @@ import { StateDb } from "./state/db.ts";
 import { acquireLock } from "./util/lock.ts";
 import { truncate } from "./util/text.ts";
 import { subtreeNuggets, Tree, type TreeNode } from "./state/tree.ts";
+import { syncTree, type SyncReport } from "./pipeline/sync.ts";
 import { parseDuration, parseSince } from "./util/time.ts";
 
 const USAGE = `lbg (laobaigan 老白干) — distill repeated explanations from agent sessions into skills
@@ -42,6 +43,7 @@ Pipeline:
       --regroup  also re-place existing (unlocked) clusters under declared / umbrella topics
       --dry-run  run against a temporary copy of the state db, then discard it
   lbg tree [show <id>] [--json]                        The knowledge tree: roots → skills → sections
+  lbg tree sync [--dry-run]                            Mirror skill files (global + known repos) and declared topics into the tree
   lbg topics [--status candidate,open,...] [--json]    Topics (future skills) by score, with their clusters
   lbg topics show <id> [--json]                         Summary, clusters, members, evidence
   lbg topics retarget <id> <target>                     Set the target by hand, e.g.
@@ -258,9 +260,33 @@ async function main(argv: string[]): Promise<number> {
 
     case "tree": {
       const cfg = loadConfig();
-      const db = new StateDb(join(cfg.stateDir, "state.db"));
+      const real = new StateDb(join(cfg.stateDir, "state.db"));
+      const tmp = values["dry-run"] ? mkdtempSync(join(tmpdir(), "lbg-dry-")) : undefined;
+      const db = tmp ? real.snapshotTo(join(tmp, "state.db")) : real;
       try {
         const tree = new Tree(db);
+        if (rest[0] === "sync") {
+          const r = await syncTree(tree, {
+            skillsDir: join(cfg.skillsRepo.workTree, cfg.skillsRepo.skillsPath),
+            declared: cfg.topics,
+          });
+          if (values.json) return json(r), 0;
+          const line = (label: string, x: SyncReport) => {
+            const parts = [
+              x.created.length && `created ${x.created.length} (${x.created.join(", ")})`,
+              x.updated.length && `updated ${x.updated.join(", ")}`,
+              x.adopted.length && `adopted ${x.adopted.join(", ")}`,
+              x.removed.length && `removed ${x.removed.join(", ")}`,
+              x.unchanged && `${x.unchanged} unchanged`,
+            ].filter(Boolean);
+            out(`${label}: ${parts.join("; ") || "nothing"}\n`);
+          };
+          line("global skills", r.global);
+          for (const [repo, x] of Object.entries(r.repos)) line(`repo ${shortPath(repo)}`, x);
+          line("declared topics", r.declared);
+          if (tmp) out("(dry run: nothing persisted)\n");
+          return 0;
+        }
         if (rest[0] === "show") {
           const n = tree.subtree(Number(rest[1]));
           if (!n) throw new Error(`No node ${rest[1]}`);
@@ -276,7 +302,11 @@ async function main(argv: string[]): Promise<number> {
         out(`\n${unplaced ? `${unplaced} nugget(s) not placed yet. ` : ""}s=sessions n=nuggets. Details: lbg tree show <id>\n`);
         return 0;
       } finally {
-        db.close();
+        if (tmp) {
+          db.close();
+          rmSync(tmp, { recursive: true, force: true });
+        }
+        real.close();
       }
     }
 
@@ -490,9 +520,14 @@ function renderTree(root: TreeNode, out: (s: string) => void): void {
   for (const s of skills) {
     out(
       `  #${String(s.id).padEnd(4)} ${s.origin.padEnd(8)} ${s.status.padEnd(9)} score=${String(s.score).padStart(3)} ` +
-        `s=${sessionsOf(s)} n=${subtreeNuggets(s).length}  ${s.name ? `${s.name} — ` : ""}${s.title}${s.locked ? " (locked)" : ""}\n`,
+        `s=${sessionsOf(s)} n=${subtreeNuggets(s).length}  ${s.name ? `${s.name} — ` : ""}${s.title}${s.locked ? " (locked)" : ""}` +
+        `${s.origin === "file" && s.children.length ? `  [${s.children.length} section(s)]` : ""}\n`,
     );
-    for (const c of s.children) out(`        · #${c.id} ${c.title} (n=${subtreeNuggets(c).length})${c.locked ? " (locked)" : ""}\n`);
+    // Sections of file skills are the file's own structure: only list those holding evidence (or not from the file).
+    for (const c of s.children) {
+      if (s.origin === "file" && c.origin === "file" && subtreeNuggets(c).length === 0) continue;
+      out(`        · #${c.id} ${c.origin === "file" ? "" : `${c.origin} `}${c.title} (n=${subtreeNuggets(c).length})${c.locked ? " (locked)" : ""}\n`);
+    }
   }
 }
 
