@@ -70,10 +70,44 @@ export const MIGRATIONS: string[] = [
    CREATE INDEX cluster_status ON cluster (status);`,
   // 3: targets set by hand (lbg clusters retarget) survive re-scoring
   `ALTER TABLE cluster ADD COLUMN target_locked INTEGER NOT NULL DEFAULT 0;`,
+  // 4: two levels. A topic becomes one skill (or one AGENTS.md section); its clusters
+  // are subtopics (a section or references/<x>.md). Status/score/target move to topics.
+  // Existing clusters become subtopics of singleton topics with the same id.
+  `CREATE TABLE topic (
+     id           INTEGER PRIMARY KEY AUTOINCREMENT,
+     name         TEXT,                   -- skill name when declared by the user
+     title        TEXT NOT NULL,
+     description  TEXT,                   -- user-declared scope of the topic
+     scope        TEXT NOT NULL,          -- global | repo
+     repo         TEXT,
+     declared     INTEGER NOT NULL DEFAULT 0,  -- from config.topics
+     locked       INTEGER NOT NULL DEFAULT 0,  -- curated by hand; automation keeps it
+     status       TEXT NOT NULL DEFAULT 'open',
+     score        REAL NOT NULL DEFAULT 0,
+     target       TEXT,
+     target_locked INTEGER NOT NULL DEFAULT 0,
+     stats        TEXT,
+     rejected_sessions INTEGER,
+     created_at   INTEGER NOT NULL,
+     updated_at   INTEGER NOT NULL
+   );
+   CREATE INDEX topic_status ON topic (status);
+   INSERT INTO topic (id, title, scope, repo, status, score, target, target_locked, stats, rejected_sessions, created_at, updated_at)
+     SELECT id, title, scope, repo, status, score, target, target_locked, stats, rejected_sessions, created_at, updated_at FROM cluster;
+   ALTER TABLE cluster ADD COLUMN topic_id INTEGER REFERENCES topic (id);
+   UPDATE cluster SET topic_id = id;
+   DROP INDEX cluster_status;
+   ALTER TABLE cluster DROP COLUMN status;
+   ALTER TABLE cluster DROP COLUMN score;
+   ALTER TABLE cluster DROP COLUMN target;
+   ALTER TABLE cluster DROP COLUMN target_locked;
+   ALTER TABLE cluster DROP COLUMN stats;
+   ALTER TABLE cluster DROP COLUMN rejected_sessions;
+   CREATE INDEX cluster_topic ON cluster (topic_id);`,
 ];
 
-export const CLUSTER_STATUSES = ["open", "candidate", "proposed", "merged", "rejected"] as const;
-export type ClusterStatus = (typeof CLUSTER_STATUSES)[number];
+export const TOPIC_STATUSES = ["open", "candidate", "proposed", "merged", "rejected"] as const;
+export type TopicStatus = (typeof TOPIC_STATUSES)[number];
 
 export interface NuggetRow {
   id: number;
@@ -94,16 +128,38 @@ export interface NuggetRow {
   createdAt: Date;
 }
 
+/** A subtopic: nuggets that say the same thing. Becomes a section or references/<x>.md. */
 export interface ClusterRow {
   id: number;
+  topicId: number;
   title: string;
   summary: string;
   scope: "global" | "repo";
   repo?: string;
-  status: ClusterStatus;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface ClusterWithMembers extends ClusterRow {
+  members: NuggetRow[];
+}
+
+/** A topic: one skill (or one AGENTS.md section). Scored on the union of its clusters. */
+export interface TopicRow {
+  id: number;
+  /** Skill name declared by the user (config.topics). */
+  name?: string;
+  title: string;
+  description?: string;
+  scope: "global" | "repo";
+  repo?: string;
+  declared: boolean;
+  /** Curated by hand; regroup/consolidation leave it alone. */
+  locked: boolean;
+  status: TopicStatus;
   score: number;
   target?: string;
-  /** Set by hand; scoring and repo resolution leave it alone. */
+  /** Target set by hand; scoring and repo resolution leave it alone. */
   targetLocked: boolean;
   stats?: unknown;
   rejectedSessions?: number;
@@ -111,8 +167,22 @@ export interface ClusterRow {
   updatedAt: Date;
 }
 
-export interface ClusterWithMembers extends ClusterRow {
+export interface TopicWithClusters extends TopicRow {
+  clusters: ClusterWithMembers[];
+  /** All nuggets of all clusters. */
   members: NuggetRow[];
+  /** Cluster summaries combined (one section per cluster when there are several). */
+  summary: string;
+}
+
+export type Scope = { scope: "global" | "repo"; repo?: string };
+
+function sameScope(a: Record<string, unknown>, b: Record<string, unknown>): boolean {
+  return a.scope === b.scope && (a.scope !== "repo" || (a.repo ?? null) === (b.repo ?? null));
+}
+
+function scopeLabel(x: Record<string, unknown>): string {
+  return `${String(x.scope)}${x.repo ? `:${String(x.repo)}` : ""}`;
 }
 
 export interface SessionRow {
@@ -290,26 +360,44 @@ export class StateDb {
     return (this.db.prepare("SELECT * FROM nugget ORDER BY id").all() as Row[]).map(toNugget);
   }
 
-  createCluster(c: { title: string; summary: string; scope: "global" | "repo"; repo?: string }): number {
+  // topics ------------------------------------------------------------------
+
+  createTopic(t: Scope & { title: string; name?: string; description?: string; declared?: boolean; locked?: boolean }): number {
     const now = Date.now();
     const r = this.db
       .prepare(
-        "INSERT INTO cluster (title, summary, scope, repo, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+        `INSERT INTO topic (name, title, description, scope, repo, declared, locked, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(c.title, c.summary, c.scope, c.scope === "repo" ? (c.repo ?? null) : null, now, now);
+      .run(
+        t.name ?? null,
+        t.title,
+        t.description ?? null,
+        t.scope,
+        t.scope === "repo" ? (t.repo ?? null) : null,
+        t.declared ? 1 : 0,
+        t.locked ? 1 : 0,
+        now,
+        now,
+      );
     return Number(r.lastInsertRowid);
   }
 
-  /** Update any subset of mutable cluster fields. */
-  updateCluster(
+  /** Update any subset of mutable topic fields. */
+  updateTopic(
     id: number,
     patch: Partial<
-      Pick<ClusterRow, "title" | "summary" | "status" | "score" | "target" | "targetLocked" | "stats" | "rejectedSessions">
+      Pick<
+        TopicRow,
+        "name" | "title" | "description" | "locked" | "status" | "score" | "target" | "targetLocked" | "stats" | "rejectedSessions"
+      >
     >,
   ): void {
     const cols: Record<string, string> = {
+      name: "name",
       title: "title",
-      summary: "summary",
+      description: "description",
+      locked: "locked",
       status: "status",
       score: "score",
       target: "target",
@@ -322,15 +410,93 @@ export class StateDb {
     for (const [k, v] of Object.entries(patch)) {
       const col = cols[k];
       if (!col || v === undefined) continue;
-      if (k === "status" && !CLUSTER_STATUSES.includes(v as ClusterStatus)) throw new Error(`Bad cluster status: ${v}`);
+      if (k === "status" && !TOPIC_STATUSES.includes(v as TopicStatus)) throw new Error(`Bad topic status: ${v}`);
       sets.push(`${col} = ?`);
       vals.push(k === "stats" ? JSON.stringify(v) : typeof v === "boolean" ? (v ? 1 : 0) : (v as string | number | null));
     }
     if (!sets.length) return;
     sets.push("updated_at = ?");
     vals.push(Date.now(), id);
+    const r = this.db.prepare(`UPDATE topic SET ${sets.join(", ")} WHERE id = ?`).run(...vals);
+    if (Number(r.changes) === 0) throw new Error(`No topic ${id}`);
+  }
+
+  getTopic(id: number): TopicWithClusters | undefined {
+    return this.topics().find((t) => t.id === id);
+  }
+
+  /** Topics (optionally filtered by status) with their clusters and nuggets. */
+  topics(status?: TopicStatus[]): TopicWithClusters[] {
+    const rows = (
+      status?.length
+        ? this.db.prepare(`SELECT * FROM topic WHERE status IN (${status.map(() => "?").join(",")}) ORDER BY id`).all(...status)
+        : this.db.prepare("SELECT * FROM topic ORDER BY id").all()
+    ) as Row[];
+    const byTopic = new Map<number, ClusterWithMembers[]>();
+    for (const c of this.clusters()) byTopic.set(c.topicId, [...(byTopic.get(c.topicId) ?? []), c]);
+    return rows.map((r) => {
+      const clusters = byTopic.get(Number(r.id)) ?? [];
+      return {
+        ...toTopic(r),
+        clusters,
+        members: clusters.flatMap((c) => c.members),
+        summary:
+          clusters.length === 1
+            ? clusters[0]!.summary
+            : clusters.map((c) => `### ${c.title}\n${c.summary}`).join("\n\n"),
+      };
+    });
+  }
+
+  /** Remove topics left without clusters, unless declared or past "open/candidate". */
+  deleteEmptyTopics(): number {
+    const r = this.db
+      .prepare(
+        `DELETE FROM topic WHERE declared = 0 AND status IN ('open', 'candidate')
+           AND NOT EXISTS (SELECT 1 FROM cluster WHERE cluster.topic_id = topic.id)`,
+      )
+      .run();
+    return Number(r.changes);
+  }
+
+  // clusters (subtopics) --------------------------------------------------------
+
+  /** Create a cluster; without `topicId` it gets its own singleton topic of the same title. */
+  createCluster(c: Scope & { title: string; summary: string; topicId?: number }): number {
+    const now = Date.now();
+    const scope: Scope = { scope: c.scope, ...(c.scope === "repo" && c.repo ? { repo: c.repo } : {}) };
+    const topicId = c.topicId ?? this.createTopic({ ...scope, title: c.title });
+    this.checkTopicScope(topicId, scope, `new cluster "${c.title}"`);
+    const r = this.db
+      .prepare("INSERT INTO cluster (topic_id, title, summary, scope, repo, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .run(topicId, c.title, c.summary, scope.scope, scope.repo ?? null, now, now);
+    return Number(r.lastInsertRowid);
+  }
+
+  private checkTopicScope(topicId: number, scope: Scope, what: string): void {
+    const t = this.db.prepare("SELECT scope, repo FROM topic WHERE id = ?").get(topicId) as Row | undefined;
+    if (!t) throw new Error(`No topic ${topicId}`);
+    if (!sameScope(t, scope)) throw new Error(`Scope mismatch: ${what} (${scopeLabel(scope)}) vs topic ${topicId} (${scopeLabel(t)})`);
+  }
+
+  updateCluster(id: number, patch: Partial<Pick<ClusterRow, "title" | "summary">>): void {
+    const sets: string[] = [];
+    const vals: (string | number)[] = [];
+    if (patch.title !== undefined) sets.push("title = ?"), vals.push(patch.title);
+    if (patch.summary !== undefined) sets.push("summary = ?"), vals.push(patch.summary);
+    if (!sets.length) return;
+    sets.push("updated_at = ?");
+    vals.push(Date.now(), id);
     const r = this.db.prepare(`UPDATE cluster SET ${sets.join(", ")} WHERE id = ?`).run(...vals);
     if (Number(r.changes) === 0) throw new Error(`No cluster ${id}`);
+  }
+
+  /** Move a cluster under another topic (same scope/repo only). */
+  setClusterTopic(clusterId: number, topicId: number): void {
+    const c = this.db.prepare("SELECT scope, repo FROM cluster WHERE id = ?").get(clusterId) as Row | undefined;
+    if (!c) throw new Error(`No cluster ${clusterId}`);
+    this.checkTopicScope(topicId, { scope: c.scope as Scope["scope"], ...(c.repo ? { repo: String(c.repo) } : {}) }, `cluster ${clusterId}`);
+    this.db.prepare("UPDATE cluster SET topic_id = ?, updated_at = ? WHERE id = ?").run(topicId, Date.now(), clusterId);
   }
 
   /** Assign a nugget to a cluster. Scope/repo must match (never mix global with repo, or two repos). */
@@ -339,10 +505,8 @@ export class StateDb {
     const c = this.db.prepare("SELECT scope, repo FROM cluster WHERE id = ?").get(clusterId) as Row | undefined;
     if (!n) throw new Error(`No nugget ${nuggetId}`);
     if (!c) throw new Error(`No cluster ${clusterId}`);
-    if (n.scope !== c.scope || (n.scope === "repo" && (n.repo ?? null) !== (c.repo ?? null))) {
-      throw new Error(
-        `Scope mismatch: nugget ${nuggetId} (${n.scope}${n.repo ? `:${n.repo}` : ""}) vs cluster ${clusterId} (${c.scope}${c.repo ? `:${c.repo}` : ""})`,
-      );
+    if (!sameScope(n, c)) {
+      throw new Error(`Scope mismatch: nugget ${nuggetId} (${scopeLabel(n)}) vs cluster ${clusterId} (${scopeLabel(c)})`);
     }
     this.db.prepare("UPDATE nugget SET cluster_id = ? WHERE id = ?").run(clusterId, nuggetId);
     this.db.prepare("UPDATE cluster SET updated_at = ? WHERE id = ?").run(Date.now(), clusterId);
@@ -355,18 +519,12 @@ export class StateDb {
     return { ...toCluster(row), members };
   }
 
-  /** All clusters (optionally filtered by status) with their member nuggets. */
-  clusters(status?: ClusterStatus[]): ClusterWithMembers[] {
-    const rows = (
-      status?.length
-        ? this.db.prepare(`SELECT * FROM cluster WHERE status IN (${status.map(() => "?").join(",")}) ORDER BY id`).all(...status)
-        : this.db.prepare("SELECT * FROM cluster ORDER BY id").all()
-    ) as Row[];
+  /** All clusters with their member nuggets. */
+  clusters(): ClusterWithMembers[] {
+    const rows = this.db.prepare("SELECT * FROM cluster ORDER BY id").all() as Row[];
     const byCluster = new Map<number, NuggetRow[]>();
     for (const n of (this.db.prepare("SELECT * FROM nugget WHERE cluster_id IS NOT NULL ORDER BY id").all() as Row[]).map(toNugget)) {
-      const list = byCluster.get(n.clusterId!) ?? [];
-      list.push(n);
-      byCluster.set(n.clusterId!, list);
+      byCluster.set(n.clusterId!, [...(byCluster.get(n.clusterId!) ?? []), n]);
     }
     return rows.map((r) => ({ ...toCluster(r), members: byCluster.get(Number(r.id)) ?? [] }));
   }
@@ -382,7 +540,8 @@ export class StateDb {
       nuggets: one("SELECT count(*) n FROM nugget"),
       unclustered: one("SELECT count(*) n FROM nugget WHERE cluster_id IS NULL"),
       clusters: one("SELECT count(*) n FROM cluster"),
-      candidates: one("SELECT count(*) n FROM cluster WHERE status = 'candidate'"),
+      topics: one("SELECT count(*) n FROM topic"),
+      candidates: one("SELECT count(*) n FROM topic WHERE status = 'candidate'"),
     };
   }
 }
@@ -422,11 +581,27 @@ function toNugget(r: Row): NuggetRow {
 function toCluster(r: Row): ClusterRow {
   return {
     id: Number(r.id),
+    topicId: Number(r.topic_id),
     title: String(r.title),
     summary: String(r.summary),
     scope: r.scope as "global" | "repo",
     ...(r.repo ? { repo: String(r.repo) } : {}),
-    status: r.status as ClusterStatus,
+    createdAt: new Date(Number(r.created_at)),
+    updatedAt: new Date(Number(r.updated_at)),
+  };
+}
+
+function toTopic(r: Row): TopicRow {
+  return {
+    id: Number(r.id),
+    ...(r.name ? { name: String(r.name) } : {}),
+    title: String(r.title),
+    ...(r.description ? { description: String(r.description) } : {}),
+    scope: r.scope as "global" | "repo",
+    ...(r.repo ? { repo: String(r.repo) } : {}),
+    declared: Number(r.declared) === 1,
+    locked: Number(r.locked) === 1,
+    status: r.status as TopicStatus,
     score: Number(r.score),
     ...(r.target ? { target: String(r.target) } : {}),
     targetLocked: Number(r.target_locked ?? 0) === 1,

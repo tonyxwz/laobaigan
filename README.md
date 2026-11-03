@@ -36,6 +36,8 @@ node src/cli.ts scan --session pi:01a19be3 --fresh --excerpt   # exact text the 
 node src/cli.ts extract                         # extract + persist (backfills everything on first run)
 node src/cli.ts extract --session pi:01a19be3 --dry-run --fresh  # prompt tuning on one session
 node src/cli.ts nuggets                         # stored nuggets
+node src/cli.ts cluster [--dry-run]             # group nuggets into clusters, score topics
+node src/cli.ts topics [show <id>]              # topics (future skills) by score
 node src/cli.ts status                          # db counts + run log (tokens, cost)
 ```
 
@@ -252,10 +254,20 @@ interface Nugget {
 
 ### 5. Aggregate and score (deterministic + light pi)
 
+Two levels:
+
+```
+topic    = one skill (or one AGENTS.md section)      e.g. "Dotfiles management"
+└ cluster = a subtopic: a section or references/x.md  e.g. "tmux", "zsh profiles", "pi config"
+  └ nugget = one thing I taught an agent, with evidence
+```
+
+Recurrence is counted at the **topic** level, so an umbrella topic surfaces even when each subtopic came up only once.
+
 1. **Cluster** nuggets that say the same thing.
    - v1: ask pi to assign each new nugget to an existing cluster or start a new one, using compact cluster summaries.
-   - later: embeddings, if pi/Bedrock exposes them.
-2. **Score** each cluster:
+   - A new cluster gets its own topic until it's grouped under a broader one (declared topics, curation, or the consolidation pass).
+2. **Score** each topic on the union of its clusters' nuggets:
    ```
    score = distinct_sessions × w1
          + distinct_agents   × w2     // explained to Claude AND pi → strong signal
@@ -344,7 +356,8 @@ git --git-dir=~/.cfg --work-tree=<worktree> commit ...   # commit happens in the
 | `session` | `(agent, session_id)` → `version`, location, cwd, timestamps, prefilter signals, last status |
 | `turn_seen` | user-turn fingerprint → first `(agent, session_id)` it was seen in; drives dedup across resumes |
 | `nugget` | extracted nuggets + evidence (agent, session, turn label, quote) |
-| `cluster` | cluster summary, member nuggets, score, status (`open` / `proposed` / `merged` / `rejected`) |
+| `topic` | one future skill / AGENTS.md section: title, declared name/description, score, status (`open` / `candidate` / `proposed` / `merged` / `rejected`), target, locks |
+| `cluster` | a subtopic under a topic: title, merged summary, member nuggets |
 | `proposal` | cluster, target, repo, branch, worktree, commit, status |
 | `run` | run log: counts, token usage and cost per stage, errors |
 

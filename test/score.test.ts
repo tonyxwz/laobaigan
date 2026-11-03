@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_CONFIG } from "../src/config.ts";
 import {
-  clusterStats,
+  topicStats,
   formatTarget,
   meetsPromotion,
   parseTarget,
   pickTarget,
-  scoreClusters,
+  scoreTopics,
   scoreOf,
   similarity,
   skillName,
@@ -32,11 +32,19 @@ const nugget = (over: Partial<NuggetInsert> = {}): NuggetInsert => ({
   ...over,
 });
 
-/** Build a cluster from nugget overrides and return it with members. */
-function cluster(db: StateDb, title: string, summary: string, members: Partial<NuggetInsert>[], scope: "global" | "repo" = "global", repo?: string) {
-  const id = db.createCluster({ title, summary, scope, ...(repo ? { repo } : {}) });
+/** Build a cluster (in its own topic, or `topicId`) from nugget overrides; returns the topic plus clusterId. */
+function cluster(
+  db: StateDb,
+  title: string,
+  summary: string,
+  members: Partial<NuggetInsert>[],
+  scope: "global" | "repo" = "global",
+  repo?: string,
+  topicId?: number,
+) {
+  const id = db.createCluster({ title, summary, scope, ...(repo ? { repo } : {}), ...(topicId ? { topicId } : {}) });
   for (const m of members) db.assignNugget(db.insertNugget(nugget({ scope, ...(repo ? { repo } : {}), ...m })), id);
-  return db.getCluster(id)!;
+  return { ...db.getTopic(db.getCluster(id)!.topicId)!, clusterId: id };
 }
 
 const skills: SkillInfo[] = [
@@ -53,7 +61,7 @@ describe("stats and score", () => {
       { agent: "claude", sessionId: "b", evidence: [{ label: "U2", quote: "", ts: "2026-01-03T00:00:00.000Z" }] },
       { sessionId: "c", coveredBy: "git-worktree" },
     ]);
-    const st = clusterStats(c);
+    const st = topicStats(c);
     expect(st).toMatchObject({ nuggets: 4, sessions: 3, agents: ["claude", "pi"], days: 2, corrections: 1, coveredBy: ["git-worktree"] });
     expect(st.firstSeen).toBe("2026-01-01T10:00:00.000Z");
     // 3*3 + 1*3 + 1*1 + 1*1 - 2
@@ -124,36 +132,60 @@ describe("targets", () => {
   });
 });
 
-describe("scoreClusters", () => {
-  it("promotes eligible clusters once, keeps proposed ones, re-promotes grown rejections", () => {
+describe("scoreTopics", () => {
+  it("promotes eligible topics once, keeps proposed ones, re-promotes grown rejections", () => {
     const db = new StateDb(":memory:");
     const three = cluster(db, "Pi and OpenCode configuration", "s", [{ sessionId: "a" }, { sessionId: "b" }, { sessionId: "c" }]);
     const cross = cluster(db, "Evals", "s", [{ sessionId: "a" }, { agent: "claude", sessionId: "z" }], "repo", "/w/D");
     const solo = cluster(db, "tmux", "s", [{ sessionId: "a" }]);
     const proposed = cluster(db, "P", "s", [{ sessionId: "a" }, { sessionId: "b" }, { sessionId: "c" }]);
-    db.updateCluster(proposed.id, { status: "proposed", target: "global:new:p" });
+    db.updateTopic(proposed.id, { status: "proposed", target: "global:new:p" });
     const rejected = cluster(db, "R", "s", [{ sessionId: "a" }, { sessionId: "b" }, { sessionId: "c" }]);
-    db.updateCluster(rejected.id, { status: "rejected", rejectedSessions: 3 });
+    db.updateTopic(rejected.id, { status: "rejected", rejectedSessions: 3 });
 
-    const r1 = scoreClusters(db, skills, S);
+    const r1 = scoreTopics(db, skills, S);
     expect(r1.promoted.map((p) => [p.id, p.target])).toEqual([
       [three.id, "global:new:pi-opencode-configuration"],
       [cross.id, "repo:agents-md:/w/D"],
     ]);
-    expect(db.getCluster(solo.id)).toMatchObject({ status: "open", score: 3 });
-    expect(db.getCluster(proposed.id)).toMatchObject({ status: "proposed", target: "global:new:p" });
-    expect(db.getCluster(rejected.id)!.status).toBe("rejected");
+    expect(db.getTopic(solo.id)).toMatchObject({ status: "open", score: 3 });
+    expect(db.getTopic(proposed.id)).toMatchObject({ status: "proposed", target: "global:new:p" });
+    expect(db.getTopic(rejected.id)!.status).toBe("rejected");
 
     // idempotent: nothing newly promoted
-    expect(scoreClusters(db, skills, S).promoted).toEqual([]);
+    expect(scoreTopics(db, skills, S).promoted).toEqual([]);
 
     // a hand-set target survives re-scoring
-    db.updateCluster(three.id, { target: "global:update:git-worktree", targetLocked: true });
-    scoreClusters(db, skills, S);
-    expect(db.getCluster(three.id)!.target).toBe("global:update:git-worktree");
+    db.updateTopic(three.id, { target: "global:update:git-worktree", targetLocked: true });
+    scoreTopics(db, skills, S);
+    expect(db.getTopic(three.id)!.target).toBe("global:update:git-worktree");
 
     // the rejected topic comes up in 2 more sessions → candidate again
-    for (const s of ["d", "e"]) db.assignNugget(db.insertNugget(nugget({ sessionId: s })), rejected.id);
-    expect(scoreClusters(db, skills, S).promoted.map((p) => p.id)).toEqual([rejected.id]);
+    for (const s of ["d", "e"]) db.assignNugget(db.insertNugget(nugget({ sessionId: s })), rejected.clusterId);
+    expect(scoreTopics(db, skills, S).promoted.map((p) => p.id)).toEqual([rejected.id]);
+  });
+
+  it("scores a topic on the union of its clusters (umbrella topics surface)", () => {
+    const db = new StateDb(":memory:");
+    // Three one-session clusters: none is promotable on its own…
+    const zsh = cluster(db, "zsh profiles", "s", [{ sessionId: "a" }]);
+    const tmux = cluster(db, "tmux", "s", [{ sessionId: "b" }]);
+    const pi = cluster(db, "pi config", "s", [{ sessionId: "c" }]);
+    expect(scoreTopics(db, skills, S).promoted).toEqual([]);
+
+    // …but under one declared topic they are 3 sessions → promoted, named by the declaration.
+    const dot = db.createTopic({ title: "Dotfiles management", name: "dotfiles-management", scope: "global", declared: true });
+    for (const c of [zsh, tmux, pi]) db.setClusterTopic(c.clusterId, dot);
+    db.deleteEmptyTopics();
+    const res = scoreTopics(db, skills, S);
+    expect(res.promoted).toEqual([{ id: dot, title: "Dotfiles management", target: "global:new:dotfiles-management", score: 9 }]);
+    expect(db.getTopic(dot)!.stats).toMatchObject({ sessions: 3, nuggets: 3 });
+    expect(db.topics().map((t) => t.id)).toEqual([dot]);
+  });
+
+  it("never promotes empty (declared) topics", () => {
+    const db = new StateDb(":memory:");
+    db.createTopic({ title: "Gradle", scope: "global", declared: true });
+    expect(scoreTopics(db, skills, { ...S, promote: { ...S.promote, minSessions: 0 } }).promoted).toEqual([]);
   });
 });

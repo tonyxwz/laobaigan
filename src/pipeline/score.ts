@@ -1,9 +1,20 @@
 import type { ScoreConfig } from "../config.ts";
 import type { SkillInfo } from "../skills/index.ts";
-import type { ClusterWithMembers, StateDb } from "../state/db.ts";
+import type { NuggetRow, StateDb, TopicWithClusters } from "../state/db.ts";
+
+/** What scoring needs to know about a topic. */
+export interface Scorable {
+  title: string;
+  summary: string;
+  scope: "global" | "repo";
+  repo?: string;
+  /** User-declared skill name, if any. */
+  name?: string;
+  members: NuggetRow[];
+}
 import { resolveRepo, type RepoResolution } from "../skills/repo.ts";
 
-export interface ClusterStats {
+export interface TopicStats {
   nuggets: number;
   /** Distinct (agent, session) pairs. Resumed copies are already deduped upstream by fingerprint. */
   sessions: number;
@@ -65,7 +76,7 @@ export function parseTarget(s: string): Target {
   throw new Error(`Bad target: ${s}`);
 }
 
-export function clusterStats(c: ClusterWithMembers): ClusterStats {
+export function topicStats(c: Scorable): TopicStats {
   const sessions = new Set<string>();
   const agents = new Set<string>();
   const days = new Set<string>();
@@ -96,7 +107,7 @@ export function clusterStats(c: ClusterWithMembers): ClusterStats {
   };
 }
 
-export function scoreOf(s: ClusterStats, w: ScoreConfig["weights"]): number {
+export function scoreOf(s: TopicStats, w: ScoreConfig["weights"]): number {
   return (
     s.sessions * w.session +
     Math.max(0, s.agents.length - 1) * w.extraAgent +
@@ -106,7 +117,7 @@ export function scoreOf(s: ClusterStats, w: ScoreConfig["weights"]): number {
   );
 }
 
-export function meetsPromotion(s: ClusterStats, p: ScoreConfig["promote"]): boolean {
+export function meetsPromotion(s: TopicStats, p: ScoreConfig["promote"]): boolean {
   return s.sessions >= p.minSessions || (s.sessions >= p.minSessionsCrossAgent && s.agents.length >= 2);
 }
 
@@ -157,7 +168,7 @@ export function similarity(a: string, b: string): number {
 }
 
 export function pickTarget(
-  c: ClusterWithMembers,
+  c: Scorable,
   skills: SkillInfo[],
   cfg: Pick<ScoreConfig, "updateSimilarity" | "agentsMdMaxChars">,
 ): Target {
@@ -166,7 +177,7 @@ export function pickTarget(
     const procedural = c.members.filter((m) => m.kind === "procedure").length;
     const longForm = c.summary.length > cfg.agentsMdMaxChars;
     return longForm && procedural >= Math.ceil(c.members.length / 2)
-      ? { kind: "repo:skill", repo, name: skillName(c.title) }
+      ? { kind: "repo:skill", repo, name: c.name ?? skillName(c.title) }
       : { kind: "repo:agents-md", repo };
   }
 
@@ -185,7 +196,7 @@ export function pickTarget(
     .sort((a, b) => b.sim - a.sim)[0];
   if (best && best.sim >= cfg.updateSimilarity) return { kind: "global:update", skill: best.s.name };
 
-  return { kind: "global:new", name: skillName(c.title) };
+  return { kind: "global:new", name: c.name ?? skillName(c.title) };
 }
 
 export interface ScoreResult {
@@ -194,28 +205,29 @@ export interface ScoreResult {
 }
 
 /**
- * Recompute stats/score for every cluster; promote `open` (or re-promote
- * grown `rejected`) clusters that meet the thresholds, and set their target.
- * `proposed` / `merged` clusters keep their status and target.
+ * Recompute stats/score for every topic on the union of its clusters; promote
+ * `open` (or re-promote grown `rejected`) topics that meet the thresholds, and set
+ * their target. `proposed` / `merged` topics keep their status and target.
  */
-export function scoreClusters(db: StateDb, skills: SkillInfo[], cfg: ScoreConfig): ScoreResult {
+export function scoreTopics(db: StateDb, skills: SkillInfo[], cfg: ScoreConfig): ScoreResult {
   const res: ScoreResult = { scored: 0, promoted: [] };
   db.tx(() => {
-    for (const c of db.clusters()) {
-      const stats = clusterStats(c);
+    for (const t of db.topics()) {
+      const stats = topicStats(t);
       const score = scoreOf(stats, cfg.weights);
       res.scored++;
       const eligible =
+        t.members.length > 0 &&
         meetsPromotion(stats, cfg.promote) &&
-        (c.status === "open" ||
-          c.status === "candidate" ||
-          (c.status === "rejected" && stats.sessions >= (c.rejectedSessions ?? 0) + cfg.promote.reproposeAfterSessions));
+        (t.status === "open" ||
+          t.status === "candidate" ||
+          (t.status === "rejected" && stats.sessions >= (t.rejectedSessions ?? 0) + cfg.promote.reproposeAfterSessions));
       if (eligible) {
-        const target = c.targetLocked && c.target ? c.target : formatTarget(pickTarget(c, skills, cfg));
-        db.updateCluster(c.id, { stats, score, status: "candidate", target });
-        if (c.status !== "candidate") res.promoted.push({ id: c.id, title: c.title, target, score });
+        const target = t.targetLocked && t.target ? t.target : formatTarget(pickTarget(t, skills, cfg));
+        db.updateTopic(t.id, { stats, score, status: "candidate", target });
+        if (t.status !== "candidate") res.promoted.push({ id: t.id, title: t.title, target, score });
       } else {
-        db.updateCluster(c.id, { stats, score });
+        db.updateTopic(t.id, { stats, score });
       }
     }
   });
@@ -223,12 +235,12 @@ export function scoreClusters(db: StateDb, skills: SkillInfo[], cfg: ScoreConfig
 }
 
 /** Everything known about a topic, for resolving which package it refers to. */
-export function clusterText(c: ClusterWithMembers): string {
+export function topicText(c: Scorable): string {
   return [c.title, c.summary, ...c.members.flatMap((m) => [m.title, m.knowledge, m.cwd, ...m.evidence.map((e) => e.quote)])].join("\n");
 }
 
 /**
- * For candidates with repo targets, pin the target to a real git repository
+ * For candidate topics with repo targets, pin the target to a real git repository
  * (multi-package workspace roots → a package). Unresolvable ones get `repo:unresolved`
  * and are not drafted until retargeted by hand.
  */
@@ -237,11 +249,11 @@ export async function resolveRepoTargets(
   resolve: (path: string, text: string) => Promise<RepoResolution> = resolveRepo,
 ): Promise<{ id: number; from: string; to: string; reason?: string; candidates?: string[] }[]> {
   const changes: { id: number; from: string; to: string; reason?: string; candidates?: string[] }[] = [];
-  for (const c of db.clusters(["candidate"])) {
+  for (const c of db.topics(["candidate"])) {
     if (!c.target?.startsWith("repo:") || c.targetLocked) continue;
     const t = parseTarget(c.target);
     if (t.kind !== "repo:agents-md" && t.kind !== "repo:skill" && t.kind !== "repo:unresolved") continue;
-    const r = await resolve(t.repo, clusterText(c));
+    const r = await resolve(t.repo, topicText(c));
     let next: Target;
     if (r.ok) {
       next = t.kind === "repo:skill" ? { ...t, repo: r.root } : t.kind === "repo:agents-md" ? { ...t, repo: r.root } : { kind: "repo:agents-md", repo: r.root };
@@ -250,7 +262,7 @@ export async function resolveRepoTargets(
     }
     const to = formatTarget(next);
     if (to !== c.target) {
-      db.updateCluster(c.id, { target: to });
+      db.updateTopic(c.id, { target: to });
       changes.push({ id: c.id, from: c.target, to, ...(r.ok ? {} : { reason: r.reason, candidates: r.candidates }) });
     }
   }

@@ -83,25 +83,25 @@ describe("resolveRepoTargets", () => {
   it("pins repo targets of candidates to a package, or marks them unresolved", async () => {
     const db = new StateDb(":memory:");
     const mk = (title: string, summary: string, target: string) => {
-      const id = db.createCluster({ title, summary, scope: "repo", repo: ws });
-      db.updateCluster(id, { status: "candidate", target });
+      const id = db.getCluster(db.createCluster({ title, summary, scope: "repo", repo: ws }))!.topicId;
+      db.updateTopic(id, { status: "candidate", target });
       return id;
     };
     const a = mk("Evals", "Datasets evals", `repo:skill:${ws}:run-evals`);
     const b = mk("Roles", "Datasets vs Handbook", `repo:agents-md:${ws}`);
-    const open = db.createCluster({ title: "x", summary: "Handbook", scope: "repo", repo: ws });
-    db.updateCluster(open, { target: `repo:agents-md:${ws}` }); // not a candidate → untouched
+    const open = db.getCluster(db.createCluster({ title: "x", summary: "Handbook", scope: "repo", repo: ws }))!.topicId;
+    db.updateTopic(open, { target: `repo:agents-md:${ws}` }); // not a candidate → untouched
 
     const changes = await resolveRepoTargets(db);
-    expect(db.getCluster(a)!.target).toBe(`repo:skill:${join(ws, "src", "Datasets")}:run-evals`);
-    expect(db.getCluster(b)!.target).toBe(`repo:unresolved:${ws}`);
-    expect(db.getCluster(open)!.target).toBe(`repo:agents-md:${ws}`);
+    expect(db.getTopic(a)!.target).toBe(`repo:skill:${join(ws, "src", "Datasets")}:run-evals`);
+    expect(db.getTopic(b)!.target).toBe(`repo:unresolved:${ws}`);
+    expect(db.getTopic(open)!.target).toBe(`repo:agents-md:${ws}`);
     expect(changes.find((c) => c.id === b)?.candidates).toHaveLength(2);
     // idempotent
     expect(await resolveRepoTargets(db)).toEqual([]);
     // locked targets are left alone even if unresolvable
-    db.updateCluster(b, { target: `repo:agents-md:${ws}`, targetLocked: true });
+    db.updateTopic(b, { target: `repo:agents-md:${ws}`, targetLocked: true });
     await resolveRepoTargets(db);
-    expect(db.getCluster(b)!.target).toBe(`repo:agents-md:${ws}`);
+    expect(db.getTopic(b)!.target).toBe(`repo:agents-md:${ws}`);
   });
 });
