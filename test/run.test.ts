@@ -1,4 +1,4 @@
-import { existsSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -61,7 +61,8 @@ class StageRunner implements PiRunner {
 
 async function setup() {
   const skillsDir = realpathSync(await mkdtemp(join(tmpdir(), "lbg-skills-")));
-  const cfg: Config = { ...DEFAULT_CONFIG, skillsDir, settleMinutes: 0 };
+  const stateDir = realpathSync(await mkdtemp(join(tmpdir(), "lbg-state-")));
+  const cfg: Config = { ...DEFAULT_CONFIG, skillsDir, stateDir, settleMinutes: 0 };
   const adapter = new FakeAdapter();
   for (const id of ["a", "b", "c"]) adapter.sessions.set(id, [{ role: "user", text: `my tmux config is in ~/.tmux.conf.local, remember that (${id})`, ts: ts(1), origin: "prompt" }]);
   const db = new StateDb(":memory:");
@@ -88,6 +89,8 @@ describe("runPipeline", () => {
     expect(r.usage.cost).toBeCloseTo(0.06);
     expect(exitCode(r)).toBe(0);
     expect(existsSync(join(skillsDir, "tmux-config"))).toBe(false); // only proposed, not written
+    expect(r.waiting).toBe(1);
+    expect(readFileSync(join(deps.cfg.stateDir, "prompt"), "utf8")).toBe("1");
 
     // the run log has one row with every stage
     const row = db.db.prepare("SELECT kind, stats FROM run").all() as { kind: string; stats: string }[];

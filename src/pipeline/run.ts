@@ -9,6 +9,7 @@ import { processSessions } from "./process.ts";
 import { draftCandidates } from "./render.ts";
 import { syncTree } from "./sync.ts";
 import { scoreTree } from "./treescore.ts";
+import { writePromptStatus } from "../notify/prompt.ts";
 
 /**
  * One unattended pass (what the hourly timer runs):
@@ -53,6 +54,8 @@ export interface RunReport {
   usage: Usage;
   /** Set when model stages were skipped after repeated model errors. */
   abortedReason?: string;
+  /** Proposals waiting for review after this run (what the prompt shows). */
+  waiting?: number;
   ms: number;
 }
 
@@ -157,6 +160,13 @@ export async function runPipeline(deps: RunDeps, opts: { stages?: Stage[]; maxEx
     return { calls, usage, summary: parts.join(", ") };
   });
 
+  // The shell prompt segment (count of proposals waiting); never fails the run.
+  try {
+    rep.waiting = writePromptStatus(db, cfg.stateDir);
+  } catch (e) {
+    log(`prompt status: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
   rep.ms = now().getTime() - started;
   db.finishRun(runId, {
     stages: rep.stages.map(({ stage, status, calls, usage, summary }) => ({ stage, status, calls, cost: usage.cost, tokens: { input: usage.input, output: usage.output }, summary })),
@@ -164,6 +174,7 @@ export async function runPipeline(deps: RunDeps, opts: { stages?: Stage[]; maxEx
     calls: rep.calls,
     usage: rep.usage,
     ...(rep.abortedReason ? { abortedReason: rep.abortedReason } : {}),
+    ...(rep.waiting !== undefined ? { waiting: rep.waiting } : {}),
     ms: rep.ms,
   });
   return rep;

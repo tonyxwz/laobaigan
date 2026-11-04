@@ -17,6 +17,7 @@ import { detachLatent, insertNuggets } from "./pipeline/insert.ts";
 import { scoreTree, type TreeScoreResult } from "./pipeline/treescore.ts";
 import { draftCandidates } from "./pipeline/render.ts";
 import { exitCode, runPipeline, STAGES, type Stage } from "./pipeline/run.ts";
+import { promptFile, promptSnippets, writePromptStatus } from "./notify/prompt.ts";
 import { acceptProposal, conflicts, proposalDiff, rejectProposal } from "./pipeline/accept.ts";
 import { reviseProposal } from "./pipeline/revise.ts";
 import { chatRevise, editProposal, type InteractiveResult } from "./pipeline/interactive.ts";
@@ -76,6 +77,7 @@ Proposals (lbg never runs git: accept writes the files; commit them yourself if 
   lbg proposal revise <id> "feedback"          One shot: pi redrafts with your feedback
   lbg proposal edit <id>                       Edit the drafted files in $VISUAL / $EDITOR
   lbg proposal reject <id> [--reason "..."]
+  lbg prompt                                   How many proposals are waiting, and the shell prompt snippets (starship / zsh)
   lbg status                                                 State db counts and recent runs
 
 Options:
@@ -225,6 +227,7 @@ async function main(argv: string[]): Promise<number> {
           { ...(stages ? { stages } : {}), ...(values["max-calls"] ? { maxExtractCalls: Number(values["max-calls"]) } : {}) },
         );
         if (values.json) return json(r), exitCode(r);
+        if (r.waiting) out(`${r.waiting} proposal(s) waiting for review — lbg proposals\n`);
         // One line per stage, then one per new proposal: journald-friendly.
         for (const st of r.stages) {
           out(`${st.stage.padEnd(7)} ${st.status === "ok" ? "" : `[${st.status}] `}${st.summary}${st.calls ? ` (${st.calls} call(s), $${st.usage.cost.toFixed(4)})` : ""}\n`);
@@ -396,6 +399,27 @@ async function main(argv: string[]): Promise<number> {
         }
         return outcomes.some((o) => o.status === "failed") ? 2 : 0;
       } finally {
+        try {
+          writePromptStatus(db, cfg.stateDir); // keep the prompt segment current
+        } catch {
+          // the prompt is a convenience; never fail the command over it
+        }
+        db.close();
+      }
+    }
+
+    case "prompt": {
+      const cfg = loadConfig();
+      const db = new StateDb(join(cfg.stateDir, "state.db"));
+      try {
+        const n = writePromptStatus(db, cfg.stateDir);
+        const path = promptFile(cfg.stateDir);
+        if (values.json) return json({ waiting: n, path }), 0;
+        const { starship, zsh } = promptSnippets(path);
+        out(`${n ? `${n} proposal(s) waiting for review` : "nothing waiting"} (${path})\n\n`);
+        out(`Show it in your prompt (lbg never edits your dotfiles):\n\n${starship}\n\n${zsh}\n`);
+        return 0;
+      } finally {
         db.close();
       }
     }
@@ -495,6 +519,11 @@ async function main(argv: string[]): Promise<number> {
         }
         throw new Error(`Unknown proposal subcommand: ${sub} (show | accept | revise | edit | reject)`);
       } finally {
+        try {
+          writePromptStatus(db, cfg.stateDir); // keep the prompt segment current
+        } catch {
+          // the prompt is a convenience; never fail the command over it
+        }
         db.close();
       }
     }

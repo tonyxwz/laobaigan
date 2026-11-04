@@ -348,6 +348,30 @@ git --git-dir=$HOME/.cfg --work-tree=$HOME add .config/opencode/skills/dotfiles-
 git --git-dir=$HOME/.cfg --work-tree=$HOME commit -m "skills: add dotfiles-management"
 ```
 
+### Shell prompt
+
+lbg keeps `~/.local/state/laobaigan/prompt` up to date with the number of proposals waiting for review (empty when none). It is rewritten after every `lbg run` and after `lbg draft` / `lbg proposal …`, so it clears as soon as I accept or reject. The prompt only reads that file: no `node`, a few milliseconds.
+
+`lbg prompt` shows the current count and prints both snippets. With starship (the default format includes custom modules):
+
+```toml
+# ~/.config/starship.toml
+[custom.lbg]
+description = "laobaigan proposals waiting for review"
+when = "test -s ~/.local/state/laobaigan/prompt"
+command = "cat ~/.local/state/laobaigan/prompt"
+shell = ["sh"]
+format = "[🍶 $output]($style) "
+style = "bold yellow"
+```
+
+Without starship:
+
+```zsh
+_lbg_prompt() { local f=~/.local/state/laobaigan/prompt; [[ -s $f ]] && RPROMPT="%F{yellow}🍶 $(<$f)%f" || RPROMPT=""; }
+precmd_functions+=(_lbg_prompt)
+```
+
 ### Configuration
 
 ```jsonc
