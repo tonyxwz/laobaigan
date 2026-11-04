@@ -122,7 +122,7 @@ describe("interactive (chat revise and edit)", () => {
 
     const { cmd, args, env } = calls[0]!;
     expect(cmd).toBe("pi");
-    expect(args).toEqual(expect.arrayContaining(["--no-extensions", "--no-skills", "--no-context-files", "--no-mcp", "--tools", "read,ls,find,grep,write,edit"]));
+    expect(args).toEqual(expect.arrayContaining(["--no-approve", "--no-extensions", "--no-skills", "--no-context-files", "--no-mcp", "--tools", "read,ls,find,grep,write,edit"]));
     expect(args).not.toContain("--model"); // pi's own default
     expect(args).not.toContain("--provider");
     expect(args[args.indexOf("-e") + 1]).toMatch(/src\/pi\/guard-extension\.ts$/);

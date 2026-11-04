@@ -13,7 +13,7 @@ import { closeDraft, discardDraft, openDraft, reviseContext, type CloseResult, t
 /**
  * Interactive changes to an open proposal, in my own terminal:
  *
- *   revise  the real pi CLI (my normal TUI and pi settings, so pi's default model) in the
+ *   revise  my local pi CLI (`pi` on PATH: my TUI and pi settings, so pi's default model) in the
  *           draft's scratch dir, with lbg's guard extension: write only the proposal's paths,
  *           no bash tool. Its session is kept in a temp dir, never in
  *           ~/.pi/agent/sessions, so lbg doesn't learn from its own drafting chats.
@@ -89,6 +89,9 @@ export async function chatRevise(tree: Tree, cfg: Config, id: number, opts: PiCh
     const base = [
       "--session-dir",
       join(side, "sessions"),
+      // The scratch dir holds the draft (e.g. .agents/skills/<name>/), which pi would treat as
+      // project resources and ask to trust. Never load them: the draft is data, not a skill to use.
+      "--no-approve",
       "--no-extensions",
       "--no-skills",
       "--no-context-files",

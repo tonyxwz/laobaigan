@@ -328,7 +328,7 @@ lbg proposal accept <id> [--force]     # write the files; refuses if the live fi
 lbg proposal reject <id> --reason ...  # the skill comes back only with evidence from new sessions
 ```
 
-`revise` and `edit` work on a scratch copy of the draft and store the result on the proposal after the same checks as drafting; if the checks fail you can go back in or keep the previous draft. They start from the live files *now*, so they also rebase a stale draft. The interactive chat is the real `pi` CLI with lbg's guard extension (`--no-extensions --no-skills --no-context-files`, tools `read,ls,find,grep,write,edit`, no bash), on pi's own model settings; its session is kept in a temp dir, not in `~/.pi/agent/sessions`, so lbg never learns from its own drafting chats.
+`revise` and `edit` work on a scratch copy of the draft and store the result on the proposal after the same checks as drafting; if the checks fail you can go back in or keep the previous draft. They start from the live files *now*, so they also rebase a stale draft. The interactive chat is your local `pi` (the one on `PATH`) with lbg's guard extension (`--no-approve --no-extensions --no-skills --no-context-files`, so nothing in the draft folder is loaded as a project resource and there's no trust prompt; tools `read,ls,find,grep,write,edit`, no bash), on pi's own model settings; its session is kept in a temp dir, not in `~/.pi/agent/sessions`, so lbg never learns from its own drafting chats.
 
 Accepting writes the files and syncs the tree, so the skill is live immediately (its evidence counts as absorbed). lbg prints the paths and a suggested commit message; committing is up to me, e.g. in the dotfiles repo:
 
