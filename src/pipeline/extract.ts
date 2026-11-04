@@ -114,7 +114,7 @@ export function buildExtractPrompt(input: ExtractInput, chunk: string, part: { i
 export async function extractNuggets(
   runner: PiRunner,
   input: ExtractInput,
-  model: { id: string; thinking: ThinkingLevel },
+  model: { id?: string | undefined; thinking?: ThinkingLevel | undefined } = {},
 ): Promise<ExtractOutput> {
   let usage = ZERO_USAGE;
   const nuggets: ExtractedNugget[] = [];

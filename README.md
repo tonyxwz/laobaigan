@@ -121,7 +121,7 @@ I keep re-explaining the same things in new sessions, often across different age
 | History | Backfill **all** history on the first run. Dedup state lives in SQLite, so re-runs are cheap. |
 | Resumed sessions | Detected via a per-session change token. Already-processed user turns are tracked by **content fingerprint**, so only new turns are re-extracted, even when an agent copies old history into a new session file. |
 | Provider | `amazon-bedrock` only. Enforced in code: a model that doesn't resolve to that provider is a hard error. |
-| Models | Extract: `global.openai.gpt-6.1-sol`. Draft: `global.anthropic.claude-opus-5-5`. Both configurable. |
+| Models | Whatever pi's default is (`defaultModel` in `~/.pi/agent/settings.json`; today `global.anthropic.claude-opus-5-5`), for every stage. `models.*` in lbg's config can override a stage. A non-Bedrock model is refused either way. |
 | Skill granularity | **Few** global skills, each about one coherent topic (e.g. "Gradle builds", not "Gradle release flags"). Laobaigan prefers extending an existing skill over creating a new one. |
 | Apply | No auto-update, and no git. A proposal is a snapshot of drafted files (with hashes of the originals) in SQLite; `lbg proposal accept` writes them into the skills dir or repo, refusing if the files changed since. I commit with git myself (e.g. in the `~/.cfg` bare dotfiles repo). |
 
@@ -338,10 +338,9 @@ git --git-dir=$HOME/.cfg --work-tree=$HOME commit -m "skills: add dotfiles-manag
 // ~/.config/laobaigan/config.json (all optional)
 {
   "skillsDir": "~/.config/opencode/skills",   // the global skills every agent loads
-  "models": {
-    "extract": "global.openai.gpt-6.1-sol",
-    "distill": "global.anthropic.claude-opus-5-5"
-  },
+  // Models follow pi: defaultModel / defaultThinkingLevel in ~/.pi/agent/settings.json.
+  // Optional per-stage overrides (always amazon-bedrock):
+  // "models": { "extract": "global.openai.gpt-6.1-sol", "distill": "...", "extractThinking": "medium" },
   "render": { "maxPerRun": 2, "maxSkillLines": 300 }
 }
 ```

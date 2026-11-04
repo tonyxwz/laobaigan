@@ -133,7 +133,7 @@ describe("loadConfig", () => {
     const c = loadConfig(path);
     expect(c.skillsDir).toMatch(/\/my-skills$/);
     expect(c.skillsDir).not.toContain("~");
-    expect(c.models).toMatchObject({ extract: "x", distill: DEFAULT_CONFIG.models.distill });
+    expect(c.models).toEqual({ extract: "x" }); // distill: pi's default
   });
 
   it("validates declared topics", async () => {
@@ -153,7 +153,7 @@ describe("loadConfig", () => {
   });
 
   it("uses defaults when the file is missing", () => {
-    expect(loadConfig("/nonexistent/config.json").models.extract).toBe("global.openai.gpt-6.1-sol");
+    expect(loadConfig("/nonexistent/config.json").models).toEqual({}); // everything follows pi
   });
 });
 

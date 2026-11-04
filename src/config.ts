@@ -33,11 +33,16 @@ export const DEFAULT_PATHS = {
 };
 
 /** Model ids, always resolved against the `amazon-bedrock` provider. */
+/**
+ * Optional per-stage overrides. Unset = pi's own default (defaultModel / defaultThinkingLevel
+ * in ~/.pi/agent/settings.json), so the model is chosen in one place. Models are always
+ * resolved against the `amazon-bedrock` provider.
+ */
 export interface ModelConfig {
-  extract: string;
-  distill: string;
-  extractThinking: "off" | "minimal" | "low" | "medium" | "high";
-  distillThinking: "off" | "minimal" | "low" | "medium" | "high";
+  extract?: string;
+  distill?: string;
+  extractThinking?: "off" | "minimal" | "low" | "medium" | "high";
+  distillThinking?: "off" | "minimal" | "low" | "medium" | "high";
 }
 
 export interface Config {
@@ -115,12 +120,7 @@ export interface ScoreConfig {
 export const DEFAULT_CONFIG: Config = {
   skillsDir: DEFAULT_PATHS.skillsDir,
   stateDir: DEFAULT_PATHS.stateDir,
-  models: {
-    extract: "global.openai.gpt-6.1-sol",
-    distill: "global.anthropic.claude-opus-5-5",
-    extractThinking: "medium",
-    distillThinking: "high",
-  },
+  models: {},
   settleMinutes: 30,
   extract: {
     chunkTokens: 40_000,

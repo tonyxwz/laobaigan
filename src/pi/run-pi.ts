@@ -1,3 +1,4 @@
+import { homedir } from "node:os";
 import {
   createAgentSession,
   createExtensionRuntime,
@@ -25,9 +26,10 @@ export interface ResultTool<S extends TSchema> {
 }
 
 export interface PiRequest<S extends TSchema> {
-  /** Bedrock model id, e.g. "global.openai.gpt-6.1-sol". */
-  model: string;
-  thinking: ThinkingLevel;
+  /** Bedrock model id, e.g. "global.openai.gpt-6.1-sol". Default: pi's default model. */
+  model?: string | undefined;
+  /** Default: pi's default thinking level (else "medium"). */
+  thinking?: ThinkingLevel | undefined;
   systemPrompt: string;
   prompt: string;
   /** The tool the model must call with its answer; the run ends right after. */
@@ -94,12 +96,18 @@ function minimalLoader(systemPrompt: string): ResourceLoader {
  * Headless, in-memory pi sessions through the SDK. `resolve` picks the runtime and
  * model for a request; `allowModel` vets the model the session ends up using.
  */
+interface Resolved {
+  runtime: ModelRuntime;
+  model: Model<Api>;
+  thinking?: ThinkingLevel;
+}
+
 export class SdkPiRunner implements PiRunner {
-  private readonly resolve: (id: string) => Promise<{ runtime: ModelRuntime; model: Model<Api> }>;
+  private readonly resolve: (id: string | undefined) => Promise<Resolved>;
   private readonly allowModel: (m: { provider: string; id: string }) => boolean;
 
   constructor(
-    resolve: (id: string) => Promise<{ runtime: ModelRuntime; model: Model<Api> }>,
+    resolve: (id: string | undefined) => Promise<Resolved>,
     allowModel: (m: { provider: string; id: string }) => boolean = () => true,
   ) {
     this.resolve = resolve;
@@ -107,7 +115,7 @@ export class SdkPiRunner implements PiRunner {
   }
 
   async run<S extends TSchema>(req: PiRequest<S>): Promise<PiResult<Static<S>>> {
-    const { runtime, model } = await this.resolve(req.model);
+    const { runtime, model, thinking } = await this.resolve(req.model);
     const tools = req.tools ?? [];
     let fileTools: ToolDefinition[] = [];
     let cwd = req.cwd ?? process.cwd();
@@ -134,7 +142,7 @@ export class SdkPiRunner implements PiRunner {
     const { session } = await createAgentSession({
       cwd,
       model,
-      thinkingLevel: req.thinking,
+      thinkingLevel: req.thinking ?? thinking ?? "medium",
       modelRuntime: runtime,
       resourceLoader: minimalLoader(req.systemPrompt),
       settingsManager: SettingsManager.inMemory({
@@ -179,17 +187,35 @@ export class SdkPiRunner implements PiRunner {
 }
 
 /** Real runner: headless, in-memory pi sessions on Amazon Bedrock only. */
+/** pi's own defaults, from ~/.pi/agent/settings.json (global settings only). */
+export function piDefaults(): { provider?: string; model?: string; thinking?: ThinkingLevel } {
+  const sm = SettingsManager.create(homedir());
+  const provider = sm.getDefaultProvider();
+  const model = sm.getDefaultModel();
+  const thinking = sm.getDefaultThinkingLevel() as ThinkingLevel | undefined;
+  return { ...(provider ? { provider } : {}), ...(model ? { model } : {}), ...(thinking ? { thinking } : {}) };
+}
+
+/** Real runner: headless, in-memory pi sessions on Amazon Bedrock; model from lbg config or pi's default. */
 export class BedrockPiRunner extends SdkPiRunner {
-  constructor() {
+  constructor(defaults: () => ReturnType<typeof piDefaults> = piDefaults) {
     let runtime: Promise<ModelRuntime> | undefined;
     super(
       async (id) => {
         runtime ??= ModelRuntime.create();
         const rt = await runtime;
-        const model = rt.getModel(PROVIDER, id);
-        if (!model) throw new Error(`Model ${PROVIDER}/${id} not found in the pi model catalog`);
+        const d = id ? {} : defaults();
+        if (!id) {
+          if (!d.model) throw new Error("No model: set a default model in pi (/model, or defaultModel in ~/.pi/agent/settings.json), or models.* in lbg's config");
+          if (d.provider && d.provider !== PROVIDER) {
+            throw new Error(`pi's default provider is ${d.provider}; lbg only uses ${PROVIDER}. Change it in pi, or set models.* in lbg's config`);
+          }
+        }
+        const modelId = id ?? d.model!;
+        const model = rt.getModel(PROVIDER, modelId);
+        if (!model) throw new Error(`Model ${PROVIDER}/${modelId} not found in the pi model catalog${id ? "" : " (pi's default model)"}`);
         if (model.provider !== PROVIDER) throw new Error(`Refusing non-Bedrock model ${model.provider}/${model.id}`);
-        return { runtime: rt, model };
+        return { runtime: rt, model, ...(d.thinking ? { thinking: d.thinking } : {}) };
       },
       (m) => m.provider === PROVIDER,
     );

@@ -185,3 +185,13 @@ describe("drafting session with guarded tools (real pi session)", () => {
     ).rejects.toThrow(/not allowed with a file guard: bash/);
   });
 });
+
+describe("BedrockPiRunner model selection", () => {
+  it("uses pi's default when lbg sets no model, and refuses non-Bedrock defaults", async () => {
+    const { BedrockPiRunner } = await import("../src/pi/run-pi.ts");
+    const req = { prompt: "x", systemPrompt: "x", resultTool: { name: "r", description: "r", parameters: done } };
+    await expect(new BedrockPiRunner(() => ({})).run(req)).rejects.toThrow(/No model: set a default model in pi/);
+    await expect(new BedrockPiRunner(() => ({ provider: "openai", model: "gpt-x" })).run(req)).rejects.toThrow(/default provider is openai; lbg only uses amazon-bedrock/);
+    await expect(new BedrockPiRunner(() => ({ provider: "amazon-bedrock", model: "no-such-model" })).run(req)).rejects.toThrow(/no-such-model not found .*pi's default model/);
+  });
+});

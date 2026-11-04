@@ -204,7 +204,7 @@ export async function processSessions(
       byStatus,
       calls,
       usage,
-      models: { extract: cfg.models.extract },
+      models: { extract: cfg.models.extract ?? "pi default" },
       ...(abortedReason ? { abortedReason } : {}),
     });
   }
