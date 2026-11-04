@@ -27,14 +27,43 @@ const RULES: Rule[] = [
   { name: "github-token", re: /\b(?:ghp|gho|ghu|ghs|ghr|github_pat)_[A-Za-z0-9_]{20,}\b/g, replace: "[REDACTED:github-token]" },
   { name: "slack-token", re: /\bxox[abprs]-[A-Za-z0-9-]{10,}\b/g, replace: "[REDACTED:slack-token]" },
   { name: "openai-key", re: /\bsk-[A-Za-z0-9_-]{20,}\b/g, replace: "[REDACTED:api-key]" },
+  // Cookie headers carry session cookies of any service (e.g. SSO). Before "assignment", which
+  // would only take the first cookie's value.
+  { name: "cookie-header", re: /\b((?:Set-)?Cookie:[ \t]*)(?![ \t]*\[REDACTED)[^\r\n]+/gi, replace: "$1[REDACTED]" },
   {
     // key = value / "key": "value" assignments with secret-looking names
     name: "assignment",
     re: /((?:api[_-]?key|apikey|secret|token|passw(?:or)?d|pwd|credential|session[_-]?id|cookie)["']?\s*[:=]\s*["']?)(?!\[REDACTED)[^\s"',;}{)]{6,}/gi,
     replace: "$1[REDACTED]",
   },
-  { name: "cookie-header", re: /\b((?:Set-)?Cookie:[ \t]*)(?![ \t]*\[REDACTED)[^\r\n]+/gi, replace: "$1[REDACTED]" },
 ];
+
+/** A site-specific pattern from config (`redact.extraPatterns`). */
+export interface ExtraPattern {
+  /** Regular expression source; matched globally. */
+  pattern: string;
+  /** Regex flags besides "g" (e.g. "i"). */
+  flags?: string;
+  /** Replacement; `$1` etc. keep captured groups. Default: "[REDACTED]". */
+  replace?: string;
+  /** Name in redaction counts. Default: "extra". */
+  name?: string;
+}
+
+let extra: Rule[] = [];
+
+/** Install the config's extra patterns (process-wide). Throws on an invalid regex. */
+export function setExtraPatterns(patterns: ExtraPattern[]): void {
+  extra = patterns.map((p, i) => {
+    let re: RegExp;
+    try {
+      re = new RegExp(p.pattern, `${(p.flags ?? "").replace(/g/g, "")}g`);
+    } catch (e) {
+      throw new Error(`redact.extraPatterns[${i}]: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    return { name: p.name ?? "extra", re, replace: p.replace ?? "[REDACTED]" };
+  });
+}
 
 export interface RedactResult {
   text: string;
@@ -45,7 +74,7 @@ export interface RedactResult {
 export function redact(input: string): RedactResult {
   let text = input;
   const hits: Record<string, number> = {};
-  for (const rule of RULES) {
+  for (const rule of [...RULES, ...extra]) {
     text = text.replace(rule.re, (...args: unknown[]) => {
       hits[rule.name] = (hits[rule.name] ?? 0) + 1;
       // Re-run a non-global copy to honour `$n` references in the replacement.

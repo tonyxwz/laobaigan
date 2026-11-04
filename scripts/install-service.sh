@@ -27,7 +27,11 @@ major="$("$NODE" -p 'process.versions.node.split(".")[0]')"
 [[ -d "$REPO/node_modules" ]] || (cd "$REPO" && npm ci)
 
 mkdir -p "$UNIT_DIR"
-sed -e "s#@NODE@#$NODE#g" -e "s#@REPO@#$REPO#g" "$REPO/systemd/laobaigan.service.in" >"$UNIT_DIR/laobaigan.service"
+# Extra PATH entries for the service (colon-separated, ~ allowed), e.g. where a credential helper lives.
+EXTRA="${EXTRA_PATH:-}"
+EXTRA="${EXTRA//\~/$HOME}"
+[[ -n "$EXTRA" && "$EXTRA" != *: ]] && EXTRA="$EXTRA:"
+sed -e "s#@NODE@#$NODE#g" -e "s#@REPO@#$REPO#g" -e "s#@EXTRA_PATH@#$EXTRA#g" "$REPO/systemd/laobaigan.service.in" >"$UNIT_DIR/laobaigan.service"
 cp "$REPO/systemd/laobaigan.timer" "$UNIT_DIR/laobaigan.timer"
 systemctl --user daemon-reload
 systemctl --user enable --now laobaigan.timer

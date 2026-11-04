@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
+import { setExtraPatterns, type ExtraPattern } from "./pipeline/redact.ts";
 
 /** Truncation limits applied when normalizing transcripts. */
 export interface NormalizeLimits {
@@ -58,6 +59,10 @@ export interface Config {
     maxCallsPerRun: number;
   };
   score: ScoreConfig;
+  redact: {
+    /** Site-specific secrets to redact in addition to the built-in rules (e.g. an SSO cookie name). */
+    extraPatterns: ExtraPattern[];
+  };
   insert: {
     /** Max routing calls per run (the rest waits for the next run). */
     maxCallsPerRun: number;
@@ -131,6 +136,7 @@ export const DEFAULT_CONFIG: Config = {
     chunkTokens: 40_000,
     maxCallsPerRun: 50,
   },
+  redact: { extraPatterns: [] },
   insert: { maxCallsPerRun: 20 },
   render: { maxPerRun: 2, retryAfterHours: 24, maxSkillLines: 300 },
   score: {
@@ -189,6 +195,8 @@ export function loadConfig(path = CONFIG_PATH): Config {
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw new Error(`Bad config ${path}: ${String(err)}`);
   }
   const c = merge(DEFAULT_CONFIG, fileCfg);
+  // Redaction runs deep inside extraction and verification; install the patterns once, here.
+  setExtraPatterns(Array.isArray(c.redact?.extraPatterns) ? c.redact.extraPatterns : []);
   return {
     ...c,
     skillsDir: expandPath(c.skillsDir),

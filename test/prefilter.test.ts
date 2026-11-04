@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { fingerprintTranscript, fingerprintTurn } from "../src/pipeline/fingerprint.ts";
 import { buildExcerpt, isTrivialPrompt } from "../src/pipeline/prefilter.ts";
-import { containsSecrets, redact } from "../src/pipeline/redact.ts";
+import { containsSecrets, redact, setExtraPatterns } from "../src/pipeline/redact.ts";
 import type { Transcript, Turn } from "../src/sources/types.ts";
 
 // Fake credentials, assembled at runtime so secret scanners don't flag the source.
@@ -31,6 +31,20 @@ describe("redact", () => {
     expect(text).not.toMatch(/AKIA[A]BCDEFGHIJKLMNOP|abcdEFGHijkl|301a4857|abcdefghijklmnopqrstuvwxyz123456|ghp_|eyJhbGci/);
     expect(text).toContain("aws_secret_access_key = [REDACTED]");
     expect(Object.keys(hits).length).toBeGreaterThanOrEqual(5);
+  });
+
+  it("redacts Cookie headers and configured extra patterns", () => {
+    expect(redact("curl -H 'Cookie: sso_session=abc123def; other=1' https://x").text).toBe("curl -H 'Cookie: [REDACTED]");
+    setExtraPatterns([{ pattern: "(corp_sso=)[^\\s;]+", replace: "$1[REDACTED]", name: "corp-sso" }]);
+    try {
+      const r = redact("cookie jar has corp_sso=Zm9vYmFy; path=/");
+      expect(r.text).toBe("cookie jar has corp_sso=[REDACTED]; path=/");
+      expect(r.hits).toEqual({ "corp-sso": 1 });
+    } finally {
+      setExtraPatterns([]);
+    }
+    expect(redact("corp_sso=Zm9vYmFy").text).toBe("corp_sso=Zm9vYmFy");
+    expect(() => setExtraPatterns([{ pattern: "(" }])).toThrow(/redact.extraPatterns\[0\]/);
   });
 
   it("leaves ordinary text alone", () => {

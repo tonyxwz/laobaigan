@@ -381,7 +381,10 @@ precmd_functions+=(_lbg_prompt)
   // Models follow pi: defaultModel / defaultThinkingLevel in ~/.pi/agent/settings.json.
   // Optional per-stage overrides ("provider/id", or an id of pi's default provider):
   // "models": { "extract": "amazon-bedrock/global.openai.gpt-6.1-sol", "distill": "...", "extractThinking": "medium" },
-  "render": { "maxPerRun": 2, "maxSkillLines": 300 }
+  "render": { "maxPerRun": 2, "maxSkillLines": 300 },
+  // Secrets specific to your environment, redacted before anything reaches a model
+  // (in addition to the built-in rules: keys, tokens, JWTs, passwords, Cookie headers, ...).
+  "redact": { "extraPatterns": [{ "pattern": "(corp_sso=)[^\\s;]+", "replace": "$1[REDACTED]", "name": "corp-sso" }] }
 }
 ```
 
