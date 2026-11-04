@@ -186,12 +186,13 @@ describe("drafting session with guarded tools (real pi session)", () => {
   });
 });
 
-describe("BedrockPiRunner model selection", () => {
-  it("uses pi's default when lbg sets no model, and refuses non-Bedrock defaults", async () => {
-    const { BedrockPiRunner } = await import("../src/pi/run-pi.ts");
+describe("PiConfigRunner model selection", () => {
+  it("uses pi's default model and provider, or a provider/id override", async () => {
+    const { PiConfigRunner } = await import("../src/pi/run-pi.ts");
     const req = { prompt: "x", systemPrompt: "x", resultTool: { name: "r", description: "r", parameters: done } };
-    await expect(new BedrockPiRunner(() => ({})).run(req)).rejects.toThrow(/No model: set a default model in pi/);
-    await expect(new BedrockPiRunner(() => ({ provider: "openai", model: "gpt-x" })).run(req)).rejects.toThrow(/default provider is openai; lbg only uses amazon-bedrock/);
-    await expect(new BedrockPiRunner(() => ({ provider: "amazon-bedrock", model: "no-such-model" })).run(req)).rejects.toThrow(/no-such-model not found .*pi's default model/);
+    await expect(new PiConfigRunner(() => ({})).run(req)).rejects.toThrow(/No model: set a default model in pi/);
+    await expect(new PiConfigRunner(() => ({ model: "m" })).run(req)).rejects.toThrow(/No provider for model m/);
+    await expect(new PiConfigRunner(() => ({ provider: "amazon-bedrock", model: "no-such-model" })).run(req)).rejects.toThrow(/amazon-bedrock\/no-such-model not found .*pi's default model/);
+    await expect(new PiConfigRunner(() => ({ provider: "amazon-bedrock", model: "x" })).run({ ...req, model: "openai/no-such" })).rejects.toThrow(/openai\/no-such not found/);
   });
 });

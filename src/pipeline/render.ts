@@ -95,7 +95,7 @@ export async function snapshot(root: string, writable: string[]): Promise<Map<st
 }
 
 /** A scratch dir holding a copy of the writable paths (symlinks resolved). */
-async function makeScratch(target: RenderTarget): Promise<string> {
+export async function makeScratch(target: RenderTarget): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "lbg-draft-"));
   for (const w of target.writable) {
     const rel = w.replace(/\/$/, "");

@@ -16,7 +16,7 @@ import { skillName } from "./stats.ts";
  *                              nugget → section | new section | skill body
  *
  * Calls are skipped when there is nothing to decide. Summaries are only marked
- * stale (lazy); the stable part of each prompt comes first so Bedrock can cache it.
+ * stale (lazy); the stable part of each prompt comes first so the provider can cache it.
  */
 
 // ---- level 1 ------------------------------------------------------------------

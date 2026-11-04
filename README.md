@@ -104,7 +104,7 @@ I keep re-explaining the same things in new sessions, often across different age
    - knowledge that applies everywhere → a **global skill** in the shared skills directory
    - knowledge about one repo → that **repo's own** `AGENTS.md` or `.agents/skills/<name>/SKILL.md`
 4. **Never update skills automatically.** Every change is a proposal (drafted files kept in lbg's database). I review it with `lbg proposal show` and accept or reject it. **lbg doesn't use git**: accepting only writes the target files; committing is up to me.
-5. **All AI reasoning goes through the pi SDK** (`@earendil-works/pi-coding-agent`), using the **Amazon Bedrock provider only**. This repo has no direct LLM API clients.
+5. **All AI reasoning goes through the pi SDK** (`@earendil-works/pi-coding-agent`), using **whatever model pi is configured with** (`~/.pi/agent/settings.json`). This repo has no direct LLM API clients.
 
 ## Non-goals (for now)
 
@@ -120,8 +120,8 @@ I keep re-explaining the same things in new sessions, often across different age
 | Repo-specific knowledge | Goes into the repo: `<repo>/AGENTS.md` for short rules/facts, `<repo>/.agents/skills/<name>/SKILL.md` for procedures. Never a global skill. |
 | History | Backfill **all** history on the first run. Dedup state lives in SQLite, so re-runs are cheap. |
 | Resumed sessions | Detected via a per-session change token. Already-processed user turns are tracked by **content fingerprint**, so only new turns are re-extracted, even when an agent copies old history into a new session file. |
-| Provider | `amazon-bedrock` only. Enforced in code: a model that doesn't resolve to that provider is a hard error. |
-| Models | Whatever pi's default is (`defaultModel` in `~/.pi/agent/settings.json`; today `global.anthropic.claude-opus-5-5`), for every stage. `models.*` in lbg's config can override a stage. A non-Bedrock model is refused either way. |
+| Provider | Whatever pi uses: its `defaultProvider` (today `amazon-bedrock`). lbg has no provider policy of its own; pi's settings are the single place to choose. |
+| Models | pi's default (`defaultModel` / `defaultThinkingLevel`; today `global.anthropic.claude-opus-5-5`), for every stage, including the interactive `revise` chat. `models.*` in lbg's config can override a stage (`provider/id`, or an id of pi's default provider). |
 | Skill granularity | **Few** global skills, each about one coherent topic (e.g. "Gradle builds", not "Gradle release flags"). Laobaigan prefers extending an existing skill over creating a new one. |
 | Apply | No auto-update, and no git. A proposal is a snapshot of drafted files (with hashes of the originals) in SQLite; `lbg proposal accept` writes them into the skills dir or repo, refusing if the files changed since. I commit with git myself (e.g. in the `~/.cfg` bare dotfiles repo). |
 
@@ -321,9 +321,14 @@ For each candidate (a promoted latent skill, or a live skill with enough new evi
 ```
 lbg proposals                          # open proposals: skill, kind, target, sessions, cost
 lbg proposal show <id>                 # summary, evidence, diff against the live files (warns if they changed since)
+lbg proposal revise <id>               # chat with pi about the draft (your pi TUI; it can write only the draft's files)
+lbg proposal revise <id> "feedback"    # one shot: pi redrafts with the feedback
+lbg proposal edit <id>                 # edit the drafted files in $VISUAL / $EDITOR
 lbg proposal accept <id> [--force]     # write the files; refuses if the live files changed since the draft
 lbg proposal reject <id> --reason ...  # the skill comes back only with evidence from new sessions
 ```
+
+`revise` and `edit` work on a scratch copy of the draft and store the result on the proposal after the same checks as drafting; if the checks fail you can go back in or keep the previous draft. They start from the live files *now*, so they also rebase a stale draft. The interactive chat is the real `pi` CLI with lbg's guard extension (`--no-extensions --no-skills --no-context-files`, tools `read,ls,find,grep,write,edit`, no bash), on pi's own model settings; its session is kept in a temp dir, not in `~/.pi/agent/sessions`, so lbg never learns from its own drafting chats.
 
 Accepting writes the files and syncs the tree, so the skill is live immediately (its evidence counts as absorbed). lbg prints the paths and a suggested commit message; committing is up to me, e.g. in the dotfiles repo:
 
@@ -339,8 +344,8 @@ git --git-dir=$HOME/.cfg --work-tree=$HOME commit -m "skills: add dotfiles-manag
 {
   "skillsDir": "~/.config/opencode/skills",   // the global skills every agent loads
   // Models follow pi: defaultModel / defaultThinkingLevel in ~/.pi/agent/settings.json.
-  // Optional per-stage overrides (always amazon-bedrock):
-  // "models": { "extract": "global.openai.gpt-6.1-sol", "distill": "...", "extractThinking": "medium" },
+  // Optional per-stage overrides ("provider/id", or an id of pi's default provider):
+  // "models": { "extract": "amazon-bedrock/global.openai.gpt-6.1-sol", "distill": "...", "extractThinking": "medium" },
   "render": { "maxPerRun": 2, "maxSkillLines": 300 }
 }
 ```
@@ -384,12 +389,12 @@ Steering the grouping (optional):
 
 ## pi SDK usage
 
-All LLM work goes through one wrapper (`src/pi/run-pi.ts`) so we can enforce Bedrock, budget calls, and test against fakes:
+All LLM work goes through one wrapper (`src/pi/run-pi.ts`) so model choice comes from pi's settings, calls are budgeted, and tests run against pi's faux provider:
 
 ```ts
 const { session } = await createAgentSession({
   cwd,
-  model,                                   // resolved via ModelRuntime.getModel("amazon-bedrock", id)
+  model,                                   // pi's defaultProvider/defaultModel, or a models.* override
   thinkingLevel,
   modelRuntime,
   resourceLoader: minimalLoader(systemPrompt),  // no extensions/skills/AGENTS.md: reproducible runs
@@ -429,7 +434,8 @@ src/
     render.ts               # pi: draft a skill in a scratch copy → proposal
     accept.ts               # diff, accept (write files), reject
   skills/                   # parse SKILL.md / AGENTS.md, repo resolution
-  pi/run-pi.ts              # Bedrock-only SDK wrapper
+  pi/run-pi.ts              # SDK wrapper; model from pi's settings
+  pi/guard-extension.ts     # guarded tools for the interactive revise chat
   pi/guard.ts               # guarded file tools for drafting
 test/
 systemd/

@@ -2,7 +2,7 @@
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { loadConfig } from "./config.ts";
-import { BedrockPiRunner } from "./pi/run-pi.ts";
+import { PiConfigRunner } from "./pi/run-pi.ts";
 import * as curate from "./pipeline/curate.ts";
 import { processSessions, type ProcessOptions, type SessionOutcome } from "./pipeline/process.ts";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -17,6 +17,9 @@ import { detachLatent, insertNuggets } from "./pipeline/insert.ts";
 import { scoreTree, type TreeScoreResult } from "./pipeline/treescore.ts";
 import { draftCandidates } from "./pipeline/render.ts";
 import { acceptProposal, conflicts, proposalDiff, rejectProposal } from "./pipeline/accept.ts";
+import { reviseProposal } from "./pipeline/revise.ts";
+import { chatRevise, editProposal, type InteractiveResult } from "./pipeline/interactive.ts";
+import { createInterface } from "node:readline/promises";
 import { PROPOSAL_STATUSES, Proposals, type ProposalRow, type ProposalStatus } from "./state/proposals.ts";
 import { parseDuration, parseSince } from "./util/time.ts";
 
@@ -31,7 +34,7 @@ Pipeline:
       What the next extract would do (change detection + prefilter). No model calls, no writes.
       --excerpt  print the exact text the model would see (with --session)
   lbg extract [--since all] [--agent ...] [--session <agent>:<id>] [--dry-run] [--fresh] [--max-calls N] [--json]
-      Extract knowledge nuggets with pi (Bedrock) and store them.
+      Extract knowledge nuggets with pi and store them.
       --dry-run  call the model but persist nothing
       --fresh    ignore dedup state (prompt tuning; use with --dry-run)
   lbg run     [--max-calls N]
@@ -66,6 +69,9 @@ Proposals (lbg never runs git: accept writes the files; commit them yourself if 
   lbg proposal diff <id> [--no-pager]          Only the diff (git format; pipe it into delta etc.)
       On a terminal both page through $LBG_PAGER, else delta if installed, else less -R.
   lbg proposal accept <id> [--force]           Write the files into the skills dir / repo (--force: even if they changed since)
+  lbg proposal revise <id>                     Chat with pi about the draft (your pi TUI; writes only the draft's files)
+  lbg proposal revise <id> "feedback"          One shot: pi redrafts with your feedback
+  lbg proposal edit <id>                       Edit the drafted files in $VISUAL / $EDITOR
   lbg proposal reject <id> [--reason "..."]
   lbg status                                                 State db counts and recent runs
 
@@ -178,7 +184,7 @@ async function main(argv: string[]): Promise<number> {
           log: (m) => process.stderr.write(`${m}\n`),
         };
         if (opts.fresh && !opts.dryRun && !opts.plan) throw new Error("--fresh requires --dry-run");
-        const res = await processSessions(adapters, db, new BedrockPiRunner(), cfg, opts);
+        const res = await processSessions(adapters, db, new PiConfigRunner(), cfg, opts);
         if (values.json) return json(res), 0;
         renderOutcomes(res.outcomes, out);
         if (values.excerpt) {
@@ -209,7 +215,7 @@ async function main(argv: string[]): Promise<number> {
       const db = new StateDb(join(cfg.stateDir, "state.db"));
       const started = Date.now();
       try {
-        const res = await processSessions(adapters, db, new BedrockPiRunner(), cfg, {
+        const res = await processSessions(adapters, db, new PiConfigRunner(), cfg, {
           ...(values["max-calls"] ? { maxCalls: Number(values["max-calls"]) } : {}),
           log: (m) => out(`${m}\n`),
         });
@@ -291,7 +297,7 @@ async function main(argv: string[]): Promise<number> {
         if (rest[0] === "insert") {
           await syncTree(tree, { skillsDir: cfg.skillsDir, declared: cfg.topics });
           if (values.all) out(`re-inserting ${detachLatent(tree).length} nugget(s) from latent skills\n`);
-          const r = await insertNuggets(tree, new BedrockPiRunner(), cfg, {
+          const r = await insertNuggets(tree, new PiConfigRunner(), cfg, {
             ...(values["max-calls"] ? { maxCalls: Number(values["max-calls"]) } : {}),
             log: (m) => process.stderr.write(`${m}\n`),
           });
@@ -372,7 +378,7 @@ async function main(argv: string[]): Promise<number> {
         scoreTree(tree, cfg.score);
         const ids = rest.map((x) => Number(x.replace(/^#/, "")));
         if (ids.some((x) => !Number.isInteger(x))) throw new Error("draft expects skill ids");
-        const outcomes = await draftCandidates(tree, new BedrockPiRunner(), cfg, {
+        const outcomes = await draftCandidates(tree, new PiConfigRunner(), cfg, {
           ...(ids.length ? { nodeIds: ids } : {}),
           ...(values.max ? { max: Number(values.max) } : {}),
           log: (m) => process.stderr.write(`${m}\n`),
@@ -448,12 +454,44 @@ async function main(argv: string[]): Promise<number> {
           out(`\nlbg doesn't run git. To commit, for example:\n  git add -- <paths above> && git commit -F - <<'MSG'\n${r.commitMessage}\nMSG\n`);
           return 0;
         }
+        if (sub === "revise" || sub === "edit") {
+          const feedback = rest.slice(2).join(" ").trim();
+          // With problems nothing was stored: one-shot verification failed, or I chose to keep the previous draft.
+          const report = (r: Pick<InteractiveResult, "problems" | "changed" | "files">) => {
+            if (r.problems.length) {
+              out(`not stored; the previous draft is kept:\n${r.problems.map((p) => `  - ${p}`).join("\n")}\n`);
+              return 2;
+            }
+            out(r.changed ? `proposal #${id} updated (${r.files.length} file(s)). Review: lbg proposal show ${id}\n` : `no changes to proposal #${id}\n`);
+            return 0;
+          };
+          if (sub === "revise" && feedback) {
+            const r = await reviseProposal(tree, new PiConfigRunner(), cfg, id, feedback);
+            if (!r.problems.length) out(`${r.summary}\n`);
+            out(`cost≈$${r.usage.cost.toFixed(4)}\n`);
+            return report(r);
+          }
+          if (!process.stdin.isTTY || !process.stdout.isTTY) {
+            throw new Error(sub === "edit" ? "lbg proposal edit needs a terminal" : `interactive revise needs a terminal; for a one-shot revise: lbg proposal revise ${id} "feedback"`);
+          }
+          const ask = async (q: string) => {
+            const rl = createInterface({ input: process.stdin, output: process.stdout });
+            try {
+              return !/^n/i.test((await rl.question(`${q} [Y/n] `)).trim());
+            } finally {
+              rl.close();
+            }
+          };
+          const log = (m: string) => out(`${m}\n`);
+          const r = sub === "edit" ? await editProposal(tree, cfg, id, { ask, log }) : await chatRevise(tree, cfg, id, { ask, log });
+          return report(r);
+        }
         if (sub === "reject") {
           rejectProposal(tree, id, values.reason);
           out(`rejected #${id}${values.reason ? `: ${values.reason}` : ""}. The skill comes back only with evidence from new sessions.\n`);
           return 0;
         }
-        throw new Error(`Unknown proposal subcommand: ${sub} (show | accept | reject)`);
+        throw new Error(`Unknown proposal subcommand: ${sub} (show | accept | revise | edit | reject)`);
       } finally {
         db.close();
       }

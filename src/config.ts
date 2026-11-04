@@ -32,11 +32,10 @@ export const DEFAULT_PATHS = {
   stateDir: process.env.LBG_STATE_DIR ?? join(home, ".local", "state", "laobaigan"),
 };
 
-/** Model ids, always resolved against the `amazon-bedrock` provider. */
 /**
  * Optional per-stage overrides. Unset = pi's own default (defaultModel / defaultThinkingLevel
- * in ~/.pi/agent/settings.json), so the model is chosen in one place. Models are always
- * resolved against the `amazon-bedrock` provider.
+ * in ~/.pi/agent/settings.json), so the model is chosen in one place. A value is
+ * "provider/id", or an id of pi's default provider.
  */
 export interface ModelConfig {
   extract?: string;

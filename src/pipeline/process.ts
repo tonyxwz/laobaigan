@@ -118,6 +118,8 @@ export async function processSessions(
       approxTokens: Math.round(excerpt.chunks.reduce((a, c) => a + c.length, 0) / 4),
     };
 
+    // Never learn from lbg's own drafting/revising sessions.
+    if (/\/lbg-(draft|chat)-[^/]*(\/|$)/.test(t.cwd)) excerpt.skip = "lbg's own drafting session";
     if (excerpt.skip) {
       if (persist) {
         db.tx(() => {

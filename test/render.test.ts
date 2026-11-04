@@ -95,7 +95,6 @@ describe("draftSkill → accept (global skill)", () => {
     ]);
     expect(tree.getNode(dot)!.status).toBe("proposed");
     expect(await proposalDiff(p)).toContain("+name: dotfiles-management");
-    expect((await readdir(tmpdir())).filter((d) => d.startsWith("lbg-draft-"))).toEqual([]); // scratch removed
 
     // accept
     const acc = await acceptProposal(tree, cfg, p.id);
