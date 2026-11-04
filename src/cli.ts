@@ -16,6 +16,7 @@ import { syncTree, type SyncReport } from "./pipeline/sync.ts";
 import { detachLatent, insertNuggets } from "./pipeline/insert.ts";
 import { scoreTree, type TreeScoreResult } from "./pipeline/treescore.ts";
 import { draftCandidates } from "./pipeline/render.ts";
+import { exitCode, runPipeline, STAGES, type Stage } from "./pipeline/run.ts";
 import { acceptProposal, conflicts, proposalDiff, rejectProposal } from "./pipeline/accept.ts";
 import { reviseProposal } from "./pipeline/revise.ts";
 import { chatRevise, editProposal, type InteractiveResult } from "./pipeline/interactive.ts";
@@ -37,9 +38,11 @@ Pipeline:
       Extract knowledge nuggets with pi and store them.
       --dry-run  call the model but persist nothing
       --fresh    ignore dedup state (prompt tuning; use with --dry-run)
-  lbg run     [--max-calls N]
-      One unattended pipeline pass (what the systemd timer runs): takes a lock, processes
-      new/changed sessions, logs a summary. Exit 0 ok, 2 some sessions failed, 3 aborted, 75 locked.
+  lbg run     [--stages sync,extract,insert,score,draft] [--max-calls N] [--json]
+      One unattended pass (what the systemd timer runs): sync skill files, extract new sessions,
+      place nuggets in the tree, score, draft the top candidates into proposals. Budgets:
+      extract.maxCallsPerRun, insert.maxCallsPerRun, render.maxPerRun (--max-calls: extract only).
+      Exit 0 ok, 2 a stage failed, 3 aborted (repeated model errors), 75 another run holds the lock.
   lbg cluster [--all] [--dry-run] [--max-calls N]       Same as: lbg tree insert
 
 Knowledge tree (one per scope: root → skills → sections → nuggets):
@@ -103,6 +106,7 @@ async function main(argv: string[]): Promise<number> {
       "max-calls": { type: "string" },
       status: { type: "string" },
       max: { type: "string" },
+      stages: { type: "string" },
       force: { type: "boolean", default: false },
       reason: { type: "string" },
       title: { type: "string" },
@@ -213,24 +217,22 @@ async function main(argv: string[]): Promise<number> {
         return 75; // EX_TEMPFAIL
       }
       const db = new StateDb(join(cfg.stateDir, "state.db"));
-      const started = Date.now();
       try {
-        const res = await processSessions(adapters, db, new PiConfigRunner(), cfg, {
-          ...(values["max-calls"] ? { maxCalls: Number(values["max-calls"]) } : {}),
-          log: (m) => out(`${m}\n`),
-        });
-        // Journald-friendly: only report sessions that did something.
-        renderOutcomes(res.outcomes.filter((o) => o.status !== "aborted"), out);
-        const nuggets = res.outcomes.reduce((a, o) => a + (o.nuggets?.length ?? 0), 0);
-        out(
-          `run finished in ${Math.round((Date.now() - started) / 1000)}s: ${res.calls} model call(s), ` +
-            `${nuggets} new nugget(s), cost≈$${res.usage.cost.toFixed(4)}\n`,
+        const stages = values.stages?.split(",").map((x) => x.trim()) as Stage[] | undefined;
+        for (const st of stages ?? []) if (!STAGES.includes(st)) throw new Error(`Unknown stage ${st} (expected ${STAGES.join(", ")})`);
+        const r = await runPipeline(
+          { adapters, db, runner: new PiConfigRunner(), cfg, log: (m) => out(`  ${m}\n`) },
+          { ...(stages ? { stages } : {}), ...(values["max-calls"] ? { maxExtractCalls: Number(values["max-calls"]) } : {}) },
         );
-        if (res.abortedReason) {
-          process.stderr.write(`run aborted: ${res.abortedReason}\n(if this is a credentials error, refresh your model provider's credentials)\n`);
-          return 3;
+        if (values.json) return json(r), exitCode(r);
+        // One line per stage, then one per new proposal: journald-friendly.
+        for (const st of r.stages) {
+          out(`${st.stage.padEnd(7)} ${st.status === "ok" ? "" : `[${st.status}] `}${st.summary}${st.calls ? ` (${st.calls} call(s), $${st.usage.cost.toFixed(4)})` : ""}\n`);
         }
-        return res.outcomes.some((o) => o.status === "error") ? 2 : 0;
+        for (const p of r.proposals) out(`new proposal #${p.id}: ${p.skill} (${p.files} file(s)) — review with: lbg proposal show ${p.id}\n`);
+        out(`run #${r.runId} finished in ${Math.round(r.ms / 1000)}s: ${r.calls} model call(s), cost≈$${r.usage.cost.toFixed(4)}\n`);
+        if (r.abortedReason) process.stderr.write(`run aborted: ${r.abortedReason}\n(if this is a credentials error, refresh your model provider's credentials)\n`);
+        return exitCode(r);
       } finally {
         db.close();
         release();

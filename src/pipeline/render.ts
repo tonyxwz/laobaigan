@@ -332,15 +332,22 @@ export async function draftCandidates(
   tree: Tree,
   runner: PiRunner,
   cfg: Config,
-  opts: { nodeIds?: number[]; max?: number; log?: (m: string) => void } = {},
+  opts: { nodeIds?: number[]; max?: number; log?: (m: string) => void; now?: Date } = {},
 ): Promise<DraftOutcome[]> {
   const max = opts.max ?? cfg.render.maxPerRun;
+  const props = new Proposals(tree.db);
+  const cutoff = (opts.now ?? new Date()).getTime() - cfg.render.retryAfterHours * 3600e3;
+  /** A recent failure: don't spend another drafting session on it yet. */
+  const backingOff = (id: number) => {
+    const last = props.forNode(id).at(-1);
+    return last?.status === "failed" && (last.closedAt?.getTime() ?? 0) > cutoff;
+  };
   const candidates = opts.nodeIds
     ? opts.nodeIds
     : tree
         .trees()
         .flatMap((r) => r.children)
-        .filter((s) => s.status === "candidate")
+        .filter((s) => s.status === "candidate" && !backingOff(s.id))
         .sort((a, b) => b.score - a.score || a.id - b.id)
         .map((s) => s.id);
   const out: DraftOutcome[] = [];

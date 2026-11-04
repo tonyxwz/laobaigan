@@ -52,7 +52,17 @@ Storage locations can be overridden with `LBG_CLAUDE_PROJECTS`, `LBG_PI_SESSIONS
 
 ## Running as a background service
 
-A systemd **user** timer runs `node src/cli.ts run` hourly. Each run is a one-shot process: it takes a lock, processes new/changed sessions, logs a summary to the journal, and exits.
+A systemd **user** timer runs `lbg run` hourly. Each run is a one-shot process that takes a lock, does one pass, writes one line per stage to the journal, and exits:
+
+| Stage | What | Budget per run |
+|---|---|---|
+| sync | skill files (global + known repos) → tree | no model |
+| extract | new/changed sessions → nuggets | `extract.maxCallsPerRun` (50) |
+| insert | unplaced nuggets → skills and sections | `insert.maxCallsPerRun` (20) |
+| score | promote / demote candidates | no model |
+| draft | top candidates → proposals (never written to the live files) | `render.maxPerRun` (2) |
+
+Work over budget waits for the next run. With nothing new, a run makes **no model calls**. A stage that fails doesn't stop the others. A failed draft isn't retried for `render.retryAfterHours` (24) so it doesn't cost a drafting session every hour; `lbg draft <id>` retries right away. New proposals show up in the journal as `new proposal #N: <skill> — review with: lbg proposal show N`.
 
 ```bash
 scripts/install-service.sh              # install/update units, enable + start the timer
@@ -68,7 +78,8 @@ systemctl --user start laobaigan.service          # run now
 journalctl --user -u laobaigan -f                 # follow the logs
 journalctl --user -u laobaigan --since today      # what happened today
 systemctl --user disable --now laobaigan.timer    # pause
-node src/cli.ts status                                  # run history with tokens + cost
+lbg status                                        # run history: calls and cost per stage
+lbg proposals                                     # what's waiting for review
 ```
 
 How it's wired:
@@ -76,9 +87,9 @@ How it's wired:
 - **Units:** `systemd/laobaigan.service.in` (template) and `systemd/laobaigan.timer`. The install script fills in the absolute `node` path (mise shims are resolved, since they don't work without a shell) and the repo path, and writes them to `~/.config/systemd/user/`. To change the units, edit the files in this repo and re-run the script.
 - **Schedule:** `OnCalendar=hourly` with up to 5 min random delay. `Persistent=true` catches up on missed runs, so the first install starts a run right away.
 - **Credentials:** systemd doesn't load your shell profile. If your provider's credentials need a tool that isn't on the default `PATH` (e.g. a `credential_process` helper in `~/.aws/config`), install with `EXTRA_PATH=<dir>[:<dir>…] scripts/install-service.sh` and the unit puts those directories first on its `PATH`. Put extra variables (e.g. `AWS_PROFILE=...`) in `~/.config/laobaigan/env`, one `KEY=value` per line.
-- **Expired credentials:** when your provider's credentials expire, model calls fail. After 3 consecutive model errors the run **aborts** (exit 3) instead of marking every session failed. Failed sessions are retried on the next run, so after you refresh the credentials nothing is lost.
+- **Expired credentials:** when your provider's credentials expire, model calls fail. After 3 consecutive model errors extraction stops and the later model stages (insert, draft) are skipped: exit 3. Failed sessions are retried on the next run, so after you refresh the credentials nothing is lost.
 - **Overlap:** a pid lock file (`~/.local/state/laobaigan/run.lock`) makes a second concurrent run exit with 75, which the unit treats as success. Stale locks from crashed runs are taken over.
-- **Exit codes:** 0 ok, 2 some sessions failed (unit shows *failed*), 3 aborted, 75 locked.
+- **Exit codes:** 0 ok, 2 a stage failed (unit shows *failed*), 3 aborted after repeated model errors, 75 locked.
 - **Lingering:** without `loginctl enable-linger`, user timers only fire while you have a session (an SSH login or tmux counts). With linger they run from boot. Since every run is incremental, either works; with linger off the backlog is just processed at your next login.
 - **Footprint:** `Nice=10`, idle IO priority, ~180 MB RSS while running, typically 0–2 model calls per hourly run.
 

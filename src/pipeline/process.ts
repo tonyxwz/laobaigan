@@ -30,6 +30,8 @@ export interface ProcessOptions {
   /** Override config.settleMinutes. */
   settleMinutes?: number;
   log?: (msg: string) => void;
+  /** Write a run-log row for this pass (default true; lbg run logs all stages in one row). */
+  recordRun?: boolean;
 }
 
 export interface SessionOutcome {
@@ -66,7 +68,8 @@ export async function processSessions(
   const log = opts.log ?? (() => {});
   const maxCalls = opts.maxCalls ?? cfg.extract.maxCallsPerRun;
   const persist = !opts.plan && !opts.dryRun;
-  const runId = persist ? db.startRun("extract", false) : 0;
+  const record = persist && opts.recordRun !== false;
+  const runId = record ? db.startRun("extract", false) : 0;
 
   const globalSkills = await loadSkillsDir(cfg.skillsDir, "global");
   const found = await scan(adapters, {
@@ -199,7 +202,7 @@ export async function processSessions(
     }
   }
 
-  if (persist) {
+  if (record) {
     const byStatus: Record<string, number> = {};
     for (const o of outcomes) byStatus[o.status] = (byStatus[o.status] ?? 0) + 1;
     db.finishRun(runId, {

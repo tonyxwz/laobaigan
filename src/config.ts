@@ -58,9 +58,15 @@ export interface Config {
     maxCallsPerRun: number;
   };
   score: ScoreConfig;
+  insert: {
+    /** Max routing calls per run (the rest waits for the next run). */
+    maxCallsPerRun: number;
+  };
   render: {
     /** Max proposals drafted per run (each is one opus session). */
     maxPerRun: number;
+    /** After a failed draft, wait this long before lbg run tries that skill again (lbg draft <id> ignores it). */
+    retryAfterHours: number;
     /** SKILL.md longer than this fails verification (move detail into references/). */
     maxSkillLines: number;
   };
@@ -125,7 +131,8 @@ export const DEFAULT_CONFIG: Config = {
     chunkTokens: 40_000,
     maxCallsPerRun: 50,
   },
-  render: { maxPerRun: 2, maxSkillLines: 300 },
+  insert: { maxCallsPerRun: 20 },
+  render: { maxPerRun: 2, retryAfterHours: 24, maxSkillLines: 300 },
   score: {
     weights: { session: 3, extraAgent: 3, extraDay: 1, correction: 1, covered: 2 },
     promote: { minSessions: 3, minSessionsCrossAgent: 2, reproposeAfterSessions: 2, updateMinSessions: 2, fixDescriptionMinSessions: 2 },
