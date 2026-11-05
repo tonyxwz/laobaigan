@@ -8,6 +8,8 @@ A background service that periodically scans chat sessions from all my AI coding
 
 > Progress, milestones and open work are tracked in beads, not here: run `bd list --type epic` for the milestones, `bd ready` for what's next, and `bd show <id>` for details.
 
+> Terms (session, nugget, skill, section, proposal, …) are defined in [docs/glossary.md](docs/glossary.md).
+
 ## Install
 
 Needs Node ≥ 24 (lbg uses the built-in `node:sqlite`; no native modules) and [pi](https://pi.dev) configured with a default model: lbg uses pi's provider, model and credentials for all its model calls.
