@@ -20,6 +20,7 @@ import { scoreTree, type TreeScoreResult } from "./pipeline/treescore.ts";
 import { draftCandidates } from "./pipeline/render.ts";
 import { exitCode, runPipeline, STAGES, type Stage } from "./pipeline/run.ts";
 import { promptFile, promptSnippets, writePromptStatus } from "./notify/prompt.ts";
+import { commitTemplate, renderCommit, runCommit } from "./pipeline/commit.ts";
 import { init, renderInit } from "./init.ts";
 import { installedExecStart, installedExtraPath, installService, invokedEntry, uninstallService } from "./service.ts";
 import { acceptProposal, conflicts, newSinceDraft, proposalDiff, rejectProposal } from "./pipeline/accept.ts";
@@ -76,7 +77,8 @@ Proposals (lbg never runs git: accept writes the files; commit them yourself if 
   lbg proposal show <id> [--no-pager]          Summary, evidence, and the diff against the live files
   lbg proposal diff <id> [--no-pager]          Only the diff (git format; pipe it into delta etc.)
       On a terminal both page through $LBG_PAGER, else delta if installed, else less -R.
-  lbg proposal accept <id> [--force]           Write the files into the skills dir / repo (--force: even if they changed since)
+  lbg proposal accept <id> [--force] [--commit] Write the files into the skills dir / repo (--force: even if they changed since;
+                                               --commit: then run commitCommand from the config)
   lbg proposal revise <id>                     Chat with pi about the draft (your pi TUI; writes only the draft's files)
   lbg proposal revise <id> "feedback"          One shot: pi redrafts with your feedback
   lbg proposal edit <id>                       Edit the drafted files in $VISUAL / $EDITOR
@@ -123,6 +125,7 @@ async function main(argv: string[]): Promise<number> {
       stages: { type: "string" },
       path: { type: "string" },
       force: { type: "boolean", default: false },
+      commit: { type: "boolean", default: false },
       reason: { type: "string" },
       title: { type: "string" },
       name: { type: "string" },
@@ -534,11 +537,41 @@ async function main(argv: string[]): Promise<number> {
           return (await page(buf.join(""), values["no-pager"])), 0;
         }
         if (sub === "accept") {
+          // --commit: check the command before writing anything.
+          const before = props.mustGet(id);
+          const template = values.commit ? commitTemplate(cfg, before.scope) : undefined;
+          if (values.commit) {
+            if (!template) {
+              throw new Error(
+                `--commit needs commitCommand${typeof cfg.commitCommand === "object" ? `.${before.scope}` : ""} in ${CONFIG_PATH}, e.g.\n` +
+                  `  "commitCommand": "git -C \${target_root} add -- \${updated_files} && git -C \${target_root} commit -m \${draft_note} -- \${updated_files}"`,
+              );
+            }
+            renderCommit(template, { updatedFiles: [], draftNote: "", targetRoot: "", skill: "", proposalId: id }); // validates placeholders
+          }
           const r = await acceptProposal(tree, cfg, id, { force: values.force });
           scoreTree(tree, cfg.score);
           out(`accepted #${id}: wrote ${r.written.length} file(s)${r.deleted.length ? `, deleted ${r.deleted.length}` : ""}\n`);
           for (const p of r.paths) out(`  ${p}\n`);
-          out(`\nlbg doesn't run git. To commit, for example:\n  git add -- <paths above> && git commit -F - <<'MSG'\n${r.commitMessage}\nMSG\n`);
+          if (!template) {
+            out(`\nlbg doesn't run git. To commit, for example:\n  git add -- <paths above> && git commit -F - <<'MSG'\n${r.commitMessage}\nMSG\n`);
+            out(`(or set commitCommand in ${CONFIG_PATH} and use --commit)\n`);
+            return 0;
+          }
+          const p = props.mustGet(id);
+          const command = renderCommit(template, {
+            updatedFiles: r.paths,
+            draftNote: r.commitMessage,
+            targetRoot: p.targetRoot,
+            skill: p.skillName ?? `node-${p.nodeId}`,
+            proposalId: id,
+          });
+          out(`\n$ ${command}\n`);
+          const c = runCommit(command, p.targetRoot);
+          if (c.status !== 0) {
+            process.stderr.write(`commit command failed (exit ${c.status}). The proposal is accepted and its files are written; commit them yourself.\n`);
+            return 2;
+          }
           return 0;
         }
         if (sub === "revise" || sub === "edit") {

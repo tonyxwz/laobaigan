@@ -119,6 +119,12 @@ export interface Config {
     /** Free-text policy appended to the clustering (and consolidation) prompt. */
     guidance: string;
   };
+  /**
+   * Shell command `lbg proposal accept <id> --commit` runs after writing the files (lbg itself
+   * never runs git). One for every target, or one per scope. See src/pipeline/commit.ts for
+   * the placeholders.
+   */
+  commitCommand?: string | { global?: string; repo?: string };
 }
 
 export interface DeclaredTopic {
@@ -239,6 +245,21 @@ export function loadConfig(path = CONFIG_PATH): Config {
     ...c,
     skillsDir: expandPath(c.skillsDir),
     topics: validateTopics(Array.isArray(c.topics) ? c.topics : []),
+    ...validateCommitCommand(c.commitCommand),
     stateDir: expandPath(c.stateDir),
   };
+}
+
+function validateCommitCommand(v: unknown): { commitCommand?: string | { global?: string; repo?: string } } {
+  if (v === undefined) return {};
+  const ok = (x: unknown) => x === undefined || (typeof x === "string" && x.trim() !== "");
+  if (typeof v === "string" && ok(v)) return { commitCommand: v };
+  if (v && typeof v === "object" && !Array.isArray(v)) {
+    const o = v as Record<string, unknown>;
+    const extra = Object.keys(o).filter((k) => k !== "global" && k !== "repo");
+    if (!extra.length && ok(o.global) && ok(o.repo)) {
+      return { commitCommand: { ...(o.global ? { global: String(o.global) } : {}), ...(o.repo ? { repo: String(o.repo) } : {}) } };
+    }
+  }
+  throw new Error('config.commitCommand must be a non-empty string, or { "global": "...", "repo": "..." }');
 }

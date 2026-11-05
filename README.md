@@ -37,6 +37,7 @@ lbg proposal revise <id>               # chat with pi about the draft, in your o
 lbg proposal revise <id> "feedback"    # or one shot: pi redrafts with your feedback
 lbg proposal edit <id>                 # edit the drafted files in $VISUAL / $EDITOR
 lbg proposal accept <id>               # write the files
+lbg proposal accept <id> --commit      # write the files, then run your commitCommand (see Configuration)
 lbg proposal reject <id> --reason "…"
 ```
 
@@ -130,9 +131,27 @@ lbg service uninstall                   # remove (your data is kept)
 
   // Optional steering: skills you want to exist, and a policy for how knowledge is grouped.
   "topics": [{ "name": "dotfiles-management", "description": "zsh, tmux, and agent configs in my dotfiles repo" }],
-  "clustering": { "guidance": "Prefer one umbrella skill per ecosystem, with reference files per tool." }
+  "clustering": { "guidance": "Prefer one umbrella skill per ecosystem, with reference files per tool." },
+
+  // What `lbg proposal accept <id> --commit` runs after writing the files (lbg never runs git itself).
+  // One command for everything, or { "global": "…", "repo": "…" } per target.
+  "commitCommand": {
+    "global": "git --git-dir=~/.cfg --work-tree=~ add ${updated_files} && git --git-dir=~/.cfg --work-tree=~ commit -m ${draft_note}",
+    "repo": "git -C ${target_root} add -- ${updated_files} && git -C ${target_root} commit -m ${draft_note} -- ${updated_files}"
+  }
 }
 ```
+
+`commitCommand` runs with `sh -c` in the target directory. Placeholders are replaced with shell-quoted values, so don't quote them yourself:
+
+| Placeholder | Value |
+|---|---|
+| `${updated_files}` | every written or deleted file (absolute paths, each quoted) |
+| `${draft_note}` | the suggested commit message (summary + evidence) |
+| `${target_root}` | the skills directory, or the repo |
+| `${skill}`, `${proposal_id}` | the skill name, the proposal id |
+
+`~` in the command means your home directory, including after `=` (as in `--git-dir=~/.cfg`), which `sh` itself wouldn't expand. If the command fails, the proposal is still accepted and its files written; commit them yourself.
 
 ## Shaping what lbg learns
 
