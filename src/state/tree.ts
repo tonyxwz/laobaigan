@@ -296,22 +296,60 @@ export class Tree {
     this.markDirty(newParentId);
   }
 
+  /** Proposals (any status) drafted for this node. */
+  hasProposals(id: number): boolean {
+    return !!this.sql.prepare("SELECT 1 FROM proposal WHERE node_id = ? LIMIT 1").get(id);
+  }
+
+  /**
+   * Delete one node without leaving anything pointing at it. Its nuggets and
+   * "covered by" marks go to `heir` (default: the parent, unless that's a root).
+   * Proposal history moves to `heir` when it is a skill; otherwise a node with
+   * proposals isn't deleted but turned latent and detached from its file
+   * (returns false). Nodes with children can't be removed.
+   */
+  removeNode(id: number, heir?: number): boolean {
+    const n = this.mustGet(id);
+    if (n.depth === 0) throw new Error("Roots can't be removed");
+    if (this.children(id).length) throw new Error(`Node ${id} has children; remove or move them first`);
+    const parent = n.parentId !== undefined ? this.getNode(n.parentId) : undefined;
+    const to = heir ?? (parent && parent.depth > 0 ? parent.id : undefined);
+    if (to !== undefined && this.mustGet(to).depth === 0) throw new Error("Can't hand a node's evidence to a root");
+    this.sql.prepare("UPDATE nugget SET node_id = ?, attached_at = CASE WHEN ? IS NULL THEN NULL ELSE attached_at END WHERE node_id = ?").run(to ?? null, to ?? null, id);
+    this.sql.prepare("UPDATE nugget SET covered_node_id = ? WHERE covered_node_id = ?").run(to ?? null, id);
+    if (this.hasProposals(id)) {
+      if (to === undefined || this.mustGet(to).depth !== 1) {
+        this.sql.prepare("UPDATE node SET origin = 'latent', source_path = NULL, source_hash = NULL, updated_at = ? WHERE id = ?").run(Date.now(), id);
+        return false;
+      }
+      this.sql.prepare("UPDATE proposal SET node_id = ? WHERE node_id = ?").run(to, id);
+    }
+    this.sql.prepare("DELETE FROM node WHERE id = ?").run(id);
+    if (to !== undefined) this.markDirty(to);
+    return true;
+  }
+
   /**
    * Delete latent nodes that hold nothing (no children, no nuggets) and have no
-   * proposal yet. Roots, file-backed and declared nodes are kept.
+   * proposal history. Roots, file-backed and declared nodes are kept.
    */
   pruneEmpty(): number {
     let total = 0;
     for (;;) {
-      const r = this.sql
-        .prepare(
-          `DELETE FROM node WHERE origin = 'latent' AND status IN ('open', 'candidate')
-             AND NOT EXISTS (SELECT 1 FROM node c WHERE c.parent_id = node.id)
-             AND NOT EXISTS (SELECT 1 FROM nugget g WHERE g.node_id = node.id)`,
-        )
-        .run();
-      if (Number(r.changes) === 0) return total;
-      total += Number(r.changes);
+      const ids = (
+        this.sql
+          .prepare(
+            `SELECT id FROM node WHERE origin = 'latent' AND status IN ('open', 'candidate')
+               AND NOT EXISTS (SELECT 1 FROM node c WHERE c.parent_id = node.id)
+               AND NOT EXISTS (SELECT 1 FROM nugget g WHERE g.node_id = node.id)
+               AND NOT EXISTS (SELECT 1 FROM proposal p WHERE p.node_id = node.id)`,
+          )
+          .all() as { id: number }[]
+      ).map((r) => Number(r.id));
+      if (!ids.length) return total;
+      for (const id of ids) this.sql.prepare("UPDATE nugget SET covered_node_id = NULL WHERE covered_node_id = ?").run(id);
+      for (const id of ids) this.sql.prepare("DELETE FROM node WHERE id = ?").run(id);
+      total += ids.length;
     }
   }
 

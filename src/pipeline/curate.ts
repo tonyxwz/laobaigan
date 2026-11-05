@@ -69,8 +69,8 @@ export function mergeSkills(tree: Tree, into: number, from: number[]): { section
         tree.attachNugget(n.id, into, { lock: true });
         nuggets++;
       }
-      tree.updateNode(s.id, { origin: "latent" }); // declared → latent so it can be pruned
-      tree.db.db.prepare("DELETE FROM node WHERE id = ?").run(s.id);
+      // Its evidence, covered marks and proposal history become the target's.
+      tree.removeNode(s.id, into);
     }
     tree.updateNode(into, { locked: true });
   });

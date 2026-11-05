@@ -82,7 +82,15 @@ export async function acceptProposal(tree: Tree, cfg: Config, id: number, opts: 
     res.paths.push(abs);
   }
   props.markAccepted(id);
-  await syncTree(tree, { skillsDir: cfg.skillsDir, declared: cfg.topics });
+  try {
+    await syncTree(tree, { skillsDir: cfg.skillsDir, declared: cfg.topics });
+  } catch (e) {
+    // The files are written and the proposal is accepted; only the tree is behind.
+    throw new Error(
+      `Proposal #${id} is accepted and its files are written (${res.paths.join(", ")}), but updating lbg's tree failed: ` +
+        `${e instanceof Error ? e.message : String(e)}. Run lbg tree sync to retry.`,
+    );
+  }
   // The files contain the evidence up to when the draft was made, not up to now: date the
   // live skill to the draft, so evidence that arrived while the proposal waited still counts
   // as new (and can earn an update). If sync couldn't match the node to a file (e.g. a new

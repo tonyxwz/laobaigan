@@ -125,20 +125,22 @@ function syncSections(tree: Tree, skillId: number, sections: ParsedSection[]): v
 
 /** A file node vanished: keep its evidence. Sections hand nuggets to their parent; skills turn latent. */
 function removeFileNode(tree: Tree, n: TreeNode): void {
+  // Sections hand their nuggets and "covered by" marks to the skill.
   if (n.depth === 2) {
-    for (const g of n.nuggets) tree.attachNugget(g.id, n.parentId!);
-    tree.db.db.prepare("DELETE FROM node WHERE id = ?").run(n.id);
+    tree.removeNode(n.id, n.parentId!);
     return;
   }
-  if (subtreeNuggets(n).length === 0) {
-    for (const c of n.children) tree.db.db.prepare("DELETE FROM node WHERE id = ?").run(c.id);
-    tree.db.db.prepare("DELETE FROM node WHERE id = ?").run(n.id);
+  // A skill without evidence or history goes away (sections first).
+  if (subtreeNuggets(n).length === 0 && !tree.hasProposals(n.id)) {
+    for (const c of n.children) tree.removeNode(c.id, n.id);
+    tree.removeNode(n.id);
     return;
   }
+  // Otherwise it turns latent: its evidence (and proposal history) stays.
   for (const c of n.children) {
     if (c.origin !== "file") continue;
     if (c.nuggets.length) tree.db.db.prepare("UPDATE node SET origin = 'latent', source_path = NULL, source_hash = NULL WHERE id = ?").run(c.id);
-    else tree.db.db.prepare("DELETE FROM node WHERE id = ?").run(c.id);
+    else tree.removeNode(c.id, n.id);
   }
   tree.db.db.prepare("UPDATE node SET origin = 'latent', source_path = NULL, source_hash = NULL, summary_dirty = 1 WHERE id = ?").run(n.id);
 }
