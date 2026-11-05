@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { DEFAULT_CONFIG, type Config } from "../src/config.ts";
-import { acceptProposal, conflicts, newSinceDraft, proposalDiff, rejectProposal } from "../src/pipeline/accept.ts";
+import { acceptProposal, commitTargetFor, conflicts, newSinceDraft, proposalDiff, rejectProposal } from "../src/pipeline/accept.ts";
 import { closeDraft, discardDraft, openDraft, reviseProposal } from "../src/pipeline/revise.ts";
 import { skillStats } from "../src/pipeline/treescore.ts";
 import { draftCandidates, draftSkill } from "../src/pipeline/render.ts";
@@ -299,5 +299,28 @@ describe("evidence that arrives while a proposal is open", () => {
     expect(after.nuggetIds).toContain(late);
     expect(after.draftedAt.getTime()).toBeGreaterThan(before.draftedAt.getTime());
     expect(newSinceDraft(tree, after)).toEqual([]);
+  });
+});
+
+describe("committing an already-accepted proposal", () => {
+  it("gives its files and message, and notes files edited since", async () => {
+    const { cfg, tree, dot, db, skillsDir } = await globalSetup();
+    const out = (await draftSkill(
+      tree,
+      await fauxRunner([fauxAssistantMessage([fauxToolCall("write", { path: "dotfiles-management/SKILL.md", content: SKILL_MD("dotfiles-management") })], { stopReason: "toolUse" }), report()]),
+      cfg,
+      dot,
+    )) as { proposalId: number };
+    const props = new Proposals(db);
+    await expect(commitTargetFor(tree, props.get(out.proposalId)!)).rejects.toThrow(/is open; only accepted/);
+
+    await acceptProposal(tree, cfg, out.proposalId); // forgot --commit
+    let t = await commitTargetFor(tree, props.get(out.proposalId)!);
+    expect(t).toMatchObject({ paths: [join(skillsDir, "dotfiles-management", "SKILL.md")], changedSince: [] });
+    expect(t.commitMessage).toMatch(/^skills: add dotfiles-management/);
+
+    await writeFile(join(skillsDir, "dotfiles-management", "SKILL.md"), SKILL_MD("dotfiles-management", "Tweaked by hand. Use for dotfiles."));
+    t = await commitTargetFor(tree, props.get(out.proposalId)!);
+    expect(t.changedSince).toEqual(["dotfiles-management/SKILL.md"]);
   });
 });

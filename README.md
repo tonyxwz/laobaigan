@@ -151,7 +151,7 @@ lbg service uninstall                   # remove (your data is kept)
 | `${target_root}` | the skills directory, or the repo |
 | `${skill}`, `${proposal_id}` | the skill name, the proposal id |
 
-`~` in the command means your home directory, including after `=` (as in `--git-dir=~/.cfg`), which `sh` itself wouldn't expand. If the command fails, the proposal is still accepted and its files written; commit them yourself.
+`~` in the command means your home directory, including after `=` (as in `--git-dir=~/.cfg`), which `sh` itself wouldn't expand. If the command fails, the proposal is still accepted and its files written; commit them yourself. Forgot `--commit`? Run `lbg proposal accept <id> --commit` again: for an already-accepted proposal it only runs the commit, for the files as they are now (it tells you if you've edited them since).
 
 ## Shaping what lbg learns
 

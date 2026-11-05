@@ -23,7 +23,7 @@ import { promptFile, promptSnippets, writePromptStatus } from "./notify/prompt.t
 import { commitTemplate, renderCommit, runCommit } from "./pipeline/commit.ts";
 import { init, renderInit } from "./init.ts";
 import { installedExecStart, installedExtraPath, installService, invokedEntry, uninstallService } from "./service.ts";
-import { acceptProposal, conflicts, newSinceDraft, proposalDiff, rejectProposal } from "./pipeline/accept.ts";
+import { acceptProposal, commitTargetFor, conflicts, newSinceDraft, proposalDiff, rejectProposal } from "./pipeline/accept.ts";
 import { reviseProposal } from "./pipeline/revise.ts";
 import { chatRevise, editProposal, type InteractiveResult } from "./pipeline/interactive.ts";
 import { createInterface } from "node:readline/promises";
@@ -549,10 +549,22 @@ async function main(argv: string[]): Promise<number> {
             }
             renderCommit(template, { updatedFiles: [], draftNote: "", targetRoot: "", skill: "", proposalId: id }); // validates placeholders
           }
-          const r = await acceptProposal(tree, cfg, id, { force: values.force });
-          scoreTree(tree, cfg.score);
-          out(`accepted #${id}: wrote ${r.written.length} file(s)${r.deleted.length ? `, deleted ${r.deleted.length}` : ""}\n`);
-          for (const p of r.paths) out(`  ${p}\n`);
+          let r: { paths: string[]; commitMessage: string };
+          if (before.status === "accepted" && template) {
+            // Accepted earlier without --commit: just commit its files now.
+            const t = await commitTargetFor(tree, before);
+            if (t.changedSince.length) {
+              out(`note: changed since #${id} was accepted (your edits are committed as they are now): ${t.changedSince.join(", ")}\n`);
+            }
+            out(`#${id} was already accepted; committing its files\n`);
+            r = t;
+          } else {
+            const a = await acceptProposal(tree, cfg, id, { force: values.force });
+            scoreTree(tree, cfg.score);
+            out(`accepted #${id}: wrote ${a.written.length} file(s)${a.deleted.length ? `, deleted ${a.deleted.length}` : ""}\n`);
+            for (const p of a.paths) out(`  ${p}\n`);
+            r = a;
+          }
           if (!template) {
             out(`\nlbg doesn't run git. To commit, for example:\n  git add -- <paths above> && git commit -F - <<'MSG'\n${r.commitMessage}\nMSG\n`);
             out(`(or set commitCommand in ${CONFIG_PATH} and use --commit)\n`);

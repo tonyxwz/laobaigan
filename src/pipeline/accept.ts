@@ -109,6 +109,27 @@ export function newSinceDraft(tree: Tree, p: ProposalRow): NuggetRow[] {
   return subtreeNuggets(skill).filter((n) => !used.has(n.id) && (n.attachedAt?.getTime() ?? 0) > t);
 }
 
+export interface CommitTarget {
+  paths: string[];
+  commitMessage: string;
+  /** Files that no longer contain what the proposal wrote (edited or committed differently since). */
+  changedSince: string[];
+}
+
+/**
+ * What to commit for an already-accepted proposal (e.g. accepted without --commit): its
+ * files as absolute paths, the suggested message, and which files changed since.
+ */
+export async function commitTargetFor(tree: Tree, p: ProposalRow): Promise<CommitTarget> {
+  if (p.status !== "accepted") throw new Error(`Proposal #${p.id} is ${p.status}; only accepted proposals have files to commit`);
+  const changedSince: string[] = [];
+  for (const f of p.files) {
+    const now = await current(p.targetRoot, f.path);
+    if (now !== f.content) changedSince.push(f.path);
+  }
+  return { paths: p.files.map((f) => join(p.targetRoot, f.path)), commitMessage: commitMessageFor(tree, p), changedSince };
+}
+
 export function rejectProposal(tree: Tree, id: number, reason?: string): void {
   new Proposals(tree.db).markRejected(id, reason);
 }
