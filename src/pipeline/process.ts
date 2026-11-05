@@ -155,7 +155,7 @@ export async function processSessions(
       );
       calls += out.calls;
       usage = addUsage(usage, out.usage);
-      const nuggets = out.nuggets.map((n) => normalizeScope(n, repo?.root, globalSkills));
+      const nuggets = out.nuggets.map((n) => normalizeScope(n, repo?.root ?? (t.cwd || undefined), globalSkills));
       if (persist) {
         db.tx(() => {
           for (const n of nuggets) {
@@ -217,6 +217,7 @@ export async function processSessions(
 }
 
 /** Fill in the repo for repo-scoped nuggets; fix obviously-wrong coveredBy names. */
+/** `repoRoot`: the session's repo, or its working directory when that isn't a repo (e.g. a multi-repo workspace root). */
 function normalizeScope(n: ExtractedNugget, repoRoot: string | undefined, global: SkillInfo[]): ExtractedNugget {
   const out = { ...n };
   if (out.scope === "repo" && !out.repo && repoRoot) out.repo = repoRoot;

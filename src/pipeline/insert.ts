@@ -256,8 +256,11 @@ function wantsSections(skill: TreeNode, incoming: number): boolean {
   return skill.children.length > 0 || (skill.origin !== "file" && incoming >= 2);
 }
 
-function scopeOf(n: NuggetRow): Scope {
-  return { scope: n.scope, ...(n.scope === "repo" && n.repo ? { repo: n.repo } : {}) };
+/** A repo nugget without a repo (older extractions) belongs to its session's working directory. */
+function scopeOf(n: NuggetRow): Scope | undefined {
+  if (n.scope !== "repo") return { scope: "global" };
+  const repo = n.repo ?? (n.cwd || undefined);
+  return repo ? { scope: "repo", repo } : undefined;
 }
 
 const scopeKey = (s: Scope) => (s.scope === "global" ? "global" : `repo:${s.repo}`);
@@ -287,6 +290,14 @@ export async function insertNuggets(
   const byScope = new Map<string, { scope: Scope; nuggets: NuggetRow[] }>();
   for (const n of pending) {
     const s = scopeOf(n);
+    if (!s) {
+      res.repairs.push(`nugget ${n.id}: repo-specific but no repository or working directory; left unplaced`);
+      continue;
+    }
+    if (s.scope === "repo" && !n.repo) {
+      tree.db.db.prepare("UPDATE nugget SET repo = ? WHERE id = ?").run(s.repo!, n.id);
+      n.repo = s.repo!;
+    }
     const e = byScope.get(scopeKey(s)) ?? { scope: s, nuggets: [] };
     e.nuggets.push(n);
     byScope.set(scopeKey(s), e);

@@ -200,3 +200,20 @@ describe("detachLatent", () => {
     expect(tree.unplacedNuggets().map((n) => n.id)).toEqual([a]);
   });
 });
+
+describe("insertNuggets: repo nuggets without a repo", () => {
+  it("files them under the session's working directory instead of failing the stage", async () => {
+    const db = new StateDb(":memory:");
+    const tree = new Tree(db);
+    const orphan = db.insertNugget(nugget("eval configs", { scope: "repo", cwd: "/w/bench" })); // no repo (workspace root)
+    const lost = db.insertNugget(nugget("nowhere", { scope: "repo", cwd: "" }));
+    const global = db.insertNugget(nugget("git push"));
+    const res = await insertNuggets(tree, new Scripted([]), DEFAULT_CONFIG);
+    expect(res.placed).toBe(2); // single nugget per empty scope: no calls
+    expect(db.getNugget(orphan)).toMatchObject({ repo: "/w/bench", nodeId: expect.any(Number) });
+    expect(tree.trees({ scope: "repo", repo: "/w/bench" })[0]!.children).toHaveLength(1);
+    expect(db.getNugget(global)!.nodeId).toBeDefined();
+    expect(db.getNugget(lost)!.nodeId).toBeUndefined();
+    expect(res.repairs.join("\n")).toMatch(new RegExp(`nugget ${lost}: repo-specific but no repository`));
+  });
+});
