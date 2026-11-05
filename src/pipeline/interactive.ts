@@ -60,10 +60,11 @@ async function loop(
   ask: Ask,
   log: (m: string) => void,
   summary: string,
+  refreshEvidence: boolean,
 ): Promise<InteractiveResult> {
   for (let first = true; ; first = false) {
     session(first);
-    const r = await closeDraft(tree, cfg, ws, { summary });
+    const r = await closeDraft(tree, cfg, ws, { summary, refreshEvidence });
     if (!r.problems.length) return { ...r, kept: false };
     log(`The draft has problems:\n${r.problems.map((p) => `  - ${p}`).join("\n")}`);
     if (!(await ask("Go back in and fix them? (no = keep the previous draft)"))) return { ...r, kept: true };
@@ -127,6 +128,7 @@ export async function chatRevise(tree: Tree, cfg: Config, id: number, opts: PiCh
       opts.ask,
       log,
       `${ws.proposal.summary ?? ""}${ws.proposal.summary ? "\n" : ""}(Revised in an interactive pi session.)`.trim(),
+      true, // pi saw the current evidence
     );
   } finally {
     await discardDraft(ws);
@@ -160,6 +162,7 @@ export async function editProposal(tree: Tree, cfg: Config, id: number, opts: Ed
       opts.ask,
       opts.log ?? (() => {}),
       ws.proposal.summary ?? "",
+      false, // a hand edit doesn't add evidence
     );
   } finally {
     await discardDraft(ws);

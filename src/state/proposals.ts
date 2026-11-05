@@ -44,6 +44,8 @@ export interface ProposalRow {
   summary?: string;
   nuggetIds: number[];
   sessions: number;
+  /** When the evidence of the current draft was taken (draft, or the last AI revise). */
+  draftedAt: Date;
   usage?: unknown;
   detail?: string;
   createdAt: Date;
@@ -71,6 +73,7 @@ function toProposal(r: Row): ProposalRow {
     ...(r.summary ? { summary: String(r.summary) } : {}),
     nuggetIds: JSON.parse(String(r.nugget_ids)) as number[],
     sessions: Number(r.sessions),
+    draftedAt: new Date(Number(r.drafted_at ?? r.created_at)),
     ...(r.usage ? { usage: JSON.parse(String(r.usage)) as unknown } : {}),
     ...(r.detail ? { detail: String(r.detail) } : {}),
     createdAt: new Date(Number(r.created_at)),
@@ -129,10 +132,10 @@ export class Proposals {
       const id = Number(
         this.sql
           .prepare(
-            `INSERT INTO proposal (node_id, kind, status, scope, repo, skill_name, target_root, writable, nugget_ids, sessions, created_at, updated_at)
-             VALUES (?, ?, 'drafting', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            `INSERT INTO proposal (node_id, kind, status, scope, repo, skill_name, target_root, writable, nugget_ids, sessions, drafted_at, created_at, updated_at)
+             VALUES (?, ?, 'drafting', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           )
-          .run(p.nodeId, p.kind, p.scope, p.repo ?? null, p.skillName ?? null, p.targetRoot, JSON.stringify(p.writable), JSON.stringify(p.nuggetIds), p.sessions, now, now)
+          .run(p.nodeId, p.kind, p.scope, p.repo ?? null, p.skillName ?? null, p.targetRoot, JSON.stringify(p.writable), JSON.stringify(p.nuggetIds), p.sessions, now, now, now)
           .lastInsertRowid,
       );
       this.setNodeStatus(p.nodeId, "proposed");
@@ -156,11 +159,12 @@ export class Proposals {
   }
 
   /** Drafting finished and verified: store the files for review. Also used to replace an open draft (revise / edit). */
-  markOpen(id: number, files: DraftFile[], summary: string, usage?: unknown): void {
+  markOpen(id: number, files: DraftFile[], summary: string, usage?: unknown, evidence?: { draftedAt: Date; nuggetIds: number[] }): void {
     this.transition(id, ["drafting", "open"], "open", {
       files: JSON.stringify(files),
       summary,
       ...(usage !== undefined ? { usage: JSON.stringify(usage) } : {}),
+      ...(evidence ? { drafted_at: evidence.draftedAt.getTime(), nugget_ids: JSON.stringify(evidence.nuggetIds) } : {}),
     });
   }
 

@@ -3,7 +3,8 @@ import { dirname, isAbsolute, join } from "node:path";
 import { createTwoFilesPatch } from "diff";
 import type { Config } from "../config.ts";
 import { hashContent, Proposals, type DraftFile, type ProposalRow } from "../state/proposals.ts";
-import type { Tree } from "../state/tree.ts";
+import type { NuggetRow } from "../state/db.ts";
+import { subtreeNuggets, type Tree } from "../state/tree.ts";
 import { isAllowed } from "./render.ts";
 import { syncTree } from "./sync.ts";
 
@@ -82,11 +83,22 @@ export async function acceptProposal(tree: Tree, cfg: Config, id: number, opts: 
   }
   props.markAccepted(id);
   await syncTree(tree, { skillsDir: cfg.skillsDir, declared: cfg.topics });
-  // A target sync can't match (e.g. a new AGENTS.md section under its own heading): the
-  // node's knowledge is published either way, so only evidence from now on counts.
+  // The files contain the evidence up to when the draft was made, not up to now: date the
+  // live skill to the draft, so evidence that arrived while the proposal waited still counts
+  // as new (and can earn an update). If sync couldn't match the node to a file (e.g. a new
+  // AGENTS.md section under its own heading), it's published either way.
   const node = tree.getNode(p.nodeId);
-  if (node && node.origin !== "file") tree.updateNode(p.nodeId, { origin: "file", renderedAt: new Date(), summaryDirty: false });
+  if (node) tree.updateNode(p.nodeId, { renderedAt: p.draftedAt, summaryDirty: false, ...(node.origin !== "file" ? { origin: "file" as const } : {}) });
   return res;
+}
+
+/** Evidence attached to the proposal's skill after its draft was made: not in the files yet. */
+export function newSinceDraft(tree: Tree, p: ProposalRow): NuggetRow[] {
+  const skill = tree.subtree(p.nodeId);
+  if (!skill) return [];
+  const t = p.draftedAt.getTime();
+  const used = new Set(p.nuggetIds);
+  return subtreeNuggets(skill).filter((n) => !used.has(n.id) && (n.attachedAt?.getTime() ?? 0) > t);
 }
 
 export function rejectProposal(tree: Tree, id: number, reason?: string): void {

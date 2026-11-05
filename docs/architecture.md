@@ -181,8 +181,9 @@ A failed draft becomes a `failed` proposal and the skill stays a candidate. `lbg
 
 ## 7. Review (`src/pipeline/accept.ts`, `revise.ts`, `interactive.ts`)
 
+- **Evidence while a proposal is open:** insert keeps routing nuggets into the proposed skill; the draft isn't redrafted automatically. Each proposal records `drafted_at`, when its evidence was taken (the draft, or the last AI revise; a hand `edit` doesn't change it). Nuggets attached after it are **new since the draft**: `lbg proposals` shows the count, `show` lists them, and revise marks them `(NEW SINCE THE DRAFT)` for pi and then adds them to the proposal's evidence.
 - **show / diff:** the stored files against what's on disk now, plus the evidence. A draft whose targets changed since drafting is **stale**.
-- **accept:** refuses a stale draft unless `--force`. Otherwise it writes the files into the target, marks the proposal accepted, and syncs, so the skill is live immediately and its evidence counts as absorbed. It prints the paths and a suggested commit message; lbg never runs git.
+- **accept:** refuses a stale draft unless `--force`. Otherwise it writes the files into the target, marks the proposal accepted, and syncs, so the skill is live immediately. The live skill is dated to `drafted_at`, not to the accept: evidence the files contain counts as absorbed, and evidence that arrived while the proposal waited still counts as new (and can earn an `update`). It prints the paths and a suggested commit message; lbg never runs git.
 - **reject:** the skill becomes `rejected` and records its session count; it returns only with evidence from new sessions.
 - **revise "feedback":** pi redrafts in a scratch copy that starts from the live files plus the stored draft, which also rebases a stale draft. The result passes the same checks before replacing the stored files.
 - **revise (interactive):** starts the user's own `pi` CLI from `PATH` in the scratch dir:

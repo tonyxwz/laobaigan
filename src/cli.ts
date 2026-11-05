@@ -22,7 +22,7 @@ import { exitCode, runPipeline, STAGES, type Stage } from "./pipeline/run.ts";
 import { promptFile, promptSnippets, writePromptStatus } from "./notify/prompt.ts";
 import { init, renderInit } from "./init.ts";
 import { installedExecStart, installedExtraPath, installService, invokedEntry, uninstallService } from "./service.ts";
-import { acceptProposal, conflicts, proposalDiff, rejectProposal } from "./pipeline/accept.ts";
+import { acceptProposal, conflicts, newSinceDraft, proposalDiff, rejectProposal } from "./pipeline/accept.ts";
 import { reviseProposal } from "./pipeline/revise.ts";
 import { chatRevise, editProposal, type InteractiveResult } from "./pipeline/interactive.ts";
 import { createInterface } from "node:readline/promises";
@@ -510,6 +510,14 @@ async function main(argv: string[]): Promise<number> {
           if (p.summary) out(`\n${p.summary}\n`);
           if (p.detail) out(`\n${p.status === "failed" ? "error" : "note"}: ${p.detail}\n`);
           const evidence = db.nuggets().filter((n) => p.nuggetIds.includes(n.id));
+          const fresh = p.status === "open" ? newSinceDraft(tree, p) : [];
+          if (fresh.length) {
+            out(`\nNew since this draft (${fresh.length}; not in the files yet — lbg proposal revise ${p.id} to add them):\n`);
+            for (const n of fresh) {
+              const e = n.evidence[0];
+              out(`  + ${n.agent}:${n.sessionId.slice(0, 8)}${e?.ts ? ` ${e.ts.slice(0, 10)}` : ""} ${n.title}${e ? `\n      "${truncate(e.quote, 160)}"` : ""}\n`);
+            }
+          }
           if (evidence.length) {
             out(`\nEvidence (${evidence.length}):\n`);
             for (const n of evidence) {
@@ -696,12 +704,14 @@ async function page(text: string, noPager: boolean): Promise<void> {
 }
 
 function renderProposalLine(p: ProposalRow, tree: Tree): string {
+  const fresh = p.status === "open" ? newSinceDraft(tree, p).length : 0;
   const node = tree.getNode(p.nodeId);
   const where = p.scope === "global" ? "global" : `repo ${shortPath(p.repo)}`;
   const cost = (p.usage as { cost?: number } | undefined)?.cost;
   return (
     `#${String(p.id).padEnd(3)} ${p.status.padEnd(8)} ${p.kind.padEnd(15)} ${p.skillName ?? node?.title ?? `node ${p.nodeId}`}  ` +
-    `[${where}] ${p.files.length} file(s), ${p.sessions} session(s)${cost !== undefined ? `, $${cost.toFixed(2)}` : ""}  ${p.createdAt.toISOString().slice(0, 16).replace("T", " ")}\n`
+    `[${where}] ${p.files.length} file(s), ${p.sessions} session(s)${cost !== undefined ? `, $${cost.toFixed(2)}` : ""}` +
+    `${fresh ? `, +${fresh} new since draft` : ""}  ${p.createdAt.toISOString().slice(0, 16).replace("T", " ")}\n`
   );
 }
 

@@ -5,7 +5,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { DEFAULT_CONFIG, type Config } from "../src/config.ts";
-import { acceptProposal, conflicts, proposalDiff, rejectProposal } from "../src/pipeline/accept.ts";
+import { acceptProposal, conflicts, newSinceDraft, proposalDiff, rejectProposal } from "../src/pipeline/accept.ts";
+import { closeDraft, discardDraft, openDraft, reviseProposal } from "../src/pipeline/revise.ts";
+import { skillStats } from "../src/pipeline/treescore.ts";
 import { draftCandidates, draftSkill } from "../src/pipeline/render.ts";
 import { syncTree } from "../src/pipeline/sync.ts";
 import { scoreTree } from "../src/pipeline/treescore.ts";
@@ -234,5 +236,68 @@ describe("proposalDiff", () => {
     expect(diff).not.toMatch(/\t$/m);
     await writeFile(join(root, "p.diff"), diff);
     execFileSync("git", ["apply", "--check", "--directory=", "p.diff"], { cwd: root });
+  });
+});
+
+describe("evidence that arrives while a proposal is open", () => {
+  const writeSkill = () =>
+    fauxAssistantMessage([fauxToolCall("write", { path: "dotfiles-management/SKILL.md", content: SKILL_MD("dotfiles-management") })], { stopReason: "toolUse" });
+
+  /** Draft the dotfiles candidate, then attach a nugget from a new session afterwards. */
+  async function draftThenNewEvidence() {
+    const s = await globalSetup();
+    const out = (await draftSkill(s.tree, await fauxRunner([writeSkill(), report()]), s.cfg, s.dot)) as { proposalId: number };
+    const props = new Proposals(s.db);
+    // the earlier evidence came in two minutes ago, the draft a minute ago; the new nugget arrives now
+    s.db.db.prepare("UPDATE nugget SET attached_at = ?").run(Date.now() - 120_000);
+    s.db.db.prepare("UPDATE proposal SET drafted_at = ? WHERE id = ?").run(Date.now() - 60_000, out.proposalId);
+    const late = s.db.insertNugget(nugget("late"));
+    s.tree.attachNugget(late, s.dot);
+    return { ...s, props, id: out.proposalId, late };
+  }
+
+  it("is listed as new since the draft, and still counts as fresh after accept", async () => {
+    const { tree, cfg, props, id, late, dot } = await draftThenNewEvidence();
+    const p = props.get(id)!;
+    expect(p.nuggetIds).not.toContain(late);
+    expect(newSinceDraft(tree, p).map((n) => n.id)).toEqual([late]);
+
+    await acceptProposal(tree, cfg, id);
+    const live = tree.subtree(dot)!;
+    expect(live.origin).toBe("file");
+    expect(live.renderedAt!.getTime()).toBe(p.draftedAt.getTime()); // dated to the draft, not to the accept
+    // the late nugget isn't in the files, so it is still new evidence for the live skill
+    expect(skillStats(live).fresh).toMatchObject({ nuggets: 1, sessions: 1 });
+  });
+
+  it("revise shows it to pi as new and takes it in; a hand edit doesn't", async () => {
+    const { tree, cfg, props, id, late } = await draftThenNewEvidence();
+    const before = props.get(id)!;
+
+    // hand edit: evidence unchanged
+    const ws = await openDraft(tree, id);
+    await writeFile(join(ws.scratch, "dotfiles-management/SKILL.md"), SKILL_MD("dotfiles-management", "Edited by hand. Use for dotfiles."));
+    await closeDraft(tree, cfg, ws);
+    await discardDraft(ws);
+    expect(props.get(id)).toMatchObject({ draftedAt: before.draftedAt, nuggetIds: before.nuggetIds });
+    expect(newSinceDraft(tree, props.get(id)!)).toHaveLength(1);
+
+    // AI revise: the prompt marks it, and afterwards it's part of the draft's evidence
+    let prompt = "";
+    const runner = await fauxRunner([
+      (ctx) => {
+        prompt = JSON.stringify((ctx as { messages: unknown[] }).messages);
+        return fauxAssistantMessage([fauxToolCall("write", { path: "dotfiles-management/SKILL.md", content: SKILL_MD("dotfiles-management", "Revised. Use for dotfiles.") })], { stopReason: "toolUse" });
+      },
+      report("Added the late fact."),
+    ]);
+    const r = await reviseProposal(tree, runner, cfg, id, "add what's new");
+    expect(r.problems).toEqual([]);
+    expect(prompt).toContain("(NEW SINCE THE DRAFT) fact from late");
+    expect(prompt.match(/NEW SINCE THE DRAFT\) fact/g)).toHaveLength(1);
+    const after = props.get(id)!;
+    expect(after.nuggetIds).toContain(late);
+    expect(after.draftedAt.getTime()).toBeGreaterThan(before.draftedAt.getTime());
+    expect(newSinceDraft(tree, after)).toEqual([]);
   });
 });

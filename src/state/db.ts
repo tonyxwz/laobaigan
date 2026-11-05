@@ -244,6 +244,10 @@ export const MIGRATIONS: string[] = [
    CREATE INDEX proposal_status ON proposal (status);
    CREATE UNIQUE INDEX proposal_one_active ON proposal (node_id) WHERE status IN ('drafting', 'open');
    UPDATE node SET status = 'open' WHERE status = 'merged';`,
+  // 12: when the evidence of the current draft was taken. Evidence attached later is "new since
+  // the draft": shown in review, and still counts as fresh after the proposal is accepted.
+  `ALTER TABLE proposal ADD COLUMN drafted_at INTEGER;
+   UPDATE proposal SET drafted_at = created_at;`,
 ];
 
 /** Lifecycle of a skill: open → candidate (earned a proposal) → proposed → open again (accepted: it's live now) or rejected. */

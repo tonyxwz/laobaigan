@@ -152,10 +152,12 @@ function renderNuggets(ns: NuggetRow[], flags: (n: NuggetRow) => string): string
   );
 }
 
-export function buildDraftPrompt(skill: TreeNode, kind: ProposalKind, target: RenderTarget, siblings: TreeNode[]): string {
+export function buildDraftPrompt(skill: TreeNode, kind: ProposalKind, target: RenderTarget, siblings: TreeNode[], draftedAt?: Date): string {
   const since = skill.renderedAt?.getTime() ?? 0;
-  const flag = (n: NuggetRow) =>
+  const base = (n: NuggetRow) =>
     kind === "new" ? "" : n.coveredNodeId !== undefined ? " (ALREADY IN THE FILE)" : (n.attachedAt?.getTime() ?? Infinity) > since ? " (NEW)" : " (already absorbed)";
+  // Revising: evidence that arrived after the current draft was made isn't in it yet.
+  const flag = (n: NuggetRow) => `${base(n)}${draftedAt && (n.attachedAt?.getTime() ?? 0) > draftedAt.getTime() ? " (NEW SINCE THE DRAFT)" : ""}`;
   const lines: string[] = [];
 
   if (target.agentsMd && target.section) {
@@ -170,6 +172,9 @@ export function buildDraftPrompt(skill: TreeNode, kind: ProposalKind, target: Re
     lines.push(`Task: update the existing skill ${target.skillDir}/. Read its files first and keep their structure and voice; change as little as needed.`);
   }
   if (kind === "update") lines.push("Integrate the knowledge marked (NEW). Items marked (already absorbed) are background.");
+  if (draftedAt && subtreeNuggets(skill).some((n) => (n.attachedAt?.getTime() ?? 0) > draftedAt.getTime())) {
+    lines.push("Items marked (NEW SINCE THE DRAFT) came in after the current draft was written: add them unless the engineer says otherwise.");
+  }
   if (kind === "fix-description" || subtreeNuggets(skill).some((n) => n.coveredNodeId !== undefined)) {
     lines.push(
       "Items marked (ALREADY IN THE FILE) were explained again even though the skill says them: agents did not load the skill. Rewrite the description so it triggers in those situations (name the tools, files and tasks involved).",
@@ -300,6 +305,7 @@ export async function draftSkill(tree: Tree, runner: PiRunner, cfg: Config, node
     return { status: "failed", nodeId, proposalId, reason, ...(usage ? { usage } : {}) };
   };
   try {
+    const started = new Date(); // the evidence the draft sees is the subtree as of now
     const base = await snapshot(target.root, target.writable);
     scratch = await makeScratch(target);
     log(`draft ${target.skillName} (${kind}): proposal #${proposalId}`);
@@ -317,7 +323,7 @@ export async function draftSkill(tree: Tree, runner: PiRunner, cfg: Config, node
     const files = await diffSnapshot(base, scratch, target.writable);
     const problems = verifyDraft(files, base, target, cfg);
     if (problems.length) return fail(`verification: ${problems.join("; ")}`);
-    props.markOpen(proposalId, files, res.value.summary, usage);
+    props.markOpen(proposalId, files, res.value.summary, usage, { draftedAt: started, nuggetIds: subtreeNuggets(skill).map((n) => n.id) });
     log(`draft ${target.skillName}: proposal #${proposalId} ready (${files.length} file(s))`);
     return { status: "open", nodeId, proposalId, files, usage };
   } catch (e) {

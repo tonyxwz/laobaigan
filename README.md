@@ -40,6 +40,8 @@ lbg proposal accept <id>               # write the files
 lbg proposal reject <id> --reason "…"
 ```
 
+A draft doesn't change by itself. If you explain the same topic again while a proposal waits, the new evidence still lands on that skill: `lbg proposals` shows it as `+N new since draft`, `lbg proposal show` lists it, and `lbg proposal revise` adds it to the draft. If you accept without revising, nothing is lost: the new evidence still counts, and can lead to an `update` proposal later.
+
 There are three kinds of proposal:
 
 | Kind | When | What it changes |

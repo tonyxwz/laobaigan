@@ -4,7 +4,7 @@ import type { Config } from "../config.ts";
 import { GUARDED_TOOLS } from "../pi/guard.ts";
 import { addUsage, ZERO_USAGE, type PiRunner, type Usage } from "../pi/run-pi.ts";
 import { Proposals, type DraftFile, type ProposalRow } from "../state/proposals.ts";
-import type { Tree, TreeNode } from "../state/tree.ts";
+import { subtreeNuggets, type Tree, type TreeNode } from "../state/tree.ts";
 import { buildDraftPrompt, diffSnapshot, DRAFT_SYSTEM_PROMPT, makeScratch, ReportDraftSchema, snapshot, verifyDraft, type RenderTarget } from "./render.ts";
 
 /**
@@ -24,6 +24,8 @@ export interface DraftWorkspace {
   target: RenderTarget;
   base: Map<string, string>;
   scratch: string;
+  /** When this workspace was opened: the evidence an AI revision sees is the subtree as of now. */
+  openedAt: Date;
 }
 
 /** The render target a proposal was drafted for, rebuilt from what it stored. */
@@ -46,6 +48,7 @@ export async function openDraft(tree: Tree, id: number): Promise<DraftWorkspace>
   if (p.status !== "open") throw new Error(`Proposal #${id} is ${p.status}; only open proposals can be changed`);
   const skill = tree.subtree(p.nodeId);
   if (!skill) throw new Error(`Proposal #${id}: node ${p.nodeId} no longer exists`);
+  const openedAt = new Date();
   const target = targetOf(p, skill);
   const base = await snapshot(target.root, target.writable);
   const scratch = await makeScratch(target);
@@ -57,7 +60,7 @@ export async function openDraft(tree: Tree, id: number): Promise<DraftWorkspace>
       await writeFile(abs, f.content);
     }
   }
-  return { proposal: p, skill, target, base, scratch };
+  return { proposal: p, skill, target, base, scratch, openedAt };
 }
 
 export interface CloseResult {
@@ -71,14 +74,24 @@ export interface CloseResult {
 const same = (a: DraftFile[], b: DraftFile[]) => JSON.stringify(a) === JSON.stringify(b);
 
 /** Verify the scratch files and, if they're fine and different, store them on the proposal. */
-export async function closeDraft(tree: Tree, cfg: Config, ws: DraftWorkspace, opts: { summary?: string; usage?: Usage } = {}): Promise<CloseResult> {
+/**
+ * `refreshEvidence`: the draft was revised by pi with the current evidence (one-shot or chat),
+ * so it now covers everything attached up to `ws.openedAt`. A hand edit doesn't.
+ */
+export async function closeDraft(
+  tree: Tree,
+  cfg: Config,
+  ws: DraftWorkspace,
+  opts: { summary?: string; usage?: Usage; refreshEvidence?: boolean } = {},
+): Promise<CloseResult> {
   const files = await diffSnapshot(ws.base, ws.scratch, ws.target.writable);
   const problems = verifyDraft(files, ws.base, ws.target, cfg);
   if (problems.length) return { problems, changed: false, files };
   const changed = !same(files, ws.proposal.files);
   if (changed || opts.summary) {
     const prev = (ws.proposal.usage as Usage | undefined) ?? ZERO_USAGE;
-    new Proposals(tree.db).markOpen(ws.proposal.id, files, opts.summary ?? ws.proposal.summary ?? "", opts.usage ? addUsage(prev, opts.usage) : ws.proposal.usage);
+    const evidence = opts.refreshEvidence ? { draftedAt: ws.openedAt, nuggetIds: subtreeNuggets(ws.skill).map((n) => n.id) } : undefined;
+    new Proposals(tree.db).markOpen(ws.proposal.id, files, opts.summary ?? ws.proposal.summary ?? "", opts.usage ? addUsage(prev, opts.usage) : ws.proposal.usage, evidence);
   }
   return { problems, changed, files };
 }
@@ -91,7 +104,7 @@ export async function discardDraft(ws: DraftWorkspace): Promise<void> {
 export function reviseContext(tree: Tree, ws: DraftWorkspace): string {
   const siblings = ws.skill.parentId !== undefined ? tree.children(ws.skill.parentId).map((c) => ({ ...c, children: [], nuggets: [] })) : [];
   return [
-    buildDraftPrompt(ws.skill, ws.proposal.kind, ws.target, siblings).replace(/\nWrite the files now, then call report_draft\.$/, ""),
+    buildDraftPrompt(ws.skill, ws.proposal.kind, ws.target, siblings, ws.proposal.draftedAt).replace(/\nWrite the files now, then call report_draft\.$/, ""),
     "",
     "A draft already exists: the files in the current directory ARE the current draft. Revise them; don't start over unless asked.",
     ...(ws.proposal.summary ? [`The drafter's note on it: ${ws.proposal.summary}`] : []),
@@ -116,7 +129,7 @@ export async function reviseProposal(tree: Tree, runner: PiRunner, cfg: Config, 
       fileGuard: { root: ws.scratch, writable: ws.target.writable },
       resultTool: { name: "report_draft", description: "Report the revised draft.", parameters: ReportDraftSchema },
     });
-    const closed = await closeDraft(tree, cfg, ws, { summary: res.value.summary, usage: res.usage });
+    const closed = await closeDraft(tree, cfg, ws, { summary: res.value.summary, usage: res.usage, refreshEvidence: true });
     return { ...closed, usage: res.usage, summary: res.value.summary };
   } finally {
     await discardDraft(ws);
