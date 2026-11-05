@@ -12,9 +12,11 @@
   },
   "scripts": {
     "cli": "node src/cli.ts",
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "check": "npm run typecheck && npm test"
+    "check": "npm run typecheck && npm test",
+    "prepublishOnly": "npm run check && npm run build"
   },
   "devDependencies": {
     "@types/node": "^24.19.2",
