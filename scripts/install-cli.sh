@@ -1,33 +1,44 @@
 #!/usr/bin/env bash
-# Put `lbg` on PATH as a symlink to this repo's src/cli.ts.
-#   scripts/install-cli.sh             install into ~/.local/bin (or $BIN_DIR)
+# Install `lbg` from this checkout with `npm link`, into ~/.local (or $LBG_PREFIX):
+#   scripts/install-cli.sh             ~/.local/bin/lbg -> ~/.local/lib/node_modules/laobaigan (-> this repo)
 #   scripts/install-cli.sh uninstall
-# A symlink (not `npm link`) so it survives Node upgrades by mise and always runs
-# the current code in this repo; no build step needed.
+# The link runs bin/lbg.js, which runs src/ directly: edits take effect immediately,
+# no build step. The ~/.local prefix (not mise's per-version Node prefix) survives
+# Node upgrades. This doesn't change your npm config.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BIN_DIR="${BIN_DIR:-$HOME/.local/bin}"
-LINK="$BIN_DIR/lbg"
+PREFIX="${LBG_PREFIX:-$HOME/.local}"
+BIN="$PREFIX/bin/lbg"
+npm_prefix() { npm_config_prefix="$PREFIX" "$@"; }
 
 if [[ "${1:-}" == "uninstall" ]]; then
-  [[ -L "$LINK" ]] && rm "$LINK" && echo "Removed $LINK"
+  (cd "$REPO" && npm_prefix npm unlink -g laobaigan >/dev/null)
+  echo "Removed $BIN"
   exit 0
 fi
 
-if [[ -e "$LINK" && ! -L "$LINK" ]]; then
-  echo "$LINK exists and is not a symlink; refusing to overwrite" >&2
+node_major="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)"
+(( node_major >= 24 )) || { echo "lbg needs Node >= 24 (found: $(node -v 2>/dev/null || echo none))" >&2; exit 1; }
+
+# The previous install was a plain symlink to src/cli.ts; npm won't overwrite it.
+if [[ -L "$BIN" && "$(readlink "$BIN")" == */src/cli.ts ]]; then
+  rm "$BIN"
+  echo "Replaced the old symlink $BIN"
+elif [[ -e "$BIN" && ! -L "$BIN" ]]; then
+  echo "$BIN exists and isn't a link; refusing to overwrite" >&2
   exit 1
 fi
+
 [[ -d "$REPO/node_modules" ]] || (cd "$REPO" && npm ci)
-chmod +x "$REPO/src/cli.ts"
-mkdir -p "$BIN_DIR"
-ln -sfn "$REPO/src/cli.ts" "$LINK"
-echo "Installed $LINK -> $REPO/src/cli.ts"
+(cd "$REPO" && npm_prefix npm link --no-fund --no-audit >/dev/null)
+echo "Installed $BIN -> $(readlink -f "$BIN")"
 
 case ":$PATH:" in
-  *":$BIN_DIR:"*) ;;
-  *) echo "Note: $BIN_DIR is not on PATH; add it to your shell profile." ;;
+  *":$PREFIX/bin:"*) ;;
+  *) echo "Note: $PREFIX/bin is not on PATH; add it to your shell profile." ;;
 esac
-node_major="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)"
-(( node_major >= 24 )) || echo "Note: \`node\` on PATH must be >= 24 (found: $(node -v 2>/dev/null || echo none))."
+found="$(command -v lbg || true)"
+if [[ -n "$found" && "$found" != "$BIN" ]]; then
+  echo "Note: \`lbg\` on PATH resolves to $found, not $BIN. Remove the other one, or put $PREFIX/bin first in PATH."
+fi

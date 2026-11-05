@@ -35,11 +35,13 @@ Requires Node ≥ 24. In a checkout lbg runs its `.ts` sources directly (native 
 ### Install the `lbg` CLI from a checkout
 
 ```bash
-scripts/install-cli.sh             # symlinks ~/.local/bin/lbg -> src/cli.ts
+scripts/install-cli.sh             # npm link into ~/.local: ~/.local/bin/lbg -> this checkout
 scripts/install-cli.sh uninstall
 ```
 
-It's a symlink, not `npm link`. `npm link` would put it in mise's per-version Node prefix, where it disappears on the next Node upgrade. With the symlink, the command always runs the current code in this repo, with no build step. It needs `node` ≥ 24 on `PATH`. Set `BIN_DIR=...` to install somewhere other than `~/.local/bin`.
+It's `npm link` with the prefix set to `~/.local` for that one command (your npm config is unchanged). `lbg` runs `bin/lbg.js`, which runs `src/cli.ts` when the sources are there, so edits take effect immediately with no build step. The published package ships only `dist/`, so the same launcher runs the build there. The `~/.local` prefix, unlike mise's per-version Node prefix, survives Node upgrades. Set `LBG_PREFIX=...` for another prefix. It needs `node` ≥ 24 on `PATH`.
+
+Plain `npm link` works too, but puts `lbg` in your global npm prefix (with mise: the current Node version's directory, which a Node upgrade replaces).
 
 The examples below use `node src/cli.ts`; `lbg` is the same thing.
 
