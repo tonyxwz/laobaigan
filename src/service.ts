@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 /**
@@ -19,6 +19,17 @@ export function packageRoot(moduleUrl: string = import.meta.url): string {
 export function cliPath(moduleUrl: string = import.meta.url): string {
   const here = fileURLToPath(moduleUrl);
   return join(dirname(here), `cli${here.endsWith(".ts") ? ".ts" : ".js"}`);
+}
+
+/**
+ * The command to put in ExecStart: the `lbg` you ran (e.g. ~/.local/bin/lbg from
+ * `npm link` or `npm install -g`, kept as typed, not resolved), so the timer runs
+ * through the same install. Falls back to the cli module when lbg was started some
+ * other way (e.g. `node src/cli.ts`).
+ */
+export function invokedEntry(argv1: string | undefined, fallback: string = cliPath()): string {
+  if (argv1 && /^lbg(\.js)?$/.test(basename(argv1))) return resolve(argv1);
+  return fallback;
 }
 
 export function unitDir(env: NodeJS.ProcessEnv = process.env): string {

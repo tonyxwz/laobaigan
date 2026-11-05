@@ -41,6 +41,8 @@ scripts/install-cli.sh uninstall
 
 It's `npm link` with the prefix set to `~/.local` for that one command (your npm config is unchanged). `lbg` runs `bin/lbg.js`, which runs `src/cli.ts` when the sources are there, so edits take effect immediately with no build step. The published package ships only `dist/`, so the same launcher runs the build there. The `~/.local` prefix, unlike mise's per-version Node prefix, survives Node upgrades. Set `LBG_PREFIX=...` for another prefix. It needs `node` ≥ 24 on `PATH`.
 
+`scripts/install-service.sh` (and `lbg service install`) then runs the timer through that same `~/.local/bin/lbg`, so the background runs go through the npm-installed command too.
+
 Plain `npm link` works too, but puts `lbg` in your global npm prefix (with mise: the current Node version's directory, which a Node upgrade replaces).
 
 The examples below use `node src/cli.ts`; `lbg` is the same thing.

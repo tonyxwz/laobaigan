@@ -21,7 +21,7 @@ import { draftCandidates } from "./pipeline/render.ts";
 import { exitCode, runPipeline, STAGES, type Stage } from "./pipeline/run.ts";
 import { promptFile, promptSnippets, writePromptStatus } from "./notify/prompt.ts";
 import { init, renderInit } from "./init.ts";
-import { installedExecStart, installedExtraPath, installService, uninstallService } from "./service.ts";
+import { installedExecStart, installedExtraPath, installService, invokedEntry, uninstallService } from "./service.ts";
 import { acceptProposal, conflicts, proposalDiff, rejectProposal } from "./pipeline/accept.ts";
 import { reviseProposal } from "./pipeline/revise.ts";
 import { chatRevise, editProposal, type InteractiveResult } from "./pipeline/interactive.ts";
@@ -433,7 +433,8 @@ async function main(argv: string[]): Promise<number> {
       const sub = rest[0] ?? "status";
       if (sub === "install") {
         const extraPath = values.path ?? installedExtraPath();
-        const r = installService(extraPath !== undefined ? { extraPath } : {});
+        // Run the timer through the same `lbg` I invoked (npm link / npm install -g), if that's how I ran it.
+        const r = installService({ cli: invokedEntry(process.argv[1]), ...(extraPath !== undefined ? { extraPath } : {}) });
         out(`installed ${r.servicePath}\n          ${r.timerPath}\nruns: ${r.node} ${r.cli} run (hourly)\n`);
         if (extraPath) out(`extra PATH: ${extraPath}\n`);
         for (const w of r.warnings) out(`\nwarning: ${w}\n`);

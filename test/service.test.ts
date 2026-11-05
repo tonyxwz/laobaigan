@@ -83,3 +83,13 @@ describe("lbg service", () => {
     expect(() => installService({ dir, exec: fakeExec("22").exec, node: "/usr/bin/node", cli: "/c.js" })).toThrow(/Node >= 24/);
   });
 });
+
+describe("invokedEntry", () => {
+  it("uses the lbg that was run (link path kept as typed), else the cli module", async () => {
+    const { invokedEntry } = await import("../src/service.ts");
+    expect(invokedEntry("/home/u/.local/bin/lbg", "/repo/src/cli.ts")).toBe("/home/u/.local/bin/lbg");
+    expect(invokedEntry("/p/lib/node_modules/laobaigan/bin/lbg.js", "/repo/src/cli.ts")).toBe("/p/lib/node_modules/laobaigan/bin/lbg.js");
+    expect(invokedEntry("/repo/src/cli.ts", "/repo/src/cli.ts")).toBe("/repo/src/cli.ts");
+    expect(invokedEntry(undefined, "/repo/src/cli.ts")).toBe("/repo/src/cli.ts");
+  });
+});
