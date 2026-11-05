@@ -13,9 +13,10 @@ This project uses **bd** (beads) for issue tracking. Run `bd prime` for full wor
 > source of truth; don't `bd import` during normal operation; don't
 > reach for third-party Dolt hosting before trying the default).
 
-> **Beads sync is disabled for this repo.** There is no Dolt remote on purpose. Do not run
-> `bd dolt push`, `bd dolt pull` or `bd sync`, and never let bd adopt a remote from git `origin`
-> (use `--no-adopt` / `BD_NO_REMOTE_ADOPT=1` if a command offers it). Issues stay local.
+> **Beads sync goes to GitHub only.** The Dolt remote `origin` points at
+> `git+ssh://git@github.com/tonyxwz/laobaigan.git` (the `github` git remote), not at git
+> `origin`. Never let bd adopt a remote from git `origin` (use `--no-adopt` /
+> `BD_NO_REMOTE_ADOPT=1` if a command offers it).
 
 ## Quick Reference
 
