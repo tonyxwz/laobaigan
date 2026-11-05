@@ -1,15 +1,44 @@
 {
   "name": "laobaigan",
   "version": "0.1.0",
-  "description": "Distill repeated explanations from AI agent sessions into skills",
+  "description": "Learns the things you keep explaining to your AI coding agents (Claude Code, pi, opencode) and proposes them as skills.",
+  "keywords": [
+    "ai",
+    "agents",
+    "skills",
+    "claude-code",
+    "pi",
+    "opencode",
+    "llm",
+    "cli"
+  ],
+  "homepage": "https://github.com/tonyxwz/laobaigan#readme",
+  "bugs": {
+    "url": "https://github.com/tonyxwz/laobaigan/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tonyxwz/laobaigan.git"
+  },
+  "author": "tonyxwz",
   "type": "module",
-  "private": true,
   "engines": {
     "node": ">=24"
   },
+  "os": [
+    "linux",
+    "darwin"
+  ],
   "bin": {
-    "lbg": "./src/cli.ts"
+    "lbg": "dist/cli.js"
   },
+  "files": [
+    "dist",
+    "!dist/**/*.map",
+    "systemd",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "cli": "node src/cli.ts",
     "build": "rm -rf dist && tsc -p tsconfig.build.json",
@@ -18,15 +47,15 @@
     "check": "npm run typecheck && npm test",
     "prepublishOnly": "npm run check && npm run build"
   },
-  "devDependencies": {
-    "@types/node": "^24.19.2",
-    "typescript": "^5.9.3",
-    "vitest": "^5.1.0"
-  },
   "dependencies": {
     "@earendil-works/pi-ai": "^1.5.0",
     "@earendil-works/pi-coding-agent": "^1.5.0",
     "diff": "^8.0.4",
     "typebox": "^1.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.2",
+    "typescript": "^5.9.3",
+    "vitest": "^5.1.0"
   }
 }
