@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
-import { loadConfig } from "./config.ts";
-import { PiConfigRunner } from "./pi/run-pi.ts";
+import { CONFIG_PATH, loadConfig } from "./config.ts";
+import { PiConfigRunner, piDefaults } from "./pi/run-pi.ts";
 import * as curate from "./pipeline/curate.ts";
 import { processSessions, type ProcessOptions, type SessionOutcome } from "./pipeline/process.ts";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -19,6 +20,7 @@ import { scoreTree, type TreeScoreResult } from "./pipeline/treescore.ts";
 import { draftCandidates } from "./pipeline/render.ts";
 import { exitCode, runPipeline, STAGES, type Stage } from "./pipeline/run.ts";
 import { promptFile, promptSnippets, writePromptStatus } from "./notify/prompt.ts";
+import { init, renderInit } from "./init.ts";
 import { installedExecStart, installedExtraPath, installService, uninstallService } from "./service.ts";
 import { acceptProposal, conflicts, proposalDiff, rejectProposal } from "./pipeline/accept.ts";
 import { reviseProposal } from "./pipeline/revise.ts";
@@ -80,6 +82,9 @@ Proposals (lbg never runs git: accept writes the files; commit them yourself if 
   lbg proposal edit <id>                       Edit the drafted files in $VISUAL / $EDITOR
   lbg proposal reject <id> [--reason "..."]
   lbg prompt                                   How many proposals are waiting, and the shell prompt snippets (starship / zsh)
+
+Setup:
+  lbg init                                     Detect agents, skills dir and model; write a starter config (never overwrites)
 
 Background service (systemd user timer, hourly lbg run):
   lbg service install [--path DIR[:DIR]]       Write and enable the units for this lbg (--path: extra PATH for credential helpers)
@@ -414,6 +419,14 @@ async function main(argv: string[]): Promise<number> {
         }
         db.close();
       }
+    }
+
+    case "init": {
+      const configured = existsSync(CONFIG_PATH) ? { skillsDir: loadConfig().skillsDir } : {};
+      const r = await init({ adapters, piDefaults, ...configured });
+      if (values.json) return json(r), 0;
+      out(renderInit(r));
+      return 0;
     }
 
     case "service": {

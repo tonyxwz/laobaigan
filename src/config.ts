@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { setExtraPatterns, type ExtraPattern } from "./pipeline/redact.ts";
@@ -24,12 +24,50 @@ export function expandPath(p: string): string {
   return isAbsolute(expanded) ? expanded : resolve(expanded);
 }
 
+/** Global skills dirs of the agents lbg knows, in order of preference. */
+export function skillsDirCandidates(h: string = home): string[] {
+  return [join(h, ".pi", "agent", "skills"), join(h, ".claude", "skills"), join(h, ".config", "opencode", "skills")];
+}
+
+export interface FsProbe {
+  exists(p: string): boolean;
+  isSymlink(p: string): boolean;
+  realpath(p: string): string;
+}
+
+const realFs: FsProbe = {
+  exists: (p) => existsSync(p),
+  isSymlink: (p) => {
+    try {
+      return lstatSync(p).isSymbolicLink();
+    } catch {
+      return false;
+    }
+  },
+  realpath: (p) => realpathSync(p),
+};
+
+/**
+ * The global skills dir: the first existing of pi's, Claude Code's, opencode's. When it
+ * is a symlink to another candidate (one shared dir, like here), the candidate that is
+ * the real directory is used, keeping the path as written (no /home → /local/home churn).
+ * Falls back to pi's dir when none exists yet.
+ */
+export function detectSkillsDir(h: string = home, fs: FsProbe = realFs): string {
+  const cands = skillsDirCandidates(h);
+  const first = cands.find((c) => fs.exists(c));
+  if (!first) return cands[0]!;
+  if (!fs.isSymlink(first)) return first;
+  const real = fs.realpath(first);
+  return cands.find((c) => c !== first && fs.exists(c) && !fs.isSymlink(c) && fs.realpath(c) === real) ?? real;
+}
+
 /** Default on-disk locations of each agent's session storage. */
 export const DEFAULT_PATHS = {
   claudeProjects: process.env.LBG_CLAUDE_PROJECTS ?? join(home, ".claude", "projects"),
   piSessions: process.env.LBG_PI_SESSIONS ?? join(home, ".pi", "agent", "sessions"),
   opencodeDb: process.env.LBG_OPENCODE_DB ?? join(home, ".local", "share", "opencode", "opencode.db"),
-  skillsDir: process.env.LBG_SKILLS_DIR ?? join(home, ".config", "opencode", "skills"),
+  skillsDir: process.env.LBG_SKILLS_DIR ?? detectSkillsDir(),
   stateDir: process.env.LBG_STATE_DIR ?? join(home, ".local", "state", "laobaigan"),
 };
 
@@ -46,7 +84,7 @@ export interface ModelConfig {
 }
 
 export interface Config {
-  /** The global skills directory every agent loads (here: ~/.config/opencode/skills, symlinked from pi and Claude). */
+  /** The global skills directory the agents load. Default: detected (see detectSkillsDir). */
   skillsDir: string;
   stateDir: string;
   models: ModelConfig;
