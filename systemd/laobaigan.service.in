@@ -1,17 +1,18 @@
-# Installed by scripts/install-service.sh. Do not edit the copy in ~/.config/systemd/user;
-# edit systemd/laobaigan.service.in and re-run the install script.
+# Written by `lbg service install`. Don't edit the copy in ~/.config/systemd/user:
+# re-run `lbg service install` (it rewrites this file from the package's template).
 [Unit]
 Description=Laobaigan (老白干): distill repeated explanations from agent sessions
-Documentation=file://@REPO@/README.md
+Documentation=https://www.npmjs.com/package/laobaigan
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=oneshot
-WorkingDirectory=@REPO@
-ExecStart=@NODE@ @REPO@/src/cli.ts run
-# PATH: systemd doesn't inherit the login shell's. @EXTRA_PATH@ comes from EXTRA_PATH at install
-# time: directories of tools your model provider's credentials need (e.g. a credential_process helper).
+WorkingDirectory=%h
+ExecStart=@NODE@ @CLI@ run
+# PATH: systemd doesn't inherit the login shell's. @EXTRA_PATH@ comes from `lbg service install
+# --path DIR[:DIR]`: directories of tools your model provider's credentials need (e.g. a
+# credential_process helper). The timer uses the pi SDK, not the pi CLI.
 Environment=PATH=@EXTRA_PATH@%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 # Don't wait on the EC2 instance-metadata endpoint when looking up AWS credentials off EC2.
 Environment=AWS_EC2_METADATA_DISABLED=true

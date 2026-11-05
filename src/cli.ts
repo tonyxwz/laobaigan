@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { loadConfig } from "./config.ts";
@@ -18,6 +19,7 @@ import { scoreTree, type TreeScoreResult } from "./pipeline/treescore.ts";
 import { draftCandidates } from "./pipeline/render.ts";
 import { exitCode, runPipeline, STAGES, type Stage } from "./pipeline/run.ts";
 import { promptFile, promptSnippets, writePromptStatus } from "./notify/prompt.ts";
+import { installedExecStart, installedExtraPath, installService, uninstallService } from "./service.ts";
 import { acceptProposal, conflicts, proposalDiff, rejectProposal } from "./pipeline/accept.ts";
 import { reviseProposal } from "./pipeline/revise.ts";
 import { chatRevise, editProposal, type InteractiveResult } from "./pipeline/interactive.ts";
@@ -78,6 +80,11 @@ Proposals (lbg never runs git: accept writes the files; commit them yourself if 
   lbg proposal edit <id>                       Edit the drafted files in $VISUAL / $EDITOR
   lbg proposal reject <id> [--reason "..."]
   lbg prompt                                   How many proposals are waiting, and the shell prompt snippets (starship / zsh)
+
+Background service (systemd user timer, hourly lbg run):
+  lbg service install [--path DIR[:DIR]]       Write and enable the units for this lbg (--path: extra PATH for credential helpers)
+  lbg service uninstall                        Stop and remove the units (state is kept)
+  lbg service status                           What the timer runs, and when
   lbg status                                                 State db counts and recent runs
 
 Options:
@@ -109,6 +116,7 @@ async function main(argv: string[]): Promise<number> {
       status: { type: "string" },
       max: { type: "string" },
       stages: { type: "string" },
+      path: { type: "string" },
       force: { type: "boolean", default: false },
       reason: { type: "string" },
       title: { type: "string" },
@@ -406,6 +414,36 @@ async function main(argv: string[]): Promise<number> {
         }
         db.close();
       }
+    }
+
+    case "service": {
+      const sub = rest[0] ?? "status";
+      if (sub === "install") {
+        const extraPath = values.path ?? installedExtraPath();
+        const r = installService(extraPath !== undefined ? { extraPath } : {});
+        out(`installed ${r.servicePath}\n          ${r.timerPath}\nruns: ${r.node} ${r.cli} run (hourly)\n`);
+        if (extraPath) out(`extra PATH: ${extraPath}\n`);
+        for (const w of r.warnings) out(`\nwarning: ${w}\n`);
+        if (r.lingerOff) out(`\nnote: lingering is off, so the timer only runs while you're logged in. Enable with: loginctl enable-linger ${process.env.USER ?? "$USER"}\n`);
+        return 0;
+      }
+      if (sub === "uninstall") {
+        const removed = uninstallService();
+        out(removed.length ? `removed ${removed.join(", ")}\nstate is kept in ${loadConfig().stateDir}\n` : "not installed\n");
+        return 0;
+      }
+      if (sub === "status") {
+        const exec = installedExecStart();
+        if (!exec) return out("not installed (lbg service install)\n"), 0;
+        out(`runs: ${exec}\n`);
+        try {
+          out(execFileSync("systemctl", ["--user", "list-timers", "laobaigan.timer", "--no-pager"], { encoding: "utf8" }));
+        } catch {
+          // systemctl unavailable
+        }
+        return 0;
+      }
+      throw new Error(`Unknown service subcommand: ${sub} (install | uninstall | status)`);
     }
 
     case "prompt": {

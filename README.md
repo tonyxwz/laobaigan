@@ -65,9 +65,10 @@ A systemd **user** timer runs `lbg run` hourly. Each run is a one-shot process t
 Work over budget waits for the next run. With nothing new, a run makes **no model calls**. A stage that fails doesn't stop the others. A failed draft isn't retried for `render.retryAfterHours` (24) so it doesn't cost a drafting session every hour; `lbg draft <id>` retries right away. New proposals show up in the journal as `new proposal #N: <skill> — review with: lbg proposal show N`.
 
 ```bash
-scripts/install-service.sh              # install/update units, enable + start the timer
+lbg service install [--path DIR[:DIR]]  # write + enable the units for this lbg, start the timer
+lbg service status                      # what the timer runs, next/last run
 loginctl enable-linger $USER            # optional: keep running while logged out (see below)
-scripts/install-service.sh uninstall    # stop and remove (state is kept)
+lbg service uninstall                   # stop and remove (state is kept)
 ```
 
 Day to day:
@@ -84,9 +85,9 @@ lbg proposals                                     # what's waiting for review
 
 How it's wired:
 
-- **Units:** `systemd/laobaigan.service.in` (template) and `systemd/laobaigan.timer`. The install script fills in the absolute `node` path (mise shims are resolved, since they don't work without a shell) and the repo path, and writes them to `~/.config/systemd/user/`. To change the units, edit the files in this repo and re-run the script.
+- **Units:** `systemd/laobaigan.service.in` (template, shipped in the package) and `systemd/laobaigan.timer`. `lbg service install` writes them to `~/.config/systemd/user/` with `ExecStart=<the node running lbg> <this lbg's cli> run`, so it works the same from an npm install and from a checkout (`scripts/install-service.sh` just calls it). With mise, it uses the major-version alias (`…/node/24/bin/node`) so patch upgrades don't break the unit, and it warns when lbg sits in a version-specific node prefix (see [Install](#install)). To change the units, re-run `lbg service install`; don't edit the installed copies.
 - **Schedule:** `OnCalendar=hourly` with up to 5 min random delay. `Persistent=true` catches up on missed runs, so the first install starts a run right away.
-- **Credentials:** systemd doesn't load your shell profile. If your provider's credentials need a tool that isn't on the default `PATH` (e.g. a `credential_process` helper in `~/.aws/config`), install with `EXTRA_PATH=<dir>[:<dir>…] scripts/install-service.sh` and the unit puts those directories first on its `PATH`. Put extra variables (e.g. `AWS_PROFILE=...`) in `~/.config/laobaigan/env`, one `KEY=value` per line.
+- **Credentials:** systemd doesn't load your shell profile. If your provider's credentials need a tool that isn't on the default `PATH` (e.g. a `credential_process` helper in `~/.aws/config`), install with `lbg service install --path <dir>[:<dir>…]` and the unit puts those directories first on its `PATH`. Re-installing keeps the previous `--path` unless you pass a new one. Put extra variables (e.g. `AWS_PROFILE=...`) in `~/.config/laobaigan/env`, one `KEY=value` per line.
 - **Expired credentials:** when your provider's credentials expire, model calls fail. After 3 consecutive model errors extraction stops and the later model stages (insert, draft) are skipped: exit 3. Failed sessions are retried on the next run, so after you refresh the credentials nothing is lost.
 - **Overlap:** a pid lock file (`~/.local/state/laobaigan/run.lock`) makes a second concurrent run exit with 75, which the unit treats as success. Stale locks from crashed runs are taken over.
 - **Exit codes:** 0 ok, 2 a stage failed (unit shows *failed*), 3 aborted after repeated model errors, 75 locked.
