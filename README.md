@@ -8,11 +8,31 @@ A background service that periodically scans chat sessions from all my AI coding
 
 > Progress, milestones and open work are tracked in beads, not here: run `bd list --type epic` for the milestones, `bd ready` for what's next, and `bd show <id>` for details.
 
+## Install
+
+Needs Node ≥ 24 (lbg uses the built-in `node:sqlite`; no native modules) and [pi](https://pi.dev) configured with a default model: lbg uses pi's provider, model and credentials for all its model calls.
+
+```bash
+npm install -g laobaigan       # puts `lbg` on PATH
+lbg init                       # what it found: agents' sessions, skills dir, pi's model; writes ~/.config/laobaigan/config.json
+lbg run                        # first pass over all your history (takes a while; uses the model)
+lbg service install            # then hourly in the background (systemd user timer)
+lbg prompt                     # optional: show waiting proposals in your shell prompt
+```
+
+Then review what it proposes with `lbg proposals` and `lbg proposal show | revise | accept | reject`. The interactive `lbg proposal revise` also needs the `pi` CLI on PATH.
+
+**Upgrading:** `npm install -g laobaigan@latest`, then `lbg service install` again (it rewrites the unit for the new install).
+
+**Node version managers (mise, nvm, fnm, volta):** `npm install -g` installs into the current Node version's own prefix. After switching or upgrading Node, `lbg` is gone from PATH and the timer still points at the old install. Reinstall and re-run `lbg service install` (it warns about this), or install outside the versioned prefix once: `npm config set prefix ~/.local` (with `~/.local/bin` on PATH).
+
+Uninstall: `lbg service uninstall`, then `npm uninstall -g laobaigan`. State stays in `~/.local/state/laobaigan` until you delete it.
+
 ## Development
 
-Requires Node ≥ 24 (runs `.ts` directly via native type stripping; uses built-in `node:sqlite`, so there are no native deps).
+Requires Node ≥ 24. In a checkout lbg runs its `.ts` sources directly (native type stripping); `npm run build` compiles `dist/` for the npm package (`npm pack` builds it automatically).
 
-### Install the `lbg` CLI
+### Install the `lbg` CLI from a checkout
 
 ```bash
 scripts/install-cli.sh             # symlinks ~/.local/bin/lbg -> src/cli.ts

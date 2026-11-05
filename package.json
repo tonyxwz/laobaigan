@@ -45,7 +45,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "check": "npm run typecheck && npm test",
-    "prepublishOnly": "npm run check && npm run build"
+    "prepublishOnly": "npm run check",
+    "prepack": "npm run build"
   },
   "dependencies": {
     "@earendil-works/pi-ai": "^1.5.0",
