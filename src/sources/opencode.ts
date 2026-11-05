@@ -2,7 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 import { DEFAULT_LIMITS, DEFAULT_PATHS, type NormalizeLimits } from "../config.ts";
 import { exists } from "../util/fs.ts";
 import { isRecord, renderInput, str, toDate, truncate } from "../util/text.ts";
-import type { ListOptions, SessionRef, SourceAdapter, ToolCall, Transcript, Turn } from "./types.ts";
+import { SourceUnavailable, type ListOptions, type SessionRef, type SourceAdapter, type ToolCall, type Transcript, type Turn } from "./types.ts";
 
 /**
  * opencode (v2): SQLite at ~/.local/share/opencode/opencode.db
@@ -40,14 +40,22 @@ export class OpencodeAdapter implements SourceAdapter {
 
   async *list(opts: ListOptions = {}): AsyncIterable<SessionRef> {
     const since = opts.since?.getTime() ?? 0;
-    const rows = this.withDb((db) =>
-      db
+    const rows = this.withDb((db) => {
+      const tables = new Set((db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as { name: string }[]).map((t) => t.name));
+      if (!tables.has("session_v2")) {
+        throw new SourceUnavailable(
+          tables.has("session")
+            ? `${this.dbPath} uses the opencode 1.x schema (no session_v2 table). Upgrade opencode to 2.x and start it once to migrate it; skipping opencode sessions until then.`
+            : `${this.dbPath} has no session_v2 table (not an opencode 2.x database); skipping opencode sessions.`,
+        );
+      }
+      return db
         .prepare(
           `SELECT id, directory, title, time_updated FROM session_v2
            WHERE time_updated >= ? AND time_archived IS NULL ORDER BY time_updated`,
         )
-        .all(since),
-    );
+        .all(since);
+    });
     for (const r of rows) {
       const updated = Number(r.time_updated);
       yield {

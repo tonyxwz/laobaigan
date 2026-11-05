@@ -116,6 +116,7 @@ export async function runPipeline(deps: RunDeps, opts: { stages?: Stage[]; maxEx
     if (count("deferred")) parts.push(`${count("deferred")} deferred (budget)`);
     if (count("error")) parts.push(`${count("error")} error(s)`);
     if (r.abortedReason) parts.push(`aborted: ${r.abortedReason}`);
+    for (const w of r.warnings) parts.push(`skipped ${w.agent}: ${w.message}`);
     return { calls: r.calls, usage: r.usage, summary: parts.join(", ") };
   });
 

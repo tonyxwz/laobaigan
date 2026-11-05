@@ -158,3 +158,55 @@ describe("scan", () => {
     expect(res.map((r) => r.ref.sessionId)).toEqual(["pi"]);
   });
 });
+
+describe("unreadable sources", () => {
+  it("skips an opencode 1.x database with a warning, and keeps scanning the other agents", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "lbg-oc1-"));
+    const dbPath = join(dir, "opencode.db");
+    const db = new DatabaseSync(dbPath);
+    db.exec(`CREATE TABLE session (id text PRIMARY KEY, directory text, title text, time_updated integer);
+             CREATE TABLE message (id text PRIMARY KEY, session_id text, data text);
+             CREATE TABLE part (id text PRIMARY KEY, message_id text, session_id text, data text);`);
+    db.prepare("INSERT INTO session VALUES ('ses_1', '/proj', 't', 1000)").run();
+    db.close();
+
+    const other: SourceAdapter = {
+      agent: "pi",
+      available: async () => true,
+      async *list() {
+        yield { agent: "pi", sessionId: "p1", location: "", updatedAt: new Date(0), version: "1" };
+      },
+      load: async () => {
+        throw new Error("unused");
+      },
+    };
+    const warnings: [string, string][] = [];
+    const res = await scan([new OpencodeAdapter(dbPath), other], { onWarning: (a, m) => warnings.push([a, m]) });
+    expect(res.map((r) => r.ref.sessionId)).toEqual(["p1"]);
+    expect(warnings).toEqual([["opencode", expect.stringMatching(/opencode 1\.x schema .*Upgrade opencode to 2\.x/)]]);
+
+    // not an opencode database at all
+    const odd = join(dir, "other.db");
+    new DatabaseSync(odd).close();
+    warnings.length = 0;
+    await scan([new OpencodeAdapter(odd)], { onWarning: (a, m) => warnings.push([a, m]) });
+    expect(warnings[0]![1]).toMatch(/no session_v2 table \(not an opencode 2\.x database\)/);
+  });
+
+  it("any adapter error only skips that agent", async () => {
+    const broken: SourceAdapter = {
+      agent: "claude",
+      available: async () => true,
+      // eslint-disable-next-line require-yield
+      async *list() {
+        throw new Error("EACCES: permission denied, scandir '/x'");
+      },
+      load: async () => {
+        throw new Error("unused");
+      },
+    };
+    const warnings: string[] = [];
+    expect(await scan([broken], { onWarning: (_a, m) => warnings.push(m) })).toEqual([]);
+    expect(warnings).toEqual(["EACCES: permission denied, scandir '/x'"]);
+  });
+});

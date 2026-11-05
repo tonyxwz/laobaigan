@@ -51,6 +51,8 @@ export interface ProcessResult {
   abortedReason?: string;
   usage: Usage;
   calls: number;
+  /** Agents whose sessions couldn't be read this pass (they were skipped). */
+  warnings: { agent: string; message: string }[];
 }
 
 /**
@@ -72,10 +74,15 @@ export async function processSessions(
   const runId = record ? db.startRun("extract", false) : 0;
 
   const globalSkills = await loadSkillsDir(cfg.skillsDir, "global");
+  const warnings: ProcessResult["warnings"] = [];
   const found = await scan(adapters, {
     ...(opts.since ? { since: opts.since } : {}),
     ...(opts.agents ? { agents: opts.agents } : {}),
     settleMs: (opts.settleMinutes ?? cfg.settleMinutes) * 60e3,
+    onWarning: (agent, message) => {
+      warnings.push({ agent, message });
+      log(`warning: ${agent}: ${message}`);
+    },
   });
 
   const outcomes: SessionOutcome[] = [];
@@ -213,7 +220,7 @@ export async function processSessions(
       ...(abortedReason ? { abortedReason } : {}),
     });
   }
-  return { outcomes, usage, calls, ...(abortedReason ? { abortedReason } : {}) };
+  return { outcomes, usage, calls, warnings, ...(abortedReason ? { abortedReason } : {}) };
 }
 
 /** Fill in the repo for repo-scoped nuggets; fix obviously-wrong coveredBy names. */

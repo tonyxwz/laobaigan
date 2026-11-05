@@ -76,3 +76,9 @@ export interface SourceAdapter {
   list(opts?: ListOptions): AsyncIterable<SessionRef>;
   load(ref: SessionRef): Promise<Transcript>;
 }
+
+/**
+ * A source that exists but can't be read (e.g. an unsupported schema). `scan`
+ * skips that agent with a warning instead of failing the whole pass.
+ */
+export class SourceUnavailable extends Error {}

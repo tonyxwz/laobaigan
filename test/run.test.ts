@@ -155,3 +155,25 @@ describe("runPipeline", () => {
     expect(new Tree(db).unplacedNuggets()).toHaveLength(3);
   });
 });
+
+describe("runPipeline with an unreadable source", () => {
+  it("extract still succeeds for the other agents and reports the skipped one", async () => {
+    const { deps, runner } = await setup();
+    const broken: SourceAdapter = {
+      agent: "opencode",
+      available: async () => true,
+      // eslint-disable-next-line require-yield
+      async *list() {
+        throw new Error("opencode.db uses the opencode 1.x schema (no session_v2 table). Upgrade opencode to 2.x.");
+      },
+      load: async () => {
+        throw new Error("unused");
+      },
+    };
+    const r = await runPipeline({ ...deps, adapters: [...deps.adapters, broken] }, { stages: ["extract"] });
+    expect(r.stages[0]).toMatchObject({ stage: "extract", status: "ok" });
+    expect(r.stages[0]!.summary).toMatch(/^3 session\(s\) extracted.*skipped opencode: opencode\.db uses the opencode 1\.x schema/);
+    expect(runner.calls).toHaveLength(3);
+    expect(exitCode(r)).toBe(0);
+  });
+});
