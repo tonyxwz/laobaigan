@@ -116,9 +116,9 @@ export async function diffSnapshot(base: Map<string, string>, scratch: string, w
   const out: DraftFile[] = [];
   for (const [path, content] of after) {
     const old = base.get(path);
-    if (old !== content) out.push({ path, baseHash: old === undefined ? null : hashContent(old), content });
+    if (old !== content) out.push({ path, baseHash: old === undefined ? null : hashContent(old), content, baseContent: old ?? null });
   }
-  for (const [path, old] of base) if (!after.has(path)) out.push({ path, baseHash: hashContent(old), content: null });
+  for (const [path, old] of base) if (!after.has(path)) out.push({ path, baseHash: hashContent(old), content: null, baseContent: old });
   return out.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
 }
 

@@ -134,27 +134,51 @@ export function rejectProposal(tree: Tree, id: number, reason?: string): void {
   new Proposals(tree.db).markRejected(id, reason);
 }
 
+/** One file as a git-style diff (null = absent). Empty when there's no change. */
+function fileDiff(path: string, oldText: string | null, newText: string | null): string {
+  if (oldText === null && newText === null) return "";
+  if ((oldText ?? "") === (newText ?? "") && (oldText === null) === (newText === null)) return "";
+  const header = [`diff --git a/${path} b/${path}`];
+  if (oldText === null) header.push("new file mode 100644", "--- /dev/null", `+++ b/${path}`);
+  else if (newText === null) header.push("deleted file mode 100644", `--- a/${path}`, "+++ /dev/null");
+  else header.push(`--- a/${path}`, `+++ b/${path}`);
+  const body = createTwoFilesPatch("a", "b", oldText ?? "", newText ?? "", "", "", { context: 3 });
+  const at = body.indexOf("\n@@");
+  return at < 0 ? "" : `${header.join("\n")}\n${body.slice(at + 1)}`;
+}
+
+export interface FileView {
+  path: string;
+  /** The file on disk differs from what the draft was based on. */
+  stale: boolean;
+  /** What the diff is against: the draft's base (stale with a stored base), or the file on disk now. */
+  against: "draft-base" | "current";
+  /** Stale files: the changes made on disk since the draft (empty if unknown). */
+  onDisk: string;
+}
+
 /**
- * Git-style unified diff of the proposal against what's on disk now, so diff
- * viewers (delta, diff-so-fancy, less) recognise added / deleted / modified files.
+ * The proposal's change, one git-style diff. For a file that changed on disk since the draft
+ * (stale), it's the draft's own change against the version it was drafted from, so it doesn't
+ * look like the draft reverts newer edits; `revise` rebases it onto the current file. Drafts
+ * stored before lbg kept originals fall back to the current file.
  */
-export async function proposalDiff(p: ProposalRow): Promise<string> {
+export async function proposalView(p: ProposalRow): Promise<{ diff: string; files: FileView[] }> {
   const parts: string[] = [];
+  const files: FileView[] = [];
   for (const f of p.files) {
     const now = await current(p.targetRoot, f.path);
-    const oldText = now ?? "";
-    const newText = f.content ?? "";
-    if (now === null && f.content === null) continue;
-    if (oldText === newText) continue;
-    const header = [`diff --git a/${f.path} b/${f.path}`];
-    if (now === null) header.push("new file mode 100644", "--- /dev/null", `+++ b/${f.path}`);
-    else if (f.content === null) header.push("deleted file mode 100644", `--- a/${f.path}`, "+++ /dev/null");
-    else header.push(`--- a/${f.path}`, `+++ b/${f.path}`);
-    const body = createTwoFilesPatch("a", "b", oldText, newText, "", "", { context: 3 });
-    const hunks = body.slice(body.indexOf("\n@@") + 1);
-    parts.push(`${header.join("\n")}\n${hunks}`);
+    const stale = (now === null ? null : hashContent(now)) !== f.baseHash;
+    const haveBase = f.baseContent !== undefined;
+    const from = stale && haveBase ? f.baseContent! : now;
+    parts.push(fileDiff(f.path, from, f.content));
+    files.push({ path: f.path, stale, against: stale && haveBase ? "draft-base" : "current", onDisk: stale && haveBase ? fileDiff(f.path, f.baseContent!, now) : "" });
   }
-  return parts.join("");
+  return { diff: parts.join(""), files };
+}
+
+export async function proposalDiff(p: ProposalRow): Promise<string> {
+  return (await proposalView(p)).diff;
 }
 
 /** A commit message you can use; lbg itself never commits. */

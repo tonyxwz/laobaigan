@@ -151,7 +151,7 @@ depth 2  section  a "##" section of SKILL.md, a references/*.md file, or an AGEN
 : What the skill is about, as its description says. An `update` proposal keeps it: the description may be reworded with words the skill already uses, but not widened to a new subject. New subjects become their own skills.
 
 **Stale proposal**
-: One whose target files changed on disk since it was drafted. `accept` refuses it unless `--force`; `revise` rebases it onto the current files.
+: One whose target files changed on disk since it was drafted. `show` and `diff` show the draft's own change against the version it was drafted from (not a diff that seems to delete your newer edits), plus what changed on disk. `accept` refuses it unless `--force`. `revise` and `edit` rebase it: the draft's change is merged onto the current file, or, if it doesn't apply cleanly, your current file is kept and the reviser re-applies the draft's change.
 
 **Accept / reject / revise / edit**
 : How you review a proposal:

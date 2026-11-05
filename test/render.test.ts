@@ -324,3 +324,95 @@ describe("committing an already-accepted proposal", () => {
     expect(t.changedSince).toEqual(["dotfiles-management/SKILL.md"]);
   });
 });
+
+describe("proposalView (stale proposals)", () => {
+  it("shows the draft's own change against its base, plus what changed on disk, instead of reverting newer edits", async () => {
+    const { proposalView } = await import("../src/pipeline/accept.ts");
+    const { hashContent } = await import("../src/state/proposals.ts");
+    const root = realpathSync(await mkdtemp(join(tmpdir(), "lbg-stale-")));
+    await mkdir(join(root, "s"));
+    const base = "# Dotfiles\n\n## zsh\nprofiles\n";
+    const draft = "# Dotfiles\n\n## zsh\nprofiles by hostname\n";
+    const mine = "# Dotfiles\n\n## zsh\nprofiles\n\n## Emacs\ninit.el\n"; // my edit after the draft
+    await writeFile(join(root, "s", "SKILL.md"), mine);
+    const p = { targetRoot: root, files: [{ path: "s/SKILL.md", baseHash: hashContent(base), content: draft, baseContent: base }] } as unknown as Parameters<typeof proposalView>[0];
+
+    const v = await proposalView(p);
+    expect(v.files).toEqual([{ path: "s/SKILL.md", stale: true, against: "draft-base", onDisk: expect.stringContaining("+## Emacs") }]);
+    expect(v.diff).toContain("+profiles by hostname");
+    expect(v.diff).not.toContain("Emacs"); // no fake deletion of my newer section
+
+    // not stale: diff against the file on disk, as before
+    await writeFile(join(root, "s", "SKILL.md"), base);
+    const fresh = await proposalView(p);
+    expect(fresh.files[0]).toMatchObject({ stale: false, against: "current", onDisk: "" });
+    expect(fresh.diff).toContain("+profiles by hostname");
+
+    // drafts stored before lbg kept originals: falls back to the current file
+    await writeFile(join(root, "s", "SKILL.md"), mine);
+    const legacy = await proposalView({ ...p, files: [{ path: "s/SKILL.md", baseHash: hashContent(base), content: draft }] } as typeof p);
+    expect(legacy.files[0]).toMatchObject({ stale: true, against: "current" });
+    expect(legacy.diff).toContain("-## Emacs");
+  });
+
+  it("drafts store the original content of each changed file", async () => {
+    const { diffSnapshot } = await import("../src/pipeline/render.ts");
+    const scratch = realpathSync(await mkdtemp(join(tmpdir(), "lbg-snap-")));
+    await mkdir(join(scratch, "s"));
+    await writeFile(join(scratch, "s", "SKILL.md"), "new\n");
+    await writeFile(join(scratch, "s", "added.md"), "x\n");
+    const files = await diffSnapshot(new Map([["s/SKILL.md", "old\n"], ["s/gone.md", "bye\n"]]), scratch, ["s/"]);
+    expect(files.map((f) => [f.path, f.baseContent, f.content])).toEqual([
+      ["s/SKILL.md", "old\n", "new\n"],
+      ["s/added.md", null, "x\n"],
+      ["s/gone.md", "bye\n", null],
+    ]);
+  });
+});
+
+describe("openDraft rebases a stale draft onto newer edits", () => {
+  async function staleSetup(draftFile: (base: string) => { content: string; baseContent?: string }) {
+    const { openDraft, discardDraft, reviseContext } = await import("../src/pipeline/revise.ts");
+    const { hashContent } = await import("../src/state/proposals.ts");
+    const { cfg, db, tree, dot, skillsDir } = await globalSetup();
+    const base = "---\nname: dotfiles-management\ndescription: d\n---\n\n# Dotfiles\n\n## zsh\nprofiles\n\n## tmux\nconf\n";
+    await mkdir(join(skillsDir, "dotfiles-management"), { recursive: true });
+    const props = new Proposals(db);
+    const id = props.create({ nodeId: dot, kind: "new", scope: "global", targetRoot: skillsDir, writable: ["dotfiles-management/"], nuggetIds: [], sessions: 3, skillName: "dotfiles-management" });
+    const f = draftFile(base);
+    props.markOpen(id, [{ path: "dotfiles-management/SKILL.md", baseHash: hashContent(base), ...f }], "s");
+    props.release(id);
+    return { cfg, tree, id, skillsDir, base, openDraft, discardDraft, reviseContext };
+  }
+
+  it("merges the draft's own change onto the current file when it applies cleanly", async () => {
+    const t = await staleSetup((base) => ({ content: base.replace("profiles", "profiles by hostname"), baseContent: base }));
+    await writeFile(join(t.skillsDir, "dotfiles-management", "SKILL.md"), `${t.base}\n## Emacs\ninit.el\n`); // my newer edit
+    const ws = await t.openDraft(t.tree, t.id);
+    const text = readFileSync(join(ws.scratch, "dotfiles-management", "SKILL.md"), "utf8");
+    expect(text).toContain("profiles by hostname");
+    expect(text).toContain("## Emacs");
+    expect(ws.rebased).toEqual([{ path: "dotfiles-management/SKILL.md", how: "merged" }]);
+    await t.discardDraft(ws);
+  });
+
+  it("on a conflict keeps my file and gives the reviser the draft's patch", async () => {
+    const t = await staleSetup((base) => ({ content: base.replace("profiles", "profiles by hostname"), baseContent: base }));
+    await writeFile(join(t.skillsDir, "dotfiles-management", "SKILL.md"), t.base.replace("profiles", "profiles per host (mine)"));
+    const ws = await t.openDraft(t.tree, t.id);
+    expect(readFileSync(join(ws.scratch, "dotfiles-management", "SKILL.md"), "utf8")).toContain("profiles per host (mine)");
+    expect(ws.rebased[0]).toMatchObject({ how: "conflict", draftPatch: expect.stringContaining("+profiles by hostname") });
+    expect(t.reviseContext(t.tree, ws)).toContain("is the CURRENT version: keep those edits");
+    await t.discardDraft(ws);
+  });
+
+  it("old drafts (no stored original): my file plus the old draft as reference", async () => {
+    const t = await staleSetup((base) => ({ content: base.replace("profiles", "profiles by hostname") }));
+    await writeFile(join(t.skillsDir, "dotfiles-management", "SKILL.md"), `${t.base}\n## Emacs\ninit.el\n`);
+    const ws = await t.openDraft(t.tree, t.id);
+    expect(readFileSync(join(ws.scratch, "dotfiles-management", "SKILL.md"), "utf8")).toContain("## Emacs");
+    expect(ws.rebased[0]).toMatchObject({ how: "legacy" });
+    expect(t.reviseContext(t.tree, ws)).toContain("The earlier draft of the whole file was:");
+    await t.discardDraft(ws);
+  });
+});

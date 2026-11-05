@@ -24,6 +24,12 @@ export interface DraftFile {
   baseHash: string | null;
   /** New content; null = delete the file. */
   content: string | null;
+  /**
+   * The file as it was when drafting started (null = it didn't exist). Lets a stale proposal
+   * show the draft's own change instead of a diff that reverts newer edits. Missing on drafts
+   * stored before lbg kept it.
+   */
+  baseContent?: string | null;
 }
 
 export function hashContent(s: string): string {

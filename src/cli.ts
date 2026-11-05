@@ -19,12 +19,13 @@ import { detachLatent, insertNuggets } from "./pipeline/insert.ts";
 import { scoreTree, type TreeScoreResult } from "./pipeline/treescore.ts";
 import { draftCandidates } from "./pipeline/render.ts";
 import { dropEvidence } from "./pipeline/drop.ts";
+import type { Rebased } from "./pipeline/revise.ts";
 import { exitCode, runPipeline, STAGES, type Stage } from "./pipeline/run.ts";
 import { promptFile, promptSnippets, writePromptStatus } from "./notify/prompt.ts";
 import { commitTemplate, renderCommit, runCommit } from "./pipeline/commit.ts";
 import { init, renderInit } from "./init.ts";
 import { installedExecStart, installedExtraPath, installService, invokedEntry, uninstallService } from "./service.ts";
-import { acceptProposal, commitTargetFor, conflicts, newSinceDraft, proposalDiff, rejectProposal } from "./pipeline/accept.ts";
+import { acceptProposal, commitTargetFor, newSinceDraft, proposalDiff, proposalView, rejectProposal } from "./pipeline/accept.ts";
 import { reviseProposal } from "./pipeline/revise.ts";
 import { chatRevise, editProposal, type InteractiveResult } from "./pipeline/interactive.ts";
 import { createInterface } from "node:readline/promises";
@@ -550,11 +551,20 @@ async function main(argv: string[]): Promise<number> {
             }
           }
           if (p.files.length) {
-            const stale = await conflicts(p);
-            if (stale.length && p.status === "open") out(`\n⚠ stale: ${stale.map((c) => `${c.path} ${c.reason}`).join("; ")}\n`);
+            const view = await proposalView(p);
+            const stale = p.status === "open" ? view.files.filter((f) => f.stale) : [];
+            if (stale.length) {
+              const own = stale.filter((f) => f.against === "draft-base");
+              out(`\n⚠ stale: ${stale.map((f) => f.path).join(", ")} changed on disk since this draft.\n`);
+              if (own.length) out(`  The diff below is the draft's own change, against the version it was drafted from (not a revert of your newer edits).\n`);
+              if (own.length < stale.length) out(`  (${stale.filter((f) => f.against === "current").map((f) => f.path).join(", ")}: drafted before lbg kept originals, so this diff is against the file as it is now and shows your newer edits as removed.)\n`);
+              out(`  lbg proposal revise ${id} rebases it onto the current files; accept refuses it until then (or use --force).\n`);
+            }
             const dropped = p.status === "open" ? props.droppedSinceDraft(p) : [];
             if (dropped.length) out(`\n⚠ evidence dropped after this draft (${dropped.map((e) => `#${e.nuggetId}`).join(", ")}): the files may still contain it. Run: lbg proposal revise ${id}\n`);
-            out(`\n${await proposalDiff(p)}`);
+            out(`\n${view.diff}`);
+            const disk = stale.filter((f) => f.onDisk);
+            if (disk.length) out(`\n── changed on disk since the draft (not part of the proposal) ──\n${disk.map((f) => f.onDisk).join("")}`);
           }
           return (await page(buf.join(""), values["no-pager"])), 0;
         }
@@ -615,12 +625,19 @@ async function main(argv: string[]): Promise<number> {
         if (sub === "revise" || sub === "edit") {
           const feedback = rest.slice(2).join(" ").trim();
           // With problems nothing was stored: one-shot verification failed, or I chose to keep the previous draft.
-          const report = (r: Pick<InteractiveResult, "problems" | "changed" | "files"> & { warnings?: string[] }) => {
+          const report = (r: Pick<InteractiveResult, "problems" | "changed" | "files"> & { warnings?: string[]; rebased?: Rebased[] }) => {
             if (r.problems.length) {
               out(`not stored; the previous draft is kept:\n${r.problems.map((p) => `  - ${p}`).join("\n")}\n`);
               return 2;
             }
             for (const w of r.warnings ?? []) out(`⚠ ${w}\n`);
+            for (const b of r.rebased ?? []) {
+              out(
+                b.how === "merged"
+                  ? `rebased ${b.path}: the draft's change was merged onto your newer edits\n`
+                  : `rebased ${b.path}: your newer edits were kept and the draft's change re-applied by hand${b.how === "legacy" ? " (old draft)" : ""}; check it in lbg proposal show ${id}\n`,
+              );
+            }
             out(r.changed ? `proposal #${id} updated (${r.files.length} file(s)). Review: lbg proposal show ${id}\n` : `no changes to proposal #${id}\n`);
             return 0;
           };
