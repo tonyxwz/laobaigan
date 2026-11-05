@@ -147,6 +147,9 @@ depth 2  section  a "##" section of SKILL.md, a references/*.md file, or an AGEN
 **Off-topic evidence (excluded)**
 : A nugget the drafter left out of a skill because it's only adjacent to the skill's topic. It's re-filed in a better skill (or a new latent one), never routed back to that skill, and no longer counts toward it. `lbg proposal show` lists it with the reason.
 
+**Scope (of a live skill)**
+: What the skill is about, as its description says. An `update` proposal keeps it: the description may be reworded with words the skill already uses, but not widened to a new subject. New subjects become their own skills.
+
 **Stale proposal**
 : One whose target files changed on disk since it was drafted. `accept` refuses it unless `--force`; `revise` rebases it onto the current files.
 

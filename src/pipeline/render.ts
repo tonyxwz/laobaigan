@@ -17,6 +17,7 @@ import { containsSecrets } from "./redact.ts";
 import { evidenceText, skillName } from "./stats.ts";
 import { skillStats } from "./treescore.ts";
 import { applyExclusions, type Rehomed } from "./exclude.ts";
+import { checkScope, scopeProblem, scopeRetryPrompt } from "./scope.ts";
 import { addUsage } from "../pi/run-pi.ts";
 
 /**
@@ -274,6 +275,8 @@ export function verifyDraft(files: DraftFile[], base: Map<string, string>, targe
 export type DraftOutcome =
   | { status: "open"; nodeId: number; proposalId: number; files: DraftFile[]; usage: Usage; excluded: Rehomed[] }
   | { status: "failed"; nodeId: number; proposalId?: number; reason: string; usage?: Usage }
+  /** The drafter found nothing on-topic to add: everything new was re-filed elsewhere. */
+  | { status: "nothing"; nodeId: number; proposalId: number; usage: Usage; excluded: Rehomed[] }
   | { status: "skipped"; nodeId: number; reason: string };
 
 /** Draft one candidate skill into an `open` proposal. Never throws for drafting problems. */
@@ -332,11 +335,41 @@ export async function draftSkill(tree: Tree, runner: PiRunner, cfg: Config, node
       resultTool: { name: "report_draft", description: "Report the finished draft.", parameters: ReportDraftSchema },
     });
     usage = res.usage;
-    const files = await diffSnapshot(base, scratch, target.writable);
-    const problems = verifyDraft(files, base, target, cfg);
+    let report = res.value;
+    let files = await diffSnapshot(base, scratch, target.writable);
+    let problems = verifyDraft(files, base, target, cfg);
+    // A live skill's scope: one retry, in the same scratch copy, if the description took on a new subject.
+    const live = skill.origin === "file";
+    let scope = problems.length ? undefined : checkScope(files, base, target, kind, live);
+    if (scope?.widened) {
+      log(`draft ${target.skillName}: description widens the scope (${scope.added.join(", ")}); asking the drafter to fix it`);
+      const retry = await runner.run({
+        model: cfg.models.distill,
+        thinking: cfg.models.distillThinking,
+        systemPrompt: DRAFT_SYSTEM_PROMPT,
+        prompt: `${buildDraftPrompt(skill, kind, target, siblings).replace(/\nWrite the files now, then call report_draft\.$/, "")}\n\nThe files in the current directory are your draft.\n\n${scopeRetryPrompt(scope)}`,
+        tools: [...GUARDED_TOOLS],
+        fileGuard: { root: scratch, writable: target.writable },
+        resultTool: { name: "report_draft", description: "Report the fixed draft.", parameters: ReportDraftSchema },
+      });
+      usage = addUsage(usage, retry.usage);
+      report = { ...retry.value, excluded: [...(report.excluded ?? []), ...(retry.value.excluded ?? [])] };
+      files = await diffSnapshot(base, scratch, target.writable);
+      problems = verifyDraft(files, base, target, cfg);
+      scope = problems.length ? undefined : checkScope(files, base, target, kind, live);
+    }
+    if (scope?.widened) problems.push(scopeProblem(scope));
+    if (!files.length && report.excluded?.length && problems.every((p) => p === "no files were changed")) {
+      // Not a failure: the new evidence wasn't this skill's topic. Re-file it and close the proposal.
+      const ex = await applyExclusions(tree, runner, cfg, proposalId, skill, report.excluded, "drafter", log);
+      if (ex.usage) usage = addUsage(usage, ex.usage);
+      props.markFailed(proposalId, `nothing on-topic to add: ${ex.items.length} off-topic item(s) re-filed elsewhere`, usage);
+      log(`draft ${target.skillName}: nothing on-topic to add; ${ex.items.length} item(s) re-filed`);
+      return { status: "nothing", nodeId, proposalId, usage, excluded: ex.items };
+    }
     if (problems.length) return fail(`verification: ${problems.join("; ")}`);
-    props.markOpen(proposalId, files, res.value.summary, usage, { draftedAt: started, nuggetIds: subtreeNuggets(skill).map((n) => n.id) });
-    const ex = await applyExclusions(tree, runner, cfg, proposalId, skill, res.value.excluded ?? [], "drafter", log);
+    props.markOpen(proposalId, files, report.summary, usage, { draftedAt: started, nuggetIds: subtreeNuggets(skill).map((n) => n.id) });
+    const ex = await applyExclusions(tree, runner, cfg, proposalId, skill, report.excluded ?? [], "drafter", log);
     if (ex.usage) usage = addUsage(usage, ex.usage);
     log(`draft ${target.skillName}: proposal #${proposalId} ready (${files.length} file(s)${ex.items.length ? `, ${ex.items.length} off-topic item(s) re-filed` : ""})`);
     return { status: "open", nodeId, proposalId, files, usage, excluded: ex.items };

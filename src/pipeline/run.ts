@@ -143,6 +143,7 @@ export async function runPipeline(deps: RunDeps, opts: { stages?: Stage[]; maxEx
     let calls = 0;
     let usage = ZERO_USAGE;
     const failed: string[] = [];
+    let refiled = 0;
     for (const o of outcomes) {
       if (o.status === "skipped") continue;
       calls++;
@@ -150,10 +151,12 @@ export async function runPipeline(deps: RunDeps, opts: { stages?: Stage[]; maxEx
       const node = tree.getNode(o.nodeId);
       const skill = node?.name ?? node?.title ?? `#${o.nodeId}`;
       if (o.status === "open") rep.proposals.push({ id: o.proposalId, nodeId: o.nodeId, skill, files: o.files.length, cost: o.usage.cost });
+      else if (o.status === "nothing") refiled += o.excluded.length;
       else failed.push(`${skill}: ${o.reason}`);
     }
     if (!outcomes.length) return { calls, usage, summary: "no candidates to draft" };
     const parts = [`${rep.proposals.length} new proposal(s)`];
+    if (refiled) parts.push(`${refiled} off-topic item(s) re-filed`);
     if (failed.length) parts.push(`${failed.length} failed (${failed.join("; ")})`);
     const skipped = outcomes.filter((o) => o.status === "skipped");
     if (skipped.length) parts.push(`${skipped.length} skipped`);

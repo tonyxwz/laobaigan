@@ -413,7 +413,10 @@ async function main(argv: string[]): Promise<number> {
             out(`proposal #${o.proposalId} ${label}: ${o.files.length} file(s), cost≈$${o.usage.cost.toFixed(4)} — lbg proposal show ${o.proposalId}\n`);
             for (const e of o.excluded) out(`  left out (off-topic): #${e.nuggetId} ${e.title} → ${e.now?.path ?? "unplaced, next run files it"}\n`);
           }
-          else if (o.status === "failed") out(`failed ${label}: ${o.reason}\n`);
+          else if (o.status === "nothing") {
+            out(`nothing to propose for ${label}: its new evidence was off-topic and was re-filed (cost≈$${o.usage.cost.toFixed(4)})\n`);
+            for (const e of o.excluded) out(`  #${e.nuggetId} ${e.title} → ${e.now?.path ?? "unplaced, next run files it"}  (${e.reason})\n`);
+          } else if (o.status === "failed") out(`failed ${label}: ${o.reason}\n`);
           else out(`skipped ${label}: ${o.reason}\n`);
         }
         return outcomes.some((o) => o.status === "failed") ? 2 : 0;
@@ -600,11 +603,12 @@ async function main(argv: string[]): Promise<number> {
         if (sub === "revise" || sub === "edit") {
           const feedback = rest.slice(2).join(" ").trim();
           // With problems nothing was stored: one-shot verification failed, or I chose to keep the previous draft.
-          const report = (r: Pick<InteractiveResult, "problems" | "changed" | "files">) => {
+          const report = (r: Pick<InteractiveResult, "problems" | "changed" | "files"> & { warnings?: string[] }) => {
             if (r.problems.length) {
               out(`not stored; the previous draft is kept:\n${r.problems.map((p) => `  - ${p}`).join("\n")}\n`);
               return 2;
             }
+            for (const w of r.warnings ?? []) out(`⚠ ${w}\n`);
             out(r.changed ? `proposal #${id} updated (${r.files.length} file(s)). Review: lbg proposal show ${id}\n` : `no changes to proposal #${id}\n`);
             return 0;
           };

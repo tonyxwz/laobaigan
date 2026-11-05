@@ -6,6 +6,7 @@ import { addUsage, ZERO_USAGE, type PiRunner, type Usage } from "../pi/run-pi.ts
 import { Proposals, type DraftFile, type ProposalRow } from "../state/proposals.ts";
 import { subtreeNuggets, type Tree, type TreeNode } from "../state/tree.ts";
 import { applyExclusions, type Rehomed } from "./exclude.ts";
+import { checkScope, scopeProblem } from "./scope.ts";
 import { buildDraftPrompt, diffSnapshot, DRAFT_SYSTEM_PROMPT, makeScratch, ReportDraftSchema, snapshot, verifyDraft, type RenderTarget } from "./render.ts";
 
 /**
@@ -71,6 +72,8 @@ export async function openDraft(tree: Tree, id: number): Promise<DraftWorkspace>
 export interface CloseResult {
   /** Problems found; when non-empty nothing was stored. */
   problems: string[];
+  /** Stored anyway, but worth knowing (e.g. an AI revise widened a live skill's description). */
+  warnings: string[];
   /** The draft differs from what was stored before. */
   changed: boolean;
   files: DraftFile[];
@@ -91,14 +94,17 @@ export async function closeDraft(
 ): Promise<CloseResult> {
   const files = await diffSnapshot(ws.base, ws.scratch, ws.target.writable);
   const problems = verifyDraft(files, ws.base, ws.target, cfg);
-  if (problems.length) return { problems, changed: false, files };
+  if (problems.length) return { problems, warnings: [], changed: false, files };
+  // You steer revisions, so a wider description is your call: a warning, not a block. A hand edit isn't checked.
+  const scope = opts.refreshEvidence ? checkScope(files, ws.base, ws.target, ws.proposal.kind, ws.skill.origin === "file") : undefined;
+  const warnings = scope?.widened ? [`${scopeProblem(scope)}. Keep it only if you mean to change what this skill is about.`] : [];
   const changed = !same(files, ws.proposal.files);
   if (changed || opts.summary) {
     const prev = (ws.proposal.usage as Usage | undefined) ?? ZERO_USAGE;
     const evidence = opts.refreshEvidence ? { draftedAt: ws.openedAt, nuggetIds: subtreeNuggets(ws.skill).map((n) => n.id) } : undefined;
     new Proposals(tree.db).markOpen(ws.proposal.id, files, opts.summary ?? ws.proposal.summary ?? "", opts.usage ? addUsage(prev, opts.usage) : ws.proposal.usage, evidence);
   }
-  return { problems, changed, files };
+  return { problems, warnings, changed, files };
 }
 
 export async function discardDraft(ws: DraftWorkspace): Promise<void> {
