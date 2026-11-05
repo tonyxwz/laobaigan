@@ -170,3 +170,15 @@ import { writeFileSync } from "node:fs";
 function writeFileSyncish(p: string, c: string) {
   writeFileSync(p, c);
 }
+
+describe("guardExtensionPath", () => {
+  it("resolves the extension next to the running module, in source and in dist", async () => {
+    const { guardExtensionPath } = await import("../src/pipeline/interactive.ts");
+    expect(guardExtensionPath("file:///repo/src/pipeline/interactive.ts")).toBe("/repo/src/pi/guard-extension.ts");
+    expect(guardExtensionPath("file:///usr/lib/node_modules/laobaigan/dist/pipeline/interactive.js")).toBe(
+      "/usr/lib/node_modules/laobaigan/dist/pi/guard-extension.js",
+    );
+    const { existsSync } = await import("node:fs");
+    expect(existsSync(guardExtensionPath())).toBe(true);
+  });
+});

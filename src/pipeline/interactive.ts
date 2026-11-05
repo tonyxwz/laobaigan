@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Config } from "../config.ts";
 import { GUARDED_TOOLS } from "../pi/guard.ts";
@@ -23,7 +23,17 @@ import { closeDraft, discardDraft, openDraft, reviseContext, type CloseResult, t
  * previous draft.
  */
 
-const EXTENSION = join(dirname(fileURLToPath(import.meta.url)), "..", "pi", "guard-extension.ts");
+/**
+ * The guard extension next to this module: src/pi/guard-extension.ts when running from
+ * source, dist/pi/guard-extension.js from an install (pi then loads plain JS, no
+ * TypeScript inside node_modules).
+ */
+export function guardExtensionPath(moduleUrl: string = import.meta.url): string {
+  const here = fileURLToPath(moduleUrl);
+  return join(dirname(here), "..", "pi", `guard-extension${extname(here)}`);
+}
+
+const EXTENSION = guardExtensionPath();
 
 /** Runs a program attached to the terminal; returns its exit status. Injectable for tests. */
 export type Launcher = (cmd: string, args: string[], opts: { cwd: string; env: NodeJS.ProcessEnv }) => number;
