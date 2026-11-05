@@ -43,6 +43,8 @@ export interface ProposalRow {
   files: DraftFile[];
   summary?: string;
   nuggetIds: number[];
+  /** Evidence left out of this proposal as off-topic (by the drafter, or dropped in review). */
+  excluded: Exclusion[];
   sessions: number;
   /** When the evidence of the current draft was taken (draft, or the last AI revise). */
   draftedAt: Date;
@@ -53,6 +55,13 @@ export interface ProposalRow {
   createdAt: Date;
   updatedAt: Date;
   closedAt?: Date;
+}
+
+export interface Exclusion {
+  nuggetId: number;
+  reason: string;
+  /** Who left it out. */
+  by: "drafter" | "reviewer";
 }
 
 export type NewProposal = Pick<ProposalRow, "nodeId" | "kind" | "scope" | "targetRoot" | "writable" | "nuggetIds" | "sessions"> &
@@ -74,6 +83,7 @@ function toProposal(r: Row): ProposalRow {
     files: JSON.parse(String(r.files)) as DraftFile[],
     ...(r.summary ? { summary: String(r.summary) } : {}),
     nuggetIds: JSON.parse(String(r.nugget_ids)) as number[],
+    excluded: JSON.parse(String(r.excluded ?? "[]")) as Exclusion[],
     sessions: Number(r.sessions),
     draftedAt: new Date(Number(r.drafted_at ?? r.created_at)),
     ...(r.worker_pid != null ? { workerPid: Number(r.worker_pid) } : {}),
@@ -199,6 +209,17 @@ export class Proposals {
       ...(usage !== undefined ? { usage: JSON.stringify(usage) } : {}),
       ...(evidence ? { drafted_at: evidence.draftedAt.getTime(), nugget_ids: JSON.stringify(evidence.nuggetIds) } : {}),
     });
+  }
+
+  /** Record evidence left out of the proposal (appended; one entry per nugget). */
+  addExcluded(id: number, items: Exclusion[]): void {
+    const p = this.mustGet(id);
+    const byId = new Map(p.excluded.map((e) => [e.nuggetId, e]));
+    for (const e of items) byId.set(e.nuggetId, e);
+    const nuggetIds = p.nuggetIds.filter((n) => !byId.has(n));
+    this.sql
+      .prepare("UPDATE proposal SET excluded = ?, nugget_ids = ?, updated_at = ? WHERE id = ?")
+      .run(JSON.stringify([...byId.values()]), JSON.stringify(nuggetIds), Date.now(), id);
   }
 
   /**

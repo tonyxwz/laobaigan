@@ -5,6 +5,7 @@ import { GUARDED_TOOLS } from "../pi/guard.ts";
 import { addUsage, ZERO_USAGE, type PiRunner, type Usage } from "../pi/run-pi.ts";
 import { Proposals, type DraftFile, type ProposalRow } from "../state/proposals.ts";
 import { subtreeNuggets, type Tree, type TreeNode } from "../state/tree.ts";
+import { applyExclusions, type Rehomed } from "./exclude.ts";
 import { buildDraftPrompt, diffSnapshot, DRAFT_SYSTEM_PROMPT, makeScratch, ReportDraftSchema, snapshot, verifyDraft, type RenderTarget } from "./render.ts";
 
 /**
@@ -119,6 +120,8 @@ export function reviseContext(tree: Tree, ws: DraftWorkspace): string {
 export interface ReviseResult extends CloseResult {
   usage: Usage;
   summary: string;
+  /** Evidence the reviser left out as off-topic, re-filed elsewhere. */
+  excluded: Rehomed[];
 }
 
 /** One-shot revise: pi redrafts the stored draft with my feedback. Nothing is stored if verification fails. */
@@ -135,7 +138,14 @@ export async function reviseProposal(tree: Tree, runner: PiRunner, cfg: Config, 
       resultTool: { name: "report_draft", description: "Report the revised draft.", parameters: ReportDraftSchema },
     });
     const closed = await closeDraft(tree, cfg, ws, { summary: res.value.summary, usage: res.usage, refreshEvidence: true });
-    return { ...closed, usage: res.usage, summary: res.value.summary };
+    let usage = res.usage;
+    let excluded: Rehomed[] = [];
+    if (!closed.problems.length && res.value.excluded?.length) {
+      const ex = await applyExclusions(tree, runner, cfg, ws.proposal.id, ws.skill, res.value.excluded, "drafter");
+      excluded = ex.items;
+      if (ex.usage) usage = addUsage(usage, ex.usage);
+    }
+    return { ...closed, usage, summary: res.value.summary, excluded };
   } finally {
     await discardDraft(ws);
   }

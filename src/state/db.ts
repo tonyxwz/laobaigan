@@ -251,6 +251,10 @@ export const MIGRATIONS: string[] = [
   // 13: the lbg process working on a proposal (drafting it, or a revise/edit session, which
   // can last hours). A live worker holds the proposal; a dead one means it was interrupted.
   `ALTER TABLE proposal ADD COLUMN worker_pid INTEGER;`,
+  // 14: off-topic evidence. A drafter (or I, in review) can leave a nugget out of a skill;
+  // it's re-filed elsewhere and insert never routes it back to the skills it was left out of.
+  `ALTER TABLE nugget ADD COLUMN excluded_from TEXT NOT NULL DEFAULT '[]';
+   ALTER TABLE proposal ADD COLUMN excluded TEXT NOT NULL DEFAULT '[]';`,
 ];
 
 /** Lifecycle of a skill: open → candidate (earned a proposal) → proposed → open again (accepted: it's live now) or rejected. */
@@ -280,6 +284,8 @@ export interface NuggetRow {
   coveredNodeId?: number;
   /** When it was attached to its node. */
   attachedAt?: Date;
+  /** Skills (depth-1 node ids) it was left out of as off-topic; insert never routes it there. */
+  excludedFrom: number[];
   createdAt: Date;
 }
 
@@ -509,6 +515,7 @@ function toNugget(r: Row): NuggetRow {
     ...(r.node_id != null ? { nodeId: Number(r.node_id) } : {}),
     ...(r.covered_node_id != null ? { coveredNodeId: Number(r.covered_node_id) } : {}),
     ...(r.attached_at != null ? { attachedAt: new Date(Number(r.attached_at)) } : {}),
+    excludedFrom: parseJson(r.excluded_from, [] as number[]),
     createdAt: new Date(Number(r.created_at)),
   };
 }

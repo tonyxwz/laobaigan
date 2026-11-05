@@ -16,6 +16,8 @@ import { truncate } from "../util/text.ts";
 import { containsSecrets } from "./redact.ts";
 import { evidenceText, skillName } from "./stats.ts";
 import { skillStats } from "./treescore.ts";
+import { applyExclusions, type Rehomed } from "./exclude.ts";
+import { addUsage } from "../pi/run-pi.ts";
 
 /**
  * Render a subtree: draft one candidate skill as a proposal, stored in the db.
@@ -140,12 +142,13 @@ House rules:
 - Corrections become rules: "Do X, not Y (because ...)".
 - Never include secrets, tokens, account credentials, or anything shown as [REDACTED].
 - Only write the paths you were given. You may read anything else in the repository to match its conventions and avoid duplicating other skills.
+- Stay on the skill's topic (its title and, for an existing skill, its current description). Some knowledge items may only be adjacent: they mention a related tool or word but are about something else. Don't write those in; list them in report_draft's \`excluded\` with a one-line reason, and they will be filed in a better skill. Don't widen the description to cover them.
 - When done, call report_draft once.`;
 
 function renderNuggets(ns: NuggetRow[], flags: (n: NuggetRow) => string): string[] {
   return ns.map((n) =>
     [
-      `- [${n.kind}]${flags(n)} ${n.title}`,
+      `- #${n.id} [${n.kind}]${flags(n)} ${n.title}`,
       ...n.knowledge.split("\n").map((l) => `    ${l}`),
       ...n.evidence.slice(0, 2).map((e) => `    evidence (${n.agent}${e.ts ? ` ${e.ts.slice(0, 10)}` : ""}): "${truncate(e.quote, 200)}"`),
     ].join("\n"),
@@ -203,6 +206,15 @@ export function buildDraftPrompt(skill: TreeNode, kind: ProposalKind, target: Re
 
 export const ReportDraftSchema = Type.Object({
   summary: Type.String({ description: "2-4 sentences for the reviewer: what you wrote or changed and why." }),
+  excluded: Type.Optional(
+    Type.Array(
+      Type.Object({
+        nuggetId: Type.Integer({ description: "The #id of a knowledge item you left out." }),
+        reason: Type.String({ description: "One line: why it isn't this skill's topic (and where it belongs, if obvious)." }),
+      }),
+      { description: "Knowledge items that are off this skill's topic and were NOT written in. Leave empty when everything fits." },
+    ),
+  ),
   description: Type.Optional(Type.String({ description: "The skill's final frontmatter description, if it is a skill." })),
 });
 
@@ -260,7 +272,7 @@ export function verifyDraft(files: DraftFile[], base: Map<string, string>, targe
 // ---- driver -----------------------------------------------------------------------------
 
 export type DraftOutcome =
-  | { status: "open"; nodeId: number; proposalId: number; files: DraftFile[]; usage: Usage }
+  | { status: "open"; nodeId: number; proposalId: number; files: DraftFile[]; usage: Usage; excluded: Rehomed[] }
   | { status: "failed"; nodeId: number; proposalId?: number; reason: string; usage?: Usage }
   | { status: "skipped"; nodeId: number; reason: string };
 
@@ -324,8 +336,10 @@ export async function draftSkill(tree: Tree, runner: PiRunner, cfg: Config, node
     const problems = verifyDraft(files, base, target, cfg);
     if (problems.length) return fail(`verification: ${problems.join("; ")}`);
     props.markOpen(proposalId, files, res.value.summary, usage, { draftedAt: started, nuggetIds: subtreeNuggets(skill).map((n) => n.id) });
-    log(`draft ${target.skillName}: proposal #${proposalId} ready (${files.length} file(s))`);
-    return { status: "open", nodeId, proposalId, files, usage };
+    const ex = await applyExclusions(tree, runner, cfg, proposalId, skill, res.value.excluded ?? [], "drafter", log);
+    if (ex.usage) usage = addUsage(usage, ex.usage);
+    log(`draft ${target.skillName}: proposal #${proposalId} ready (${files.length} file(s)${ex.items.length ? `, ${ex.items.length} off-topic item(s) re-filed` : ""})`);
+    return { status: "open", nodeId, proposalId, files, usage, excluded: ex.items };
   } catch (e) {
     return fail(e instanceof Error ? e.message : String(e));
   } finally {

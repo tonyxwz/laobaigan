@@ -265,6 +265,18 @@ export class Tree {
     if (n.nodeId !== undefined) this.markDirty(n.nodeId);
   }
 
+  /**
+   * Leave a nugget out of a skill as off-topic: detach it and remember the skill, so insert
+   * never routes it back there. Returns the nugget (now unplaced).
+   */
+  excludeNugget(nuggetId: number, skillId: number): void {
+    const n = this.db.getNugget(nuggetId);
+    if (!n) throw new Error(`No nugget ${nuggetId}`);
+    const from = [...new Set([...n.excludedFrom, skillId])];
+    this.detachNugget(nuggetId);
+    this.sql.prepare("UPDATE nugget SET excluded_from = ?, assignment_locked = 0 WHERE id = ?").run(JSON.stringify(from), nuggetId);
+  }
+
   /** Record that a live node already contained this nugget's knowledge (or clear it). */
   setCovered(nuggetId: number, nodeId: number | undefined): void {
     this.sql.prepare("UPDATE nugget SET covered_node_id = ? WHERE id = ?").run(nodeId ?? null, nuggetId);

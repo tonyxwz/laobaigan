@@ -409,7 +409,10 @@ async function main(argv: string[]): Promise<number> {
         for (const o of outcomes) {
           const t = tree.getNode(o.nodeId);
           const label = `#${o.nodeId} ${t?.name ?? t?.title ?? ""}`;
-          if (o.status === "open") out(`proposal #${o.proposalId} ${label}: ${o.files.length} file(s), cost≈$${o.usage.cost.toFixed(4)} — lbg proposal show ${o.proposalId}\n`);
+          if (o.status === "open") {
+            out(`proposal #${o.proposalId} ${label}: ${o.files.length} file(s), cost≈$${o.usage.cost.toFixed(4)} — lbg proposal show ${o.proposalId}\n`);
+            for (const e of o.excluded) out(`  left out (off-topic): #${e.nuggetId} ${e.title} → ${e.now?.path ?? "unplaced, next run files it"}\n`);
+          }
           else if (o.status === "failed") out(`failed ${label}: ${o.reason}\n`);
           else out(`skipped ${label}: ${o.reason}\n`);
         }
@@ -513,6 +516,14 @@ async function main(argv: string[]): Promise<number> {
           out(`target: ${p.targetRoot}   writable: ${p.writable.join(", ")}\n`);
           if (p.summary) out(`\n${p.summary}\n`);
           if (p.detail) out(`\n${p.status === "failed" ? "error" : "note"}: ${p.detail}\n`);
+          if (p.excluded.length) {
+            out(`\nLeft out as off-topic (${p.excluded.length}):\n`);
+            for (const e of p.excluded) {
+              const n = db.getNugget(e.nuggetId);
+              const now = n?.nodeId !== undefined ? tree.path(n.nodeId).slice(1).map((x) => x.name ?? x.title).join(" › ") : "unplaced (the next run files it)";
+              out(`  - #${e.nuggetId} ${n?.title ?? "?"}  (${e.by}: ${e.reason})\n      now in: ${now}\n`);
+            }
+          }
           const evidence = db.nuggets().filter((n) => p.nuggetIds.includes(n.id));
           const fresh = p.status === "open" ? newSinceDraft(tree, p) : [];
           if (fresh.length) {
@@ -600,6 +611,7 @@ async function main(argv: string[]): Promise<number> {
           if (sub === "revise" && feedback) {
             const r = await reviseProposal(tree, new PiConfigRunner(), cfg, id, feedback);
             if (!r.problems.length) out(`${r.summary}\n`);
+            for (const e of r.excluded) out(`left out (off-topic): #${e.nuggetId} ${e.title} → ${e.now?.path ?? "unplaced, next run files it"}\n`);
             out(`cost≈$${r.usage.cost.toFixed(4)}\n`);
             return report(r);
           }

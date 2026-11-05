@@ -97,6 +97,7 @@ function renderNugget(n: NuggetRow): string {
     `<nugget id="${n.id}" kind="${n.kind}">`,
     `title: ${n.title}`,
     ...(n.triggers.length ? [`triggers: ${n.triggers.join("; ")}`] : []),
+    ...(n.excludedFrom.length ? [`not_in_skills: ${n.excludedFrom.join(", ")} (left out of them as off-topic; never place it there)`] : []),
     truncate(n.knowledge, 800),
     "</nugget>",
   ].join("\n");
@@ -174,6 +175,11 @@ export function validateSkillRoute(res: SkillRoute, root: TreeNode, nuggets: Nug
     }
     if (placed.has(p.nuggetId)) {
       repairs.push(`nugget ${p.nuggetId} placed twice; kept first`);
+      continue;
+    }
+    const banned = p.skillId !== undefined && nuggets.find((n) => n.id === p.nuggetId)!.excludedFrom.includes(p.skillId);
+    if (banned) {
+      repairs.push(`nugget ${p.nuggetId}: was left out of skill ${p.skillId}; new skill`);
       continue;
     }
     if (p.skillId !== undefined && skills.has(p.skillId)) placements.push({ nuggetId: p.nuggetId, skillId: p.skillId });

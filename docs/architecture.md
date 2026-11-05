@@ -176,6 +176,7 @@ For each candidate, `lbg draft` (also the draft stage of `lbg run`, at most `ren
    - for `AGENTS.md`, the preamble and every section other than the target are unchanged
    - no secrets and no `[REDACTED]` placeholders
 4. **Stores the changed files on the proposal** (path, hash of the original, new content), deletes the scratch dir, and marks the proposal `open`. The live files are untouched.
+5. **Re-files off-topic evidence.** The drafter stays on the skill's topic and lists items that are only adjacent (they mention a related tool or word but are about something else) in `report_draft`'s `excluded`, with a reason. Each one is taken off the skill, remembered on the nugget (`excluded_from`), and re-inserted; insert never routes it back to a skill it was left out of. It lands in a better skill or starts a latent one, and no longer counts toward the skill it left. One-shot `revise` can exclude items the same way. `proposal show` lists them and where they went (`src/pipeline/exclude.ts`).
 
 A failed draft becomes a `failed` proposal and the skill stays a candidate. `lbg run` waits `render.retryAfterHours` before trying it again; `lbg draft <id>` retries right away.
 

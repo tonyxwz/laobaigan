@@ -144,6 +144,9 @@ depth 2  section  a "##" section of SKILL.md, a references/*.md file, or an AGEN
   - **kind**: `new`, `update`, or `fix-description`
   - **status**: `drafting` → `open` → `accepted` or `rejected`, or `failed`
 
+**Off-topic evidence (excluded)**
+: A nugget the drafter left out of a skill because it's only adjacent to the skill's topic. It's re-filed in a better skill (or a new latent one), never routed back to that skill, and no longer counts toward it. `lbg proposal show` lists it with the reason.
+
 **Stale proposal**
 : One whose target files changed on disk since it was drafted. `accept` refuses it unless `--force`; `revise` rebases it onto the current files.
 

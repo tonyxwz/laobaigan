@@ -18,6 +18,7 @@ const n = (over: Partial<NuggetRow>): NuggetRow => ({
   confidence: 0.9,
   evidence: [{ label: "U1", quote: "q", ts: "2026-01-01T10:00:00.000Z" }],
   assignmentLocked: false,
+  excludedFrom: [],
   createdAt: new Date(0),
   ...over,
 });
