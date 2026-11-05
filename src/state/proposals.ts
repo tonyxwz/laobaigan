@@ -168,6 +168,17 @@ export class Proposals {
     });
   }
 
+  /**
+   * Drafting takes about a minute. A proposal still `drafting` after `maxAgeMs` means the
+   * process died mid-draft (crash, Ctrl-C, timeout): mark it failed so its skill isn't
+   * frozen as `proposed` forever. Returns the ids recovered.
+   */
+  recoverInterrupted(maxAgeMs = 3600e3, now = Date.now()): number[] {
+    const stale = this.list(["drafting"]).filter((p) => now - p.createdAt.getTime() > maxAgeMs);
+    for (const p of stale) this.markFailed(p.id, "interrupted: lbg exited while drafting");
+    return stale.map((p) => p.id);
+  }
+
   /** Drafting failed: the node is a candidate again. */
   markFailed(id: number, detail: string, usage?: unknown): void {
     this.db.tx(() => {

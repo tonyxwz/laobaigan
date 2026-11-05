@@ -342,6 +342,7 @@ export async function draftCandidates(
 ): Promise<DraftOutcome[]> {
   const max = opts.max ?? cfg.render.maxPerRun;
   const props = new Proposals(tree.db);
+  for (const id of props.recoverInterrupted()) opts.log?.(`proposal #${id}: drafting was interrupted earlier; marked failed`);
   const cutoff = (opts.now ?? new Date()).getTime() - cfg.render.retryAfterHours * 3600e3;
   /** A recent failure: don't spend another drafting session on it yet. */
   const backingOff = (id: number) => {

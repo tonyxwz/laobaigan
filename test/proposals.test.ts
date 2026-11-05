@@ -117,3 +117,15 @@ describe("Proposals", () => {
     expect(new Proposals(db).list()).toEqual([]);
   });
 });
+
+describe("interrupted drafts", () => {
+  it("a proposal still drafting after an hour is marked failed and its skill is a candidate again", () => {
+    const { tree, skill, props, draft, db } = setup();
+    const id = props.create(draft());
+    expect(props.recoverInterrupted(3600e3, Date.now() + 60_000)).toEqual([]); // a draft in progress is left alone
+    expect(props.recoverInterrupted(3600e3, Date.now() + 2 * 3600e3)).toEqual([id]);
+    expect(props.get(id)).toMatchObject({ status: "failed", detail: "interrupted: lbg exited while drafting" });
+    expect(tree.getNode(skill)!.status).toBe("candidate");
+    expect(db.counts().openProposals).toBe(0);
+  });
+});

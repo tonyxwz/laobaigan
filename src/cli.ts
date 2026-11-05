@@ -485,6 +485,7 @@ async function main(argv: string[]): Promise<number> {
         const props = new Proposals(db);
         const sub = cmd === "proposals" ? "list" : (rest[0] ?? "list");
         const id = Number((cmd === "proposals" ? "" : (rest[1] ?? "")).replace(/^#/, ""));
+        for (const r of props.recoverInterrupted()) process.stderr.write(`proposal #${r}: drafting was interrupted earlier (lbg exited); marked failed\n`);
         if (sub === "list") {
           const statuses = (values.status?.split(",") ?? ["open", "drafting"]) as ProposalStatus[];
           for (const st of statuses) if (!PROPOSAL_STATUSES.includes(st)) throw new Error(`Bad status ${st}`);
