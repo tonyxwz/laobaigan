@@ -33,6 +33,7 @@ export async function applyExclusions(
   raw: { nuggetId: number; reason: string }[],
   by: Exclusion["by"],
   log: (m: string) => void = () => {},
+  opts: { refile?: boolean } = {},
 ): Promise<ExclusionResult> {
   const inSkill = new Map(subtreeNuggets(skill).map((n) => [n.id, n]));
   const seen = new Set<number>();
@@ -48,12 +49,14 @@ export async function applyExclusions(
   if (!valid.length) return { items: [] };
 
   tree.db.tx(() => {
-    new Proposals(tree.db).addExcluded(proposalId, valid.map((e) => ({ nuggetId: e.nuggetId, reason: e.reason.trim(), by })));
+    const at = Date.now();
+    new Proposals(tree.db).addExcluded(proposalId, valid.map((e) => ({ nuggetId: e.nuggetId, reason: e.reason.trim(), by, at })));
     for (const e of valid) tree.excludeNugget(e.nuggetId, skill.id);
     tree.pruneEmpty();
   });
 
   let usage: Usage | undefined;
+  if (opts.refile === false) return { items: valid.map((e) => ({ nuggetId: e.nuggetId, title: inSkill.get(e.nuggetId)!.title, reason: e.reason.trim() })) };
   try {
     const nuggets = valid.map((e) => tree.db.getNugget(e.nuggetId)!);
     const r = await insertNuggets(tree, runner, cfg, { nuggets, log });

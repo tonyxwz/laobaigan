@@ -62,6 +62,8 @@ export interface Exclusion {
   reason: string;
   /** Who left it out. */
   by: "drafter" | "reviewer";
+  /** When (epoch ms). A reviewer drop after the draft means the files may still hold its content. */
+  at?: number;
 }
 
 export type NewProposal = Pick<ProposalRow, "nodeId" | "kind" | "scope" | "targetRoot" | "writable" | "nuggetIds" | "sessions"> &
@@ -209,6 +211,11 @@ export class Proposals {
       ...(usage !== undefined ? { usage: JSON.stringify(usage) } : {}),
       ...(evidence ? { drafted_at: evidence.draftedAt.getTime(), nugget_ids: JSON.stringify(evidence.nuggetIds) } : {}),
     });
+  }
+
+  /** Evidence I dropped in review after the current draft was written: its content may still be in the files. */
+  droppedSinceDraft(p: ProposalRow): Exclusion[] {
+    return p.excluded.filter((e) => e.by === "reviewer" && (e.at ?? 0) > p.draftedAt.getTime());
   }
 
   /** Record evidence left out of the proposal (appended; one entry per nugget). */

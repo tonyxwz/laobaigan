@@ -120,6 +120,7 @@ export function reviseContext(tree: Tree, ws: DraftWorkspace): string {
     "",
     "A draft already exists: the files in the current directory ARE the current draft. Revise them; don't start over unless asked.",
     ...(ws.proposal.summary ? [`The drafter's note on it: ${ws.proposal.summary}`] : []),
+    ...droppedNote(tree, ws),
   ].join("\n");
 }
 
@@ -155,4 +156,15 @@ export async function reviseProposal(tree: Tree, runner: PiRunner, cfg: Config, 
   } finally {
     await discardDraft(ws);
   }
+}
+
+/** Evidence I dropped since this draft was written: the files may still say it. */
+function droppedNote(tree: Tree, ws: DraftWorkspace): string[] {
+  const dropped = new Proposals(tree.db).droppedSinceDraft(ws.proposal);
+  if (!dropped.length) return [];
+  return [
+    "",
+    "The engineer removed these knowledge items from this skill after the draft was written (off-topic). Take out any content, including in the description, that came only from them:",
+    ...dropped.map((e) => `- #${e.nuggetId} ${tree.db.getNugget(e.nuggetId)?.title ?? ""} (${e.reason})`),
+  ];
 }

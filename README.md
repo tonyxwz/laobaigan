@@ -31,7 +31,8 @@ lbg service install            # then run hourly in the background (systemd user
 
 ```bash
 lbg proposals                          # what's waiting: skill, kind, target, sessions, cost
-lbg proposal show <id>                 # summary, evidence (which sessions, your quotes), off-topic items it left out, diff against the live files
+lbg proposal show <id>                 # summary, evidence (#ids, sessions, your quotes), off-topic items it left out, diff against the live files
+lbg proposal drop <id> <nugget>...     # take off-topic evidence off it (re-filed elsewhere, never back here); --revise redrafts without it
 lbg proposal diff <id>                 # only the diff (pipe it into delta etc.)
 lbg proposal revise <id>               # chat with pi about the draft, in your own pi TUI
 lbg proposal revise <id> "feedback"    # or one shot: pi redrafts with your feedback

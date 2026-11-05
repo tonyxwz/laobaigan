@@ -91,7 +91,7 @@ describe("drafter leaves off-topic evidence out", () => {
     expect(out).toMatchObject({ status: "open", excluded: [{ nuggetId: icat, reason: "about showing images in the terminal, not dotfiles", now: { path: "terminal-images" } }] });
 
     const p = new Proposals(db).get((out as { proposalId: number }).proposalId)!;
-    expect(p.excluded).toEqual([{ nuggetId: icat, reason: "about showing images in the terminal, not dotfiles", by: "drafter" }]);
+    expect(p.excluded).toEqual([{ nuggetId: icat, reason: "about showing images in the terminal, not dotfiles", by: "drafter", at: expect.any(Number) }]);
     expect(p.nuggetIds).not.toContain(icat);
     expect(p.nuggetIds).toContain(zsh);
     expect(subtreeNuggets(tree.subtree(dot)!).map((n) => n.id)).not.toContain(icat);
@@ -140,7 +140,7 @@ describe("drafter leaves off-topic evidence out", () => {
     );
     expect(r.problems).toEqual([]);
     expect(r.excluded.map((e) => e.nuggetId)).toEqual([icat]);
-    expect(props.get(id)!.excluded).toEqual([{ nuggetId: icat, reason: "not dotfiles", by: "drafter" }]);
+    expect(props.get(id)!.excluded).toEqual([{ nuggetId: icat, reason: "not dotfiles", by: "drafter", at: expect.any(Number) }]);
     expect(db.getNugget(icat)!.nodeId).toBeDefined();
   });
 });

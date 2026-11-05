@@ -18,6 +18,7 @@ import { syncTree, type SyncReport } from "./pipeline/sync.ts";
 import { detachLatent, insertNuggets } from "./pipeline/insert.ts";
 import { scoreTree, type TreeScoreResult } from "./pipeline/treescore.ts";
 import { draftCandidates } from "./pipeline/render.ts";
+import { dropEvidence } from "./pipeline/drop.ts";
 import { exitCode, runPipeline, STAGES, type Stage } from "./pipeline/run.ts";
 import { promptFile, promptSnippets, writePromptStatus } from "./notify/prompt.ts";
 import { commitTemplate, renderCommit, runCommit } from "./pipeline/commit.ts";
@@ -83,6 +84,9 @@ Proposals (lbg never runs git: accept writes the files; commit them yourself if 
   lbg proposal revise <id> "feedback"          One shot: pi redrafts with your feedback
   lbg proposal edit <id>                       Edit the drafted files in $VISUAL / $EDITOR
   lbg proposal reject <id> [--reason "..."]
+  lbg proposal drop <id> <nugget>... [--reason "..."] [--to <node>] [--revise]
+                                               Take evidence off a proposal (off-topic); it's re-filed elsewhere
+                                               (or put in --to), never routed back. --revise redrafts without it
   lbg prompt                                   How many proposals are waiting, and the shell prompt snippets (starship / zsh)
 
 Setup:
@@ -127,6 +131,8 @@ async function main(argv: string[]): Promise<number> {
       force: { type: "boolean", default: false },
       commit: { type: "boolean", default: false },
       reason: { type: "string" },
+      to: { type: "string" },
+      revise: { type: "boolean", default: false },
       title: { type: "string" },
       name: { type: "string" },
       help: { type: "boolean", short: "h", default: false },
@@ -540,12 +546,14 @@ async function main(argv: string[]): Promise<number> {
             out(`\nEvidence (${evidence.length}):\n`);
             for (const n of evidence) {
               const e = n.evidence[0];
-              out(`  - ${n.agent}:${n.sessionId.slice(0, 8)}${e?.ts ? ` ${e.ts.slice(0, 10)}` : ""} ${n.title}${e ? `\n      "${truncate(e.quote, 160)}"` : ""}\n`);
+              out(`  - #${n.id} ${n.agent}:${n.sessionId.slice(0, 8)}${e?.ts ? ` ${e.ts.slice(0, 10)}` : ""} ${n.title}${e ? `\n      "${truncate(e.quote, 160)}"` : ""}\n`);
             }
           }
           if (p.files.length) {
             const stale = await conflicts(p);
             if (stale.length && p.status === "open") out(`\n⚠ stale: ${stale.map((c) => `${c.path} ${c.reason}`).join("; ")}\n`);
+            const dropped = p.status === "open" ? props.droppedSinceDraft(p) : [];
+            if (dropped.length) out(`\n⚠ evidence dropped after this draft (${dropped.map((e) => `#${e.nuggetId}`).join(", ")}): the files may still contain it. Run: lbg proposal revise ${id}\n`);
             out(`\n${await proposalDiff(p)}`);
           }
           return (await page(buf.join(""), values["no-pager"])), 0;
@@ -573,6 +581,10 @@ async function main(argv: string[]): Promise<number> {
             out(`#${id} was already accepted; committing its files\n`);
             r = t;
           } else {
+            const dropped = props.droppedSinceDraft(before);
+            if (dropped.length) {
+              out(`⚠ evidence was dropped after this draft (${dropped.map((e) => `#${e.nuggetId}`).join(", ")}); the files may still contain it (lbg proposal revise ${id} would take it out)\n`);
+            }
             const a = await acceptProposal(tree, cfg, id, { force: values.force });
             scoreTree(tree, cfg.score);
             out(`accepted #${id}: wrote ${a.written.length} file(s)${a.deleted.length ? `, deleted ${a.deleted.length}` : ""}\n`);
@@ -634,12 +646,37 @@ async function main(argv: string[]): Promise<number> {
           const r = sub === "edit" ? await editProposal(tree, cfg, id, { ask, log }) : await chatRevise(tree, cfg, id, { ask, log });
           return report(r);
         }
+        if (sub === "drop") {
+          const nuggets = rest.slice(2).map((x) => Number(x.replace(/^#/, "")));
+          if (!nuggets.length || nuggets.some((x) => !Number.isInteger(x) || x <= 0)) throw new Error(`proposal drop expects <id> <nugget>... (nugget ids: lbg proposal show ${id})`);
+          const to = values.to !== undefined ? Number(values.to.replace(/^#/, "")) : undefined;
+          if (to !== undefined && (!Number.isInteger(to) || to <= 0)) throw new Error(`--to expects a node id, got ${values.to}`);
+          const r = await dropEvidence(tree, new PiConfigRunner(), cfg, id, nuggets, {
+            ...(values.reason ? { reason: values.reason } : {}),
+            ...(to !== undefined ? { to } : {}),
+            revise: values.revise,
+            log: (m) => process.stderr.write(`${m}\n`),
+          });
+          for (const d of r.dropped) out(`dropped #${d.nuggetId} ${d.title} → ${d.now?.path ?? "unplaced (the next run files it)"}\n`);
+          if (r.revised) {
+            if (r.revised.problems.length) out(`revise not stored; the previous draft is kept:\n${r.revised.problems.map((p) => `  - ${p}`).join("\n")}\n`);
+            else {
+              for (const w of r.revised.warnings) out(`⚠ ${w}\n`);
+              out(`${r.revised.summary}\nproposal #${id} revised. Review: lbg proposal show ${id}\n`);
+            }
+          } else {
+            out(`The draft may still contain their content: lbg proposal revise ${id} (or drop with --revise)\n`);
+          }
+          if (r.usage.cost) out(`cost≈$${r.usage.cost.toFixed(4)}\n`);
+          if (!props.mustGet(id).nuggetIds.length) out(`No evidence is left on proposal #${id}. If nothing in it is worth keeping: lbg proposal reject ${id}\n`);
+          return r.revised?.problems.length ? 2 : 0;
+        }
         if (sub === "reject") {
           rejectProposal(tree, id, values.reason);
           out(`rejected #${id}${values.reason ? `: ${values.reason}` : ""}. The skill comes back only with evidence from new sessions.\n`);
           return 0;
         }
-        throw new Error(`Unknown proposal subcommand: ${sub} (show | accept | revise | edit | reject)`);
+        throw new Error(`Unknown proposal subcommand: ${sub} (show | accept | revise | edit | drop | reject)`);
       } finally {
         try {
           writePromptStatus(db, cfg.stateDir); // keep the prompt segment current
@@ -767,13 +804,14 @@ async function page(text: string, noPager: boolean): Promise<void> {
 
 function renderProposalLine(p: ProposalRow, tree: Tree): string {
   const fresh = p.status === "open" ? newSinceDraft(tree, p).length : 0;
+  const dropped = p.status === "open" ? new Proposals(tree.db).droppedSinceDraft(p).length : 0;
   const node = tree.getNode(p.nodeId);
   const where = p.scope === "global" ? "global" : `repo ${shortPath(p.repo)}`;
   const cost = (p.usage as { cost?: number } | undefined)?.cost;
   return (
     `#${String(p.id).padEnd(3)} ${p.status.padEnd(8)} ${p.kind.padEnd(15)} ${p.skillName ?? node?.title ?? `node ${p.nodeId}`}  ` +
     `[${where}] ${p.files.length} file(s), ${p.sessions} session(s)${cost !== undefined ? `, $${cost.toFixed(2)}` : ""}` +
-    `${fresh ? `, +${fresh} new since draft` : ""}  ${p.createdAt.toISOString().slice(0, 16).replace("T", " ")}\n`
+    `${fresh ? `, +${fresh} new since draft` : ""}${dropped ? `, ${dropped} dropped since draft` : ""}  ${p.createdAt.toISOString().slice(0, 16).replace("T", " ")}\n`
   );
 }
 
