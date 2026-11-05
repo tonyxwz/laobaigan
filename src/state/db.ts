@@ -248,6 +248,9 @@ export const MIGRATIONS: string[] = [
   // the draft": shown in review, and still counts as fresh after the proposal is accepted.
   `ALTER TABLE proposal ADD COLUMN drafted_at INTEGER;
    UPDATE proposal SET drafted_at = created_at;`,
+  // 13: the lbg process working on a proposal (drafting it, or a revise/edit session, which
+  // can last hours). A live worker holds the proposal; a dead one means it was interrupted.
+  `ALTER TABLE proposal ADD COLUMN worker_pid INTEGER;`,
 ];
 
 /** Lifecycle of a skill: open → candidate (earned a proposal) → proposed → open again (accepted: it's live now) or rejected. */

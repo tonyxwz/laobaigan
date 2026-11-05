@@ -26,6 +26,8 @@ export interface DraftWorkspace {
   scratch: string;
   /** When this workspace was opened: the evidence an AI revision sees is the subtree as of now. */
   openedAt: Date;
+  /** Ends this process's hold on the proposal. */
+  release: () => void;
 }
 
 /** The render target a proposal was drafted for, rebuilt from what it stored. */
@@ -44,8 +46,10 @@ export function targetOf(p: ProposalRow, skill: TreeNode): RenderTarget {
 }
 
 export async function openDraft(tree: Tree, id: number): Promise<DraftWorkspace> {
-  const p = new Proposals(tree.db).mustGet(id);
+  const props = new Proposals(tree.db);
+  const p = props.assertFree(id);
   if (p.status !== "open") throw new Error(`Proposal #${id} is ${p.status}; only open proposals can be changed`);
+  props.claim(id); // a revise chat can take hours: hold the proposal so it isn't accepted/rejected meanwhile
   const skill = tree.subtree(p.nodeId);
   if (!skill) throw new Error(`Proposal #${id}: node ${p.nodeId} no longer exists`);
   const openedAt = new Date();
@@ -60,7 +64,7 @@ export async function openDraft(tree: Tree, id: number): Promise<DraftWorkspace>
       await writeFile(abs, f.content);
     }
   }
-  return { proposal: p, skill, target, base, scratch, openedAt };
+  return { proposal: p, skill, target, base, scratch, openedAt, release: () => props.release(id) };
 }
 
 export interface CloseResult {
@@ -97,6 +101,7 @@ export async function closeDraft(
 }
 
 export async function discardDraft(ws: DraftWorkspace): Promise<void> {
+  ws.release();
   await rm(ws.scratch, { recursive: true, force: true });
 }
 

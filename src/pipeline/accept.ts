@@ -59,7 +59,7 @@ export interface AcceptResult {
  */
 export async function acceptProposal(tree: Tree, cfg: Config, id: number, opts: { force?: boolean } = {}): Promise<AcceptResult> {
   const props = new Proposals(tree.db);
-  const p = props.mustGet(id);
+  const p = props.assertFree(id); // before writing anything
   if (p.status !== "open") throw new Error(`Proposal #${id} is ${p.status}; only open proposals can be accepted`);
   for (const f of p.files) checkPath(p, f);
   const c = await conflicts(p);

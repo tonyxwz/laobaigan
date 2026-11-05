@@ -118,14 +118,54 @@ describe("Proposals", () => {
   });
 });
 
-describe("interrupted drafts", () => {
-  it("a proposal still drafting after an hour is marked failed and its skill is a candidate again", () => {
+describe("the process working on a proposal", () => {
+  /** A pid that isn't running. */
+  const DEAD = 2_147_483_000;
+
+  it("a draft is left alone while its process is alive, however long it takes; recovered once it's gone", () => {
     const { tree, skill, props, draft, db } = setup();
     const id = props.create(draft());
-    expect(props.recoverInterrupted(3600e3, Date.now() + 60_000)).toEqual([]); // a draft in progress is left alone
-    expect(props.recoverInterrupted(3600e3, Date.now() + 2 * 3600e3)).toEqual([id]);
+    expect(props.get(id)!.workerPid).toBe(process.pid);
+    expect(props.recoverInterrupted(3600e3, Date.now() + 10 * 3600e3)).toEqual([]); // alive: no timeout
+
+    db.db.prepare("UPDATE proposal SET worker_pid = ? WHERE id = ?").run(DEAD, id);
+    expect(props.recoverInterrupted()).toEqual([id]);
     expect(props.get(id)).toMatchObject({ status: "failed", detail: "interrupted: lbg exited while drafting" });
+    expect(props.get(id)!.workerPid).toBeUndefined();
     expect(tree.getNode(skill)!.status).toBe("candidate");
-    expect(db.counts().openProposals).toBe(0);
+  });
+
+  it("finishing a draft releases it; drafts from before workers were recorded use the 1h rule", () => {
+    const { props, draft, db } = setup();
+    const id = props.create(draft());
+    props.markOpen(id, FILES, "s");
+    expect(props.get(id)!.workerPid).toBeUndefined();
+
+    props.markRejected(id);
+    const legacy = props.create(draft());
+    db.db.prepare("UPDATE proposal SET worker_pid = NULL WHERE id = ?").run(legacy);
+    expect(props.recoverInterrupted(3600e3, Date.now() + 60_000)).toEqual([]);
+    expect(props.recoverInterrupted(3600e3, Date.now() + 2 * 3600e3)).toEqual([legacy]);
+  });
+
+  it("while another live lbg revises a proposal, it can't be accepted, rejected, or revised; a dead holder is released", () => {
+    const { props, draft, db } = setup();
+    const id = props.create(draft());
+    props.markOpen(id, FILES, "s");
+    db.db.prepare("UPDATE proposal SET worker_pid = ? WHERE id = ?").run(process.ppid, id); // another live process
+
+    expect(() => props.markAccepted(id)).toThrow(/being revised or edited by another lbg \(pid \d+\)/);
+    expect(() => props.markRejected(id)).toThrow(/another lbg/);
+    expect(() => props.claim(id)).toThrow(/another lbg/);
+    expect(props.recoverInterrupted()).toEqual([]); // alive: untouched
+    expect(props.get(id)!.workerPid).toBe(process.ppid);
+
+    db.db.prepare("UPDATE proposal SET worker_pid = ? WHERE id = ?").run(DEAD, id); // that process died mid-chat
+    expect(props.recoverInterrupted()).toEqual([]); // an open proposal isn't failed, just released
+    expect(props.get(id)).toMatchObject({ status: "open" });
+    expect(props.get(id)!.workerPid).toBeUndefined();
+    props.claim(id);
+    props.release(id);
+    props.markAccepted(id);
   });
 });

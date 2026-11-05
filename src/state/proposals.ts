@@ -46,6 +46,8 @@ export interface ProposalRow {
   sessions: number;
   /** When the evidence of the current draft was taken (draft, or the last AI revise). */
   draftedAt: Date;
+  /** The lbg process drafting or revising it right now, if any. */
+  workerPid?: number;
   usage?: unknown;
   detail?: string;
   createdAt: Date;
@@ -74,6 +76,7 @@ function toProposal(r: Row): ProposalRow {
     nuggetIds: JSON.parse(String(r.nugget_ids)) as number[],
     sessions: Number(r.sessions),
     draftedAt: new Date(Number(r.drafted_at ?? r.created_at)),
+    ...(r.worker_pid != null ? { workerPid: Number(r.worker_pid) } : {}),
     ...(r.usage ? { usage: JSON.parse(String(r.usage)) as unknown } : {}),
     ...(r.detail ? { detail: String(r.detail) } : {}),
     createdAt: new Date(Number(r.created_at)),
@@ -132,10 +135,10 @@ export class Proposals {
       const id = Number(
         this.sql
           .prepare(
-            `INSERT INTO proposal (node_id, kind, status, scope, repo, skill_name, target_root, writable, nugget_ids, sessions, drafted_at, created_at, updated_at)
-             VALUES (?, ?, 'drafting', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            `INSERT INTO proposal (node_id, kind, status, scope, repo, skill_name, target_root, writable, nugget_ids, sessions, drafted_at, worker_pid, created_at, updated_at)
+             VALUES (?, ?, 'drafting', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           )
-          .run(p.nodeId, p.kind, p.scope, p.repo ?? null, p.skillName ?? null, p.targetRoot, JSON.stringify(p.writable), JSON.stringify(p.nuggetIds), p.sessions, now, now, now)
+          .run(p.nodeId, p.kind, p.scope, p.repo ?? null, p.skillName ?? null, p.targetRoot, JSON.stringify(p.writable), JSON.stringify(p.nuggetIds), p.sessions, now, process.pid, now, now)
           .lastInsertRowid,
       );
       this.setNodeStatus(p.nodeId, "proposed");
@@ -148,12 +151,42 @@ export class Proposals {
     this.sql.prepare(`UPDATE node SET ${sets.join(", ")} WHERE id = ?`).run(status, Date.now(), ...Object.values(extra), nodeId);
   }
 
-  private transition(id: number, from: ProposalStatus[], to: ProposalStatus, fields: Record<string, string | number | null> = {}): ProposalRow {
+  /** Another live lbg process is drafting or revising this proposal. */
+  heldByOther(p: ProposalRow): boolean {
+    return p.workerPid !== undefined && p.workerPid !== process.pid && pidAlive(p.workerPid);
+  }
+
+  /** Refuse to touch a proposal another live lbg process is working on. */
+  assertFree(id: number): ProposalRow {
     const p = this.mustGet(id);
+    if (this.heldByOther(p)) {
+      throw new Error(
+        `Proposal #${id} is ${p.status === "drafting" ? "still being drafted" : "being revised or edited"} by another lbg (pid ${p.workerPid}). ` +
+          "Finish or quit that session first.",
+      );
+    }
+    return p;
+  }
+
+  /** This process starts working on the proposal (revise / edit). */
+  claim(id: number): void {
+    this.assertFree(id);
+    this.sql.prepare("UPDATE proposal SET worker_pid = ? WHERE id = ?").run(process.pid, id);
+  }
+
+  /** This process is done with the proposal. */
+  release(id: number): void {
+    this.sql.prepare("UPDATE proposal SET worker_pid = NULL WHERE id = ? AND worker_pid = ?").run(id, process.pid);
+  }
+
+  private transition(id: number, from: ProposalStatus[], to: ProposalStatus, fields: Record<string, string | number | null> = {}): ProposalRow {
+    const p = this.assertFree(id);
     if (!from.includes(p.status)) throw new Error(`Proposal #${id} is ${p.status}; can't mark it ${to}`);
     const now = Date.now();
     const closing = to !== "drafting" && to !== "open";
-    const cols = { status: to, updated_at: now, ...(closing ? { closed_at: now } : {}), ...fields };
+    // Finishing a draft, or closing the proposal, ends any work on it.
+    const releasing = closing || p.status === "drafting";
+    const cols = { status: to, updated_at: now, ...(closing ? { closed_at: now } : {}), ...(releasing ? { worker_pid: null } : {}), ...fields };
     this.sql.prepare(`UPDATE proposal SET ${Object.keys(cols).map((k) => `${k} = ?`).join(", ")} WHERE id = ?`).run(...Object.values(cols), id);
     return p;
   }
@@ -169,14 +202,23 @@ export class Proposals {
   }
 
   /**
-   * Drafting takes about a minute. A proposal still `drafting` after `maxAgeMs` means the
-   * process died mid-draft (crash, Ctrl-C, timeout): mark it failed so its skill isn't
-   * frozen as `proposed` forever. Returns the ids recovered.
+   * Proposals whose worker died (crash, Ctrl-C, timeout): a `drafting` one is marked failed so
+   * its skill isn't frozen as `proposed` forever; an `open` one being revised is just released
+   * (its stored draft is intact). Rows from before workers were recorded fall back to "drafting
+   * for more than `legacyMaxAgeMs`". Returns the drafting proposals marked failed.
    */
-  recoverInterrupted(maxAgeMs = 3600e3, now = Date.now()): number[] {
-    const stale = this.list(["drafting"]).filter((p) => now - p.createdAt.getTime() > maxAgeMs);
-    for (const p of stale) this.markFailed(p.id, "interrupted: lbg exited while drafting");
-    return stale.map((p) => p.id);
+  recoverInterrupted(legacyMaxAgeMs = 3600e3, now = Date.now()): number[] {
+    const failed: number[] = [];
+    for (const p of this.list(["drafting", "open"])) {
+      const dead = p.workerPid !== undefined ? !pidAlive(p.workerPid) : p.status === "drafting" && now - p.createdAt.getTime() > legacyMaxAgeMs;
+      if (!dead) continue;
+      this.sql.prepare("UPDATE proposal SET worker_pid = NULL WHERE id = ?").run(p.id);
+      if (p.status === "drafting") {
+        this.markFailed(p.id, "interrupted: lbg exited while drafting");
+        failed.push(p.id);
+      }
+    }
+    return failed;
   }
 
   /** Drafting failed: the node is a candidate again. */
@@ -201,5 +243,15 @@ export class Proposals {
       const p = this.transition(id, ["drafting", "open"], "rejected", reason ? { detail: reason } : {});
       this.setNodeStatus(p.nodeId, "rejected", { rejected_sessions: p.sessions });
     });
+  }
+}
+
+/** Whether a process with this pid is running (on this host; lbg's state is per host). */
+export function pidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === "EPERM";
   }
 }
