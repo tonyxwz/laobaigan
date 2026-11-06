@@ -15,9 +15,7 @@ import { acquireLock } from "./util/lock.ts";
 import { truncate } from "./util/text.ts";
 import { subtreeNuggets, Tree, type TreeNode } from "./state/tree.ts";
 import { syncTree, type SyncReport } from "./pipeline/sync.ts";
-import { detachLatent, insertNuggets } from "./pipeline/insert.ts";
 import { scoreTree, type TreeScoreResult } from "./pipeline/treescore.ts";
-import { draftCandidates } from "./pipeline/render.ts";
 import { dropEvidence } from "./pipeline/drop.ts";
 import type { Rebased } from "./pipeline/revise.ts";
 import { exitCode, runPipeline, STAGES, type Stage } from "./pipeline/run.ts";
@@ -42,27 +40,24 @@ Inspect sessions (read-only, no state):
 
 Pipeline:
   lbg scan    [--since all] [--agent ...] [--session <agent>:<id> [--excerpt]] [--fresh] [--json]
-      What the next extract would do (change detection + prefilter). No model calls, no writes.
+      What the next run's extract would do (change detection + prefilter). No model calls, no writes.
       --excerpt  print the exact text the model would see (with --session)
-  lbg extract [--since all] [--agent ...] [--session <agent>:<id>] [--dry-run] [--fresh] [--max-calls N] [--json]
-      Extract knowledge nuggets with pi and store them.
-      --dry-run  call the model but persist nothing
-      --fresh    ignore dedup state (prompt tuning; use with --dry-run)
-  lbg run     [--stages sync,extract,insert,score,draft] [--max-calls N] [--json]
-      One unattended pass (what the systemd timer runs): sync skill files, extract (classify new
-      rejections, then read new sessions), place nuggets in the tree, score, draft the top candidates
-      into proposals. Budgets: rejections.maxCallsPerRun, extract.maxCallsPerRun, insert.maxCallsPerRun,
-      render.maxPerRun (--max-calls: sessions only).
+  lbg run     [--stages sync,extract,insert,score,draft] [--only <skill-id>...] [--session <agent>:<id>]
+              [--dry-run [--fresh]] [--max-calls N] [--json]
+      The only command that runs the pipeline's model calls (what the hourly timer runs): sync skill
+      files, extract (classify new rejections, then read new sessions), place nuggets in the tree,
+      score, draft the top candidates into proposals. Budgets: rejections.maxCallsPerRun,
+      extract.maxCallsPerRun, insert.maxCallsPerRun, render.maxPerRun (--max-calls: sessions only).
+      --only      draft these skills now (ignores the retry wait); default stages: sync,score,draft
+      --session   extract only this session (rejections wait for a normal run); prints its nuggets
+      --dry-run   run on a temporary copy of the state db: models are called, nothing is kept
+      --fresh     with --dry-run: treat every message as new (prompt tuning)
       Exit 0 ok, 2 a stage failed, 3 aborted (repeated model errors), 75 another run holds the lock.
-  lbg cluster [--all] [--dry-run] [--max-calls N]       Same as: lbg tree insert
 
 Knowledge tree (one per scope: root → skills → sections → nuggets):
   lbg tree [--status candidate,...] [--json]            The tree (live skills' own sections collapsed)
   lbg tree show <id> [--json]                          One node: path, summary, sections, evidence
   lbg tree sync [--dry-run]                            Mirror skill files (global + known repos) and declared topics
-  lbg tree insert [--all] [--dry-run] [--max-calls N]  Sync, route unplaced nuggets into skills/sections (pi), score
-      --all      first take the nuggets out of latent skills and insert them again
-      --dry-run  run against a temporary copy of the state db, then discard it
   lbg tree score                                       Recompute scores; promote skills that earned a proposal
 
 Curating the tree (hand edits are locked so automation never undoes them; live skill
@@ -80,7 +75,6 @@ files change only through proposals; every edit re-scores right away):
   lbg nuggets [--json]                                       List stored nuggets
 
 Proposals (lbg never runs git: accept writes the files; commit them yourself if you like):
-  lbg draft [<skill-id>...] [--max N]          Draft candidate skills with pi into proposals (default: top candidates)
   lbg proposals [--status open,accepted,...]  List proposals (default: open)
   lbg proposal show <id> [--no-pager]          Summary, evidence, and the diff against the live files
   lbg proposal diff <id> [--no-pager]          Only the diff (git format; pipe it into delta etc.)
@@ -123,6 +117,19 @@ Config: ~/.config/laobaigan/config.json (override with LBG_CONFIG)
 `;
 
 async function main(argv: string[]): Promise<number> {
+  const gone: Record<string, string> = {
+    extract: "lbg run --stages extract (prompt tuning on one session: lbg run --dry-run --fresh --stages extract --session <agent>:<id>)",
+    cluster: "lbg run --stages sync,insert,score",
+    draft: "lbg run --only <skill-id>... (drafts them now)",
+  };
+  // Checked before parsing, so old flags (e.g. tree insert --all) still get the pointer.
+  const [a0, a1] = argv.filter((x) => !x.startsWith("-"));
+  const goneKey = a0 === "tree" && a1 === "insert" ? "tree insert" : a0 && gone[a0] ? a0 : undefined;
+  if (goneKey) {
+    const instead = goneKey === "tree insert" ? "lbg run --stages sync,insert,score (on a db copy: add --dry-run)" : gone[goneKey]!;
+    process.stderr.write(`\`lbg ${goneKey}\` is gone: only \`lbg run\` calls models now. Use: ${instead}\n`);
+    return 1;
+  }
   const { positionals, values } = parseArgs({
     args: argv,
     allowPositionals: true,
@@ -137,10 +144,9 @@ async function main(argv: string[]): Promise<number> {
       "dry-run": { type: "boolean", default: false },
       fresh: { type: "boolean", default: false },
       excerpt: { type: "boolean", default: false },
-      all: { type: "boolean", default: false },
       "max-calls": { type: "string" },
       status: { type: "string" },
-      max: { type: "string" },
+      only: { type: "string", multiple: true },
       stages: { type: "string" },
       path: { type: "string" },
       force: { type: "boolean", default: false },
@@ -164,7 +170,7 @@ async function main(argv: string[]): Promise<number> {
     return cmd || values.help ? 0 : 1;
   }
 
-  if (cmd === "cluster") return main(["tree", "insert", ...argv.slice(argv.indexOf("cluster") + 1)]);
+
   if (cmd === "topics" || cmd === "clusters") {
     process.stderr.write(`\`lbg ${cmd}\` is gone: topics and clusters became the knowledge tree. Use \`lbg tree\` (see lbg --help).\n`);
     return 1;
@@ -215,14 +221,12 @@ async function main(argv: string[]): Promise<number> {
       return 0;
     }
 
-    case "scan":
-    case "extract": {
+    case "scan": {
       const cfg = loadConfig();
       const db = new StateDb(join(cfg.stateDir, "state.db"));
       try {
         const opts: ProcessOptions = {
-          plan: cmd === "scan",
-          dryRun: values["dry-run"],
+          plan: true,
           fresh: values.fresh,
           ...(values.since && values.since !== "all" ? { since: parseSince(values.since) } : {}),
           ...(agents ? { agents } : {}),
@@ -231,7 +235,6 @@ async function main(argv: string[]): Promise<number> {
           ...(values.settle ? { settleMinutes: parseDuration(values.settle) / 60e3 } : {}),
           log: (m) => process.stderr.write(`${m}\n`),
         };
-        if (opts.fresh && !opts.dryRun && !opts.plan) throw new Error("--fresh requires --dry-run");
         const res = await processSessions(adapters, db, new PiConfigRunner(), cfg, opts);
         if (values.json) return json(res), 0;
         renderOutcomes(res.outcomes, out);
@@ -239,13 +242,6 @@ async function main(argv: string[]): Promise<number> {
           for (const o of res.outcomes) {
             o.excerptText?.forEach((c, i) => out(`\n===== excerpt chunk ${i + 1}/${o.excerptText!.length} =====\n${c}`));
           }
-        }
-        if (cmd === "extract") {
-          out(
-            `\n${res.calls} model call(s), tokens in=${res.usage.input} out=${res.usage.output} ` +
-              `cacheRead=${res.usage.cacheRead}, cost≈$${res.usage.cost.toFixed(4)}` +
-              `${opts.dryRun ? "  (dry run: nothing persisted)" : ""}\n`,
-          );
         }
         return res.outcomes.some((o) => o.status === "error") ? 2 : 0;
       } finally {
@@ -255,32 +251,53 @@ async function main(argv: string[]): Promise<number> {
 
     case "run": {
       const cfg = loadConfig();
-      const release = acquireLock(join(cfg.stateDir, "run.lock"));
+      const dry = values["dry-run"];
+      if (values.fresh && !dry) throw new Error("--fresh needs --dry-run (it would re-extract everything into the real db)");
+      const stages = values.stages?.split(",").map((x) => x.trim()) as Stage[] | undefined;
+      for (const st of stages ?? []) if (!STAGES.includes(st)) throw new Error(`Unknown stage ${st} (expected ${STAGES.join(", ")})`);
+      const only = values.only?.flatMap((x) => x.split(",")).map((x) => Number(x.trim().replace(/^#/, "")));
+      if (only?.some((x) => !Number.isInteger(x) || x <= 0)) throw new Error("--only expects skill ids");
+      const session = values.session ? parseSessionTarget(values.session) : undefined;
+
+      // A dry run works on a copy (no lock needed: the real db isn't written).
+      const release = dry ? () => {} : acquireLock(join(cfg.stateDir, "run.lock"));
       if (!release) {
         process.stderr.write("another run is in progress; skipping\n");
         return 75; // EX_TEMPFAIL
       }
-      const db = new StateDb(join(cfg.stateDir, "state.db"));
+      const real = new StateDb(join(cfg.stateDir, "state.db"));
+      const tmp = dry ? mkdtempSync(join(tmpdir(), "lbg-dry-")) : undefined;
+      const db = tmp ? real.snapshotTo(join(tmp, "state.db")) : real;
       try {
-        const stages = values.stages?.split(",").map((x) => x.trim()) as Stage[] | undefined;
-        for (const st of stages ?? []) if (!STAGES.includes(st)) throw new Error(`Unknown stage ${st} (expected ${STAGES.join(", ")})`);
         const r = await runPipeline(
-          { adapters, db, runner: new PiConfigRunner(), cfg, log: (m) => out(`  ${m}\n`) },
-          { ...(stages ? { stages } : {}), ...(values["max-calls"] ? { maxExtractCalls: Number(values["max-calls"]) } : {}) },
+          { adapters, db, runner: new PiConfigRunner(), cfg: tmp ? { ...cfg, stateDir: tmp } : cfg, log: (m) => out(`  ${m}\n`) },
+          {
+            ...(stages ? { stages } : only ? { stages: ["sync", "score", "draft"] as Stage[] } : {}),
+            ...(values["max-calls"] ? { maxExtractCalls: Number(values["max-calls"]) } : {}),
+            ...(only ? { only } : {}),
+            ...(session ? { session } : {}),
+            ...(values.fresh ? { fresh: true } : {}),
+          },
         );
         if (values.json) return json(r), exitCode(r);
-        if (r.waiting) out(`${r.waiting} proposal(s) waiting for review — lbg proposals\n`);
+        if (r.waiting && !dry) out(`${r.waiting} proposal(s) waiting for review — lbg proposals\n`);
         // One line per stage, then one per new proposal: journald-friendly.
         for (const st of r.stages) {
           out(`${st.stage.padEnd(7)} ${st.status === "ok" ? "" : `[${st.status}] `}${st.summary}${st.calls ? ` (${st.calls} call(s), $${st.usage.cost.toFixed(4)})` : ""}\n`);
         }
+        if ((session || dry) && r.extracted.length) renderOutcomes(r.extracted, out);
+        if (only) for (const k of r.skipped) out(`skipped #${k.nodeId} ${k.skill}: ${k.reason}\n`);
         for (const c of r.rejections) out(`rejection #${c.id} classified: ${c.kind}${c.target ? ` (→ ${c.target})` : ""} → ${c.rule} — check: lbg rejections\n`);
-        for (const p of r.proposals) out(`new proposal #${p.id}: ${p.skill} (${p.files} file(s)) — review with: lbg proposal show ${p.id}\n`);
-        out(`run #${r.runId} finished in ${Math.round(r.ms / 1000)}s: ${r.calls} model call(s), cost≈$${r.usage.cost.toFixed(4)}\n`);
+        for (const p of r.proposals) out(`new proposal #${p.id}: ${p.skill} (${p.files} file(s))${dry ? "" : ` — review with: lbg proposal show ${p.id}`}\n`);
+        out(`run #${r.runId} finished in ${Math.round(r.ms / 1000)}s: ${r.calls} model call(s), cost≈$${r.usage.cost.toFixed(4)}${dry ? "  (dry run: nothing kept)" : ""}\n`);
         if (r.abortedReason) process.stderr.write(`run aborted: ${r.abortedReason}\n(if this is a credentials error, refresh your model provider's credentials)\n`);
         return exitCode(r);
       } finally {
-        db.close();
+        if (tmp) {
+          db.close();
+          rmSync(tmp, { recursive: true, force: true });
+        }
+        real.close();
         release();
       }
     }
@@ -342,25 +359,6 @@ async function main(argv: string[]): Promise<number> {
             return after(id, `unlocked #${id}`);
           }
         }
-        if (rest[0] === "insert") {
-          await syncTree(tree, { skillsDir: cfg.skillsDir, declared: cfg.topics });
-          if (values.all) out(`re-inserting ${detachLatent(tree).length} nugget(s) from latent skills\n`);
-          const r = await insertNuggets(tree, new PiConfigRunner(), cfg, {
-            ...(values["max-calls"] ? { maxCalls: Number(values["max-calls"]) } : {}),
-            log: (m) => process.stderr.write(`${m}\n`),
-          });
-          const scored = scoreTree(tree, cfg.score);
-          if (values.json) return json({ ...r, scored, trees: tree.trees() }), 0;
-          for (const t of tree.trees()) if (subtreeNuggets(t).length) renderTree(t, out, { onlyWithEvidence: true });
-          renderScore(scored, out);
-          out(
-            `\nplaced ${r.placed} nugget(s)${r.deferred ? `, ${r.deferred} deferred` : ""}; ` +
-              `new skills: ${r.skillsCreated.join(", ") || "none"}; new sections: ${r.sectionsCreated.length}; ` +
-              `already covered by live text: ${r.covered}; ${r.calls} model call(s), cost≈$${r.usage.cost.toFixed(4)}` +
-              `${tmp ? "  (dry run: nothing persisted)" : ""}\n`,
-          );
-          return 0;
-        }
         if (rest[0] === "score") {
           const scored = scoreTree(tree, cfg.score);
           if (values.json) return json(scored), 0;
@@ -414,46 +412,6 @@ async function main(argv: string[]): Promise<number> {
           rmSync(tmp, { recursive: true, force: true });
         }
         real.close();
-      }
-    }
-
-    case "draft": {
-      const cfg = loadConfig();
-      const db = new StateDb(join(cfg.stateDir, "state.db"));
-      try {
-        const tree = new Tree(db);
-        await syncTree(tree, { skillsDir: cfg.skillsDir, declared: cfg.topics });
-        scoreTree(tree, cfg.score);
-        const ids = rest.map((x) => Number(x.replace(/^#/, "")));
-        if (ids.some((x) => !Number.isInteger(x))) throw new Error("draft expects skill ids");
-        const outcomes = await draftCandidates(tree, new PiConfigRunner(), cfg, {
-          ...(ids.length ? { nodeIds: ids } : {}),
-          ...(values.max ? { max: Number(values.max) } : {}),
-          log: (m) => process.stderr.write(`${m}\n`),
-        });
-        if (values.json) return json(outcomes), 0;
-        if (!outcomes.length) out("no candidates to draft (see: lbg tree --status candidate)\n");
-        for (const o of outcomes) {
-          const t = tree.getNode(o.nodeId);
-          const label = `#${o.nodeId} ${t?.name ?? t?.title ?? ""}`;
-          if (o.status === "open") {
-            out(`proposal #${o.proposalId} ${label}: ${o.files.length} file(s), cost≈$${o.usage.cost.toFixed(4)} — lbg proposal show ${o.proposalId}\n`);
-            for (const e of o.excluded) out(`  left out (off-topic): #${e.nuggetId} ${e.title} → ${e.now?.path ?? "unplaced, next run files it"}\n`);
-          }
-          else if (o.status === "nothing") {
-            out(`nothing to propose for ${label}: its new evidence was off-topic and was re-filed (cost≈$${o.usage.cost.toFixed(4)})\n`);
-            for (const e of o.excluded) out(`  #${e.nuggetId} ${e.title} → ${e.now?.path ?? "unplaced, next run files it"}  (${e.reason})\n`);
-          } else if (o.status === "failed") out(`failed ${label}: ${o.reason}\n`);
-          else out(`skipped ${label}: ${o.reason}\n`);
-        }
-        return outcomes.some((o) => o.status === "failed") ? 2 : 0;
-      } finally {
-        try {
-          writePromptStatus(db, cfg.stateDir); // keep the prompt segment current
-        } catch {
-          // the prompt is a convenience; never fail the command over it
-        }
-        db.close();
       }
     }
 

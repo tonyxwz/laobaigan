@@ -36,13 +36,13 @@ lbg sessions --since 7d                          # sessions across agents
 lbg sessions --agent pi,claude --settle 30m --json
 lbg show claude:27b8 --user-only                 # one normalized transcript (id prefix ok)
 
-lbg scan                                         # what extract would do: no model calls, no writes
+lbg scan                                         # what the next run's extract would do: no model calls, no writes
 lbg scan --session pi:01a19be3 --fresh --excerpt # the exact text the model would see
-lbg extract --session pi:01a19be3 --dry-run --fresh   # prompt tuning on one session (calls the model, persists nothing)
+lbg run --dry-run --fresh --stages extract --session pi:01a19be3   # prompt tuning on one session (calls the model, keeps nothing)
 
 lbg nuggets                                      # stored nuggets
 lbg tree [--status candidate] / lbg tree show <id>
-lbg tree insert --all --dry-run                  # re-route everything on a temporary copy of the db
+lbg run --dry-run --stages sync,insert,score     # route new nuggets on a temporary copy of the db
 lbg run --stages sync,extract                    # run only some stages
 lbg status                                       # db counts and recent runs
 ```

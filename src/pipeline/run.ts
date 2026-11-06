@@ -1,12 +1,12 @@
 import type { Config } from "../config.ts";
 import type { PiRunner, Usage } from "../pi/run-pi.ts";
 import { addUsage, ZERO_USAGE } from "../pi/run-pi.ts";
-import type { SourceAdapter } from "../sources/index.ts";
+import type { AgentId, SourceAdapter } from "../sources/index.ts";
 import type { StateDb } from "../state/db.ts";
 import { Tree } from "../state/tree.ts";
-import { classifyRejections } from "./classify.ts";
+import { classifyRejections, type ClassifyResult } from "./classify.ts";
 import { insertNuggets } from "./insert.ts";
-import { processSessions } from "./process.ts";
+import { processSessions, type SessionOutcome } from "./process.ts";
 import { draftCandidates } from "./render.ts";
 import { syncTree } from "./sync.ts";
 import { scoreTree } from "./treescore.ts";
@@ -68,7 +68,23 @@ export interface RunReport {
   abortedReason?: string;
   /** Proposals waiting for review after this run (what the prompt shows). */
   waiting?: number;
+  /** Sessions the extract stage did something with (for --session / --dry-run output). */
+  extracted: SessionOutcome[];
+  /** Skills the draft stage skipped, with why (for --only output). */
+  skipped: { nodeId: number; skill: string; reason: string }[];
   ms: number;
+}
+
+export interface RunOptions {
+  stages?: Stage[];
+  /** Session budget for extract (default extract.maxCallsPerRun). */
+  maxExtractCalls?: number;
+  /** Draft only these skills, ignoring the retry backoff. */
+  only?: number[];
+  /** Extract only this session (no rejection classifying): prompt tuning. */
+  session?: { agent: AgentId; idPrefix: string };
+  /** Ignore dedup state (treat every human turn as new). Only sensible on a db copy (--dry-run). */
+  fresh?: boolean;
 }
 
 export interface RunDeps {
@@ -80,7 +96,7 @@ export interface RunDeps {
   now?: () => Date;
 }
 
-export async function runPipeline(deps: RunDeps, opts: { stages?: Stage[]; maxExtractCalls?: number } = {}): Promise<RunReport> {
+export async function runPipeline(deps: RunDeps, opts: RunOptions = {}): Promise<RunReport> {
   const { adapters, db, runner, cfg } = deps;
   const log = deps.log ?? (() => {});
   const now = deps.now ?? (() => new Date());
@@ -88,7 +104,7 @@ export async function runPipeline(deps: RunDeps, opts: { stages?: Stage[]; maxEx
   const enabled = new Set(opts.stages ?? STAGES);
   const tree = new Tree(db);
   const runId = db.startRun("run", false);
-  const rep: RunReport = { runId, stages: [], proposals: [], rejections: [], calls: 0, usage: ZERO_USAGE, ms: 0 };
+  const rep: RunReport = { runId, stages: [], proposals: [], rejections: [], calls: 0, usage: ZERO_USAGE, extracted: [], skipped: [], ms: 0 };
 
   const stage = async (name: Stage, model: boolean, fn: () => Promise<Omit<StageReport, "stage" | "status">>): Promise<void> => {
     if (!enabled.has(name)) return;
@@ -124,7 +140,10 @@ export async function runPipeline(deps: RunDeps, opts: { stages?: Stage[]; maxEx
   // extract: my words → knowledge. First reject reasons → rules (so extraction can use
   // them), then session messages → nuggets. Separate budgets, shared model-error handling.
   await stage("extract", true, async () => {
-    const rj = await classifyRejections(tree, runner, cfg, { log });
+    // With --session (prompt tuning on one session), leave pending rejections for a normal run.
+    const rj: ClassifyResult = opts.session
+      ? { classified: [], failed: [], deferred: 0, calls: 0, usage: ZERO_USAGE }
+      : await classifyRejections(tree, runner, cfg, { log });
     for (const c of rj.classified) rep.rejections.push({ id: c.id, kind: c.kind, rule: c.rule, ...(c.target ? { target: c.target } : {}) });
     const rjParts: string[] = [];
     if (rj.calls) {
@@ -143,9 +162,14 @@ export async function runPipeline(deps: RunDeps, opts: { stages?: Stage[]; maxEx
     } else {
       const r = await processSessions(adapters, db, runner, cfg, {
         ...(opts.maxExtractCalls !== undefined ? { maxCalls: opts.maxExtractCalls } : {}),
+        // A session asked for by name is read even if it's still active (no settle window).
+        ...(opts.session ? { only: opts.session, settleMinutes: 0 } : {}),
+        ...(opts.fresh ? { fresh: true } : {}),
         log,
         recordRun: false,
       });
+      rep.extracted = r.outcomes.filter((o) => o.status !== "up-to-date");
+      if (opts.session && !r.outcomes.length) parts.push(`no session matches ${opts.session.agent}:${opts.session.idPrefix}`);
       if (r.abortedReason) rep.abortedReason = r.abortedReason;
       calls += r.calls;
       usage = addUsage(usage, r.usage);
@@ -183,13 +207,21 @@ export async function runPipeline(deps: RunDeps, opts: { stages?: Stage[]; maxEx
   });
 
   await stage("draft", true, async () => {
-    const outcomes = await draftCandidates(tree, runner, cfg, { log, now: now() });
+    const outcomes = await draftCandidates(tree, runner, cfg, {
+      log,
+      now: now(),
+      ...(opts.only ? { nodeIds: opts.only, max: opts.only.length } : {}),
+    });
     let calls = 0;
     let usage = ZERO_USAGE;
     const failed: string[] = [];
     let refiled = 0;
     for (const o of outcomes) {
-      if (o.status === "skipped") continue;
+      if (o.status === "skipped") {
+        const n = tree.getNode(o.nodeId);
+        rep.skipped.push({ nodeId: o.nodeId, skill: n?.name ?? n?.title ?? `#${o.nodeId}`, reason: o.reason });
+        continue;
+      }
       calls++;
       if (o.usage) usage = addUsage(usage, o.usage);
       const node = tree.getNode(o.nodeId);

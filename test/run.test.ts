@@ -177,3 +177,42 @@ describe("runPipeline with an unreadable source", () => {
     expect(exitCode(r)).toBe(0);
   });
 });
+
+describe("runPipeline options (lbg run --session / --fresh / --only)", () => {
+  it("--session extracts only that session and leaves rejections alone; --fresh re-reads it", async () => {
+    const { runner, deps } = await setup();
+    const r = await runPipeline(deps, { stages: ["extract"], session: { agent: "pi", idPrefix: "b" } });
+    expect(runner.calls).toEqual(["report_knowledge"]);
+    expect(r.extracted.map((o) => [o.ref.sessionId, o.status])).toEqual([["b", "extracted"]]);
+
+    runner.calls = [];
+    await runPipeline(deps, { stages: ["extract"], session: { agent: "pi", idPrefix: "b" } });
+    expect(runner.calls).toEqual([]); // already seen
+    await runPipeline(deps, { stages: ["extract"], session: { agent: "pi", idPrefix: "b" }, fresh: true });
+    expect(runner.calls).toEqual(["report_knowledge"]);
+
+    // named sessions are read even inside the settle window (still active)
+    const active = await runPipeline({ ...deps, cfg: { ...deps.cfg, settleMinutes: 1e9 } }, { stages: ["extract"], session: { agent: "pi", idPrefix: "a" } });
+    expect(active.extracted.map((o) => o.ref.sessionId)).toEqual(["a"]);
+
+    const none = await runPipeline(deps, { stages: ["extract"], session: { agent: "pi", idPrefix: "zzz" } });
+    expect(none.stages[0]!.summary).toMatch(/no session matches pi:zzz/);
+  });
+
+  it("--only drafts the given skills now, ignoring the retry wait; reports skipped ones", async () => {
+    const { runner, deps, db } = await setup();
+    runner.failOn.add("report_draft");
+    await runPipeline(deps); // the draft fails → backoff
+    const tree = new Tree(db);
+    const skill = tree.trees()[0]!.children.find((c) => c.name === "tmux-config")!;
+    runner.failOn.clear();
+    runner.calls = [];
+    await runPipeline(deps, { stages: ["sync", "score", "draft"] });
+    expect(runner.calls).toEqual([]); // a normal run still waits
+
+    const r = await runPipeline(deps, { stages: ["sync", "score", "draft"], only: [skill.id, tree.trees()[0]!.id] });
+    expect(runner.calls).toEqual(["report_draft"]);
+    expect(r.proposals.map((p) => p.skill)).toEqual(["tmux-config"]);
+    expect(r.skipped).toEqual([{ nodeId: tree.trees()[0]!.id, skill: expect.any(String), reason: "not a skill" }]);
+  });
+});

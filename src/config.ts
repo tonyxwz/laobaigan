@@ -114,7 +114,7 @@ export interface Config {
   render: {
     /** Max proposals drafted per run (each is one opus session). */
     maxPerRun: number;
-    /** After a failed draft, wait this long before lbg run tries that skill again (lbg draft <id> ignores it). */
+    /** After a failed draft, wait this long before lbg run tries that skill again (lbg run --only <id> ignores it). */
     retryAfterHours: number;
     /** SKILL.md longer than this fails verification (move detail into references/). */
     maxSkillLines: number;

@@ -108,7 +108,13 @@ precmd_functions+=(_lbg_prompt)
 3. files what you taught the agents into its knowledge tree
 4. drafts the top candidates as proposals
 
-With nothing new, a run makes no model calls. Work over the per-run budgets waits for the next run.
+With nothing new, a run makes no model calls. Work over the per-run budgets waits for the next run. `lbg run` is also the only command that makes these model calls by hand:
+
+```bash
+lbg run                                  # one pass now
+lbg run --only <id>                      # draft these candidates now
+lbg run --dry-run                        # try a pass on a copy of your data (models are called, nothing is kept)
+```
 
 ```bash
 lbg service status                      # what the timer runs, next/last run
@@ -178,7 +184,7 @@ lbg keeps what it has learned in a knowledge tree of skills and sections. You ca
 lbg tree                               # skills per scope: live (your files), declared, latent (grown by lbg)
 lbg tree --status candidate            # what will be drafted next
 lbg tree show <id>                     # one skill or section: summary, evidence
-lbg draft [<id>]                       # draft candidates now instead of waiting for the timer
+lbg run --only <id>                    # draft these candidates now instead of waiting for the timer
 
 lbg tree merge <into> <from>…          # fold skills into one
 lbg tree split <skill> <section>…      # move sections out into a new skill

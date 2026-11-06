@@ -28,6 +28,16 @@ Non-goals: searching or summarizing sessions in general, syncing skills across m
 
 One `lbg run` (hourly, systemd user timer) runs the stages in order: **sync → extract → insert → score → draft** (`src/pipeline/run.ts`). Extract turns my words into knowledge: first pending reject reasons into rejection rules (≤ `rejections.maxCallsPerRun`, one extract-model call each), then new or changed sessions into nuggets. Two failed classifications in a row (e.g. expired credentials) skip the session part and the later model stages. Each stage has its own budget, a failing stage doesn't stop the others, and with nothing new a run makes no model calls. Repeated model errors (e.g. expired credentials) stop extraction and skip the remaining model stages. At the end the run writes the prompt file and one run-log row with calls and cost per stage.
 
+**Only `lbg run` makes the pipeline's model calls.** The other commands are model-free (`scan`, `tree`, `tree sync`, `tree score`, curation, `proposal accept|reject|drop`, `rejections`), except `lbg proposal revise`, where I ask pi to rewrite a draft. For one-off work `lbg run` takes options instead of separate commands:
+
+| Option | What |
+|---|---|
+| `--stages a,b` | run only these stages |
+| `--only <skill-id>…` | draft these skills now, ignoring the retry wait (default stages: sync, score, draft) |
+| `--session <agent>:<id>` | extract only this session; pending rejections wait for a normal run |
+| `--dry-run` | work on a `VACUUM INTO` copy of the state db; models are called, nothing is kept, no lock taken |
+| `--fresh` | with `--dry-run`: ignore dedup, so every message counts as new (prompt tuning) |
+
 ## 1. Source adapters
 
 Each agent stores sessions differently. An adapter (`src/sources/`) lists sessions cheaply and turns one into a common `Transcript`:
@@ -159,7 +169,7 @@ The numeric score (sessions, extra agents, extra days, corrections, minus covera
 
 ## 6. Draft a proposal (pi, in a scratch copy)
 
-For each candidate, `lbg draft` (also the draft stage of `lbg run`, at most `render.maxPerRun` per run) does the following (`src/pipeline/render.ts`):
+For each candidate, the draft stage of `lbg run` (at most `render.maxPerRun` per run; `lbg run --only <id>` for specific skills) does the following (`src/pipeline/render.ts`):
 
 1. **Resolves the target.**
    - Global: the skills dir → `<name>/`.
@@ -179,7 +189,7 @@ For each candidate, `lbg draft` (also the draft stage of `lbg run`, at most `ren
 5. **Keeps a live skill's scope.** For an `update` of a live skill, the new description may only use words the skill already covers (its old description, `SKILL.md` and `references/`), allowing at most 2 new words for rewording (`src/pipeline/scope.ts`). If it takes on a new subject, the drafter gets one retry in the same scratch copy with the problem explained; if it still widens the scope, the draft fails with the new words listed. `fix-description` proposals are exempt. In one-shot or chat `revise` it's only a warning (you're steering); a hand `edit` isn't checked. If the drafter finds that none of the new evidence is on-topic, it changes nothing, every item is re-filed, and the proposal closes as "nothing on-topic to add" instead of failing.
 6. **Re-files off-topic evidence.** The drafter stays on the skill's topic and lists items that are only adjacent (they mention a related tool or word but are about something else) in `report_draft`'s `excluded`, with a reason. Each one is taken off the skill, remembered on the nugget (`excluded_from`), and re-inserted; insert never routes it back to a skill it was left out of. It lands in a better skill or starts a latent one, and no longer counts toward the skill it left. One-shot `revise` can exclude items the same way. `proposal show` lists them and where they went (`src/pipeline/exclude.ts`).
 
-A failed draft becomes a `failed` proposal and the skill stays a candidate. `lbg run` waits `render.retryAfterHours` before trying it again; `lbg draft <id>` retries right away.
+A failed draft becomes a `failed` proposal and the skill stays a candidate. `lbg run` waits `render.retryAfterHours` before trying it again; `lbg run --only <id>` retries right away.
 
 ## 7. Review (`src/pipeline/accept.ts`, `revise.ts`, `interactive.ts`)
 
@@ -248,7 +258,7 @@ session.getSessionStats();                       // tokens and cost for the run 
 - **Schedule:** hourly, up to 5 minutes random delay, `Persistent=true` to catch up on missed runs.
 - **Lock:** a pid lock file (`run.lock`) makes a concurrent run exit 75; stale locks from crashed runs are taken over.
 - **Exit codes:** 0 ok, 2 a stage failed, 3 aborted after repeated model errors, 75 locked.
-- **Prompt file:** `<stateDir>/prompt` holds the number of open proposals, written atomically after every run and after `lbg draft` / `lbg proposal …`. The shell prompt only reads it.
+- **Prompt file:** `<stateDir>/prompt` holds the number of open proposals, written atomically after every run and after `lbg proposal …`. The shell prompt only reads it.
 
 ## 10. State (`~/.local/state/laobaigan/state.db`, `node:sqlite`)
 
