@@ -154,7 +154,7 @@ export async function discardDraft(ws: DraftWorkspace): Promise<void> {
 
 /** Context for anyone (pi, or the interactive chat) revising the draft. */
 export function reviseContext(tree: Tree, ws: DraftWorkspace): string {
-  const siblings = ws.skill.parentId !== undefined ? tree.children(ws.skill.parentId).map((c) => ({ ...c, children: [], nuggets: [] })) : [];
+  const siblings = ws.skill.parentId !== undefined ? tree.children(ws.skill.parentId).map((c) => ({ ...c, children: [], nuggets: [], forgotten: [] })) : [];
   return [
     buildDraftPrompt(ws.skill, ws.proposal.kind, ws.target, siblings, ws.proposal.draftedAt, reviewFeedbackPrompt(tree, ws.skill)).replace(/\nWrite the files now, then call report_draft\.$/, ""),
     "",

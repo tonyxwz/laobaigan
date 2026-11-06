@@ -137,6 +137,8 @@ export interface RejectResult {
   /** pending: the next lbg run classifies it. active: I gave the kind (or there was no reason). */
   status: "pending" | "active";
   kind?: RejectionKind;
+  /** Evidence forgotten now (outdated, or --forget). */
+  forgotten?: number;
 }
 
 /**
@@ -148,7 +150,7 @@ export function rejectProposal(
   tree: Tree,
   id: number,
   reason?: string,
-  opts: { kind?: RejectionKind; targetNodeId?: number } = {},
+  opts: { kind?: RejectionKind; targetNodeId?: number; forget?: boolean } = {},
 ): RejectResult {
   const props = new Proposals(tree.db);
   const p = props.mustGet(id);
@@ -173,6 +175,12 @@ export function rejectProposal(
       .filter((n): n is NonNullable<typeof n> => !!n)
       .map((n) => ({ id: n.id, title: n.title })),
   };
+  const done = (r: RejectResult): RejectResult => {
+    // --forget: its evidence stops counting whatever the kind (given back if the memory is forgotten).
+    if (opts.forget) r.forgotten = tree.forgetNuggets(new Rejections(tree.db).proposalNuggets(id), `forgotten on reject (rejection #${r.memoryId})`, r.memoryId);
+    else r.forgotten = tree.db.nuggets().filter((n) => n.forgottenMemory === r.memoryId).length;
+    return r;
+  };
   return tree.db.tx(() => {
     props.markRejected(id, text || undefined);
     // The reason is review feedback: the next draft of this skill (or a nearby one) sees it.
@@ -181,14 +189,14 @@ export function rejectProposal(
     const base = { proposalId: id, feedbackId, nodeId: p.nodeId, ...scope, topic };
     if (opts.kind) {
       const memoryId = mem.add({ ...base, kind: opts.kind, rule: text || `rejected as ${opts.kind}`, ...(opts.targetNodeId !== undefined ? { targetNodeId: opts.targetNodeId } : {}) });
-      return { memoryId, status: "active" as const, kind: opts.kind };
+      return done({ memoryId, status: "active" as const, kind: opts.kind });
     }
     if (!text) {
       // Nothing to classify: "not now". Unlocked, so I can still edit it.
       const memoryId = mem.add({ ...base, kind: "later", rule: "rejected without a reason", locked: false });
-      return { memoryId, status: "active" as const, kind: "later" as const };
+      return done({ memoryId, status: "active" as const, kind: "later" as const });
     }
-    return { memoryId: mem.add(base), status: "pending" as const };
+    return done({ memoryId: mem.add(base), status: "pending" as const });
   });
 }
 

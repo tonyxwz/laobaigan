@@ -1,5 +1,6 @@
 import { redact } from "../pipeline/redact.ts";
 import type { StateDb } from "./db.ts";
+import { Tree } from "./tree.ts";
 
 /**
  * Rejection memory: what a rejected proposal teaches lbg, so similar proposals
@@ -91,6 +92,27 @@ export class Rejections {
     return this.db.db;
   }
 
+  /**
+   * Keep forgotten evidence in step with a memory: an active `outdated` memory forgets
+   * its proposal's evidence; any other kind, or a removed memory, gives it back.
+   */
+  private syncEvidence(id: number): void {
+    const m = this.mustGet(id);
+    const tree = new Tree(this.db);
+    if (m.status === "active" && m.kind === "outdated") {
+      tree.forgetNuggets(this.proposalNuggets(m.proposalId), `outdated (rejection #${m.id})`, m.id);
+    } else {
+      tree.unforgetNuggets({ memoryId: m.id });
+    }
+  }
+
+  /** Evidence ids of a proposal that still exist. */
+  proposalNuggets(proposalId: number): number[] {
+    const r = this.sql.prepare("SELECT nugget_ids FROM proposal WHERE id = ?").get(proposalId) as Row | undefined;
+    const ids = r ? (JSON.parse(String(r.nugget_ids)) as number[]) : [];
+    return ids.filter((n) => this.sql.prepare("SELECT 1 FROM nugget WHERE id = ?").get(n));
+  }
+
   private select(where: string, ...args: (string | number)[]): MemoryRow[] {
     return (
       this.sql
@@ -142,7 +164,7 @@ export class Rejections {
   }): number {
     const at = (m.at ?? new Date()).getTime();
     const active = m.kind !== undefined;
-    return Number(
+    const id = Number(
       this.sql
         .prepare(
           `INSERT INTO rejection_memory (proposal_id, feedback_id, node_id, scope, repo, kind, rule, topic, target_node_id, status, locked, created_at, classified_at)
@@ -164,6 +186,8 @@ export class Rejections {
           active ? at : null,
         ).lastInsertRowid,
     );
+    if (active) this.syncEvidence(id);
+    return id;
   }
 
   /** The classifier's answer. Skips memories I've locked meanwhile. */
@@ -174,7 +198,9 @@ export class Rejections {
          WHERE id = ? AND status = 'pending' AND locked = 0`,
       )
       .run(c.kind, cleanRule(c.rule), c.targetNodeId ?? null, Date.now(), id);
-    return Number(r.changes) === 1;
+    if (Number(r.changes) !== 1) return false;
+    this.syncEvidence(id);
+    return true;
   }
 
   /** Classification failed: stays pending for the next run. */
@@ -196,6 +222,7 @@ export class Rejections {
            classified_at = COALESCE(classified_at, ?) WHERE id = ?`,
       )
       .run(kind, rule, kind === "wrong-place" ? target : null, Date.now(), id);
+    this.syncEvidence(id);
     return this.mustGet(id);
   }
 
@@ -203,5 +230,6 @@ export class Rejections {
   forget(id: number): void {
     this.mustGet(id);
     this.sql.prepare("UPDATE rejection_memory SET status = 'removed' WHERE id = ?").run(id);
+    this.syncEvidence(id); // gives back what it forgot
   }
 }

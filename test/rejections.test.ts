@@ -52,7 +52,7 @@ describe("lbg proposal reject → rejection memory", () => {
   it("makes no model call and leaves a pending memory with a topic snapshot", () => {
     const s = setup();
     const r = rejectProposal(s.tree, s.proposalId, "tmux key bindings are personal, not worth a skill");
-    expect(r).toEqual({ memoryId: 1, status: "pending" });
+    expect(r).toEqual({ memoryId: 1, status: "pending", forgotten: 0 });
     const m = s.mem.mustGet(r.memoryId);
     expect(m).toMatchObject({
       proposalId: s.proposalId,

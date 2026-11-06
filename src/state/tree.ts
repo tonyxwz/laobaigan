@@ -44,6 +44,8 @@ export interface NodeRow {
 
 export interface TreeNode extends NodeRow {
   children: TreeNode[];
+  /** Forgotten nuggets attached here: shown, never counted or drafted. */
+  forgotten: NuggetRow[];
   /** Nuggets attached directly to this node. */
   nuggets: NuggetRow[];
 }
@@ -257,6 +259,39 @@ export class Tree {
     this.markDirty(nodeId);
   }
 
+  /**
+   * Forget nuggets: they stay in the db (so their sessions aren't extracted again) and on
+   * their node (shown as forgotten), but no longer count toward scores or go into drafts.
+   * Returns how many were newly forgotten.
+   */
+  forgetNuggets(ids: number[], reason: string, memoryId?: number): number {
+    let n = 0;
+    const now = Date.now();
+    for (const id of ids) {
+      const g = this.db.getNugget(id);
+      if (!g) throw new Error(`No nugget ${id}`);
+      if (g.forgottenAt) continue;
+      this.sql.prepare("UPDATE nugget SET forgotten_at = ?, forgotten_reason = ?, forgotten_memory = ? WHERE id = ?").run(now, reason, memoryId ?? null, id);
+      if (g.nodeId !== undefined) this.markDirty(g.nodeId);
+      n++;
+    }
+    return n;
+  }
+
+  /** Undo forget (all of `ids`, or every nugget a memory forgot). Returns how many came back. */
+  unforgetNuggets(sel: { ids?: number[]; memoryId?: number }): number {
+    const rows = (
+      sel.memoryId !== undefined
+        ? this.sql.prepare("SELECT id, node_id FROM nugget WHERE forgotten_memory = ?").all(sel.memoryId)
+        : (sel.ids ?? []).map((id) => this.sql.prepare("SELECT id, node_id FROM nugget WHERE id = ? AND forgotten_at IS NOT NULL").get(id)).filter(Boolean)
+    ) as Row[];
+    for (const r of rows) {
+      this.sql.prepare("UPDATE nugget SET forgotten_at = NULL, forgotten_reason = NULL, forgotten_memory = NULL WHERE id = ?").run(Number(r.id));
+      if (r.node_id != null) this.markDirty(Number(r.node_id));
+    }
+    return rows.length;
+  }
+
   /** Take a nugget out of the tree (e.g. to re-insert it). */
   detachNugget(nuggetId: number): void {
     const n = this.db.getNugget(nuggetId);
@@ -284,7 +319,7 @@ export class Tree {
 
   /** Nuggets not yet placed in the tree, oldest first. */
   unplacedNuggets(): NuggetRow[] {
-    return this.db.nuggets().filter((n) => n.nodeId === undefined);
+    return this.db.nuggets().filter((n) => n.nodeId === undefined && !n.forgottenAt);
   }
 
   /**
@@ -372,8 +407,12 @@ export class Tree {
   trees(scope?: Scope): TreeNode[] {
     const rows = (this.sql.prepare("SELECT * FROM node ORDER BY depth, id").all() as Row[]).map(toNode);
     const byId = new Map<number, TreeNode>();
-    for (const r of rows) byId.set(r.id, { ...r, children: [], nuggets: [] });
-    for (const n of this.db.nuggets()) if (n.nodeId !== undefined) byId.get(n.nodeId)?.nuggets.push(n);
+    for (const r of rows) byId.set(r.id, { ...r, children: [], nuggets: [], forgotten: [] });
+    for (const n of this.db.nuggets()) {
+      if (n.nodeId === undefined) continue;
+      const node = byId.get(n.nodeId);
+      if (node) (n.forgottenAt ? node.forgotten : node.nuggets).push(n);
+    }
     const roots: TreeNode[] = [];
     for (const n of byId.values()) {
       if (n.parentId === undefined) roots.push(n);

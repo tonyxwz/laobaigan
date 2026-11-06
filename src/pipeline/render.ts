@@ -142,6 +142,7 @@ House rules:
 - Write for an agent that has never seen these sessions. Exact commands, paths, names, flags and the reason behind each rule. No "as discussed", no anecdotes, no session-specific trivia (today's branch, one-off task details).
 - Keep SKILL.md short. Put a subtopic that only matters in some tasks into references/<subtopic>.md and say in SKILL.md when to read it.
 - Corrections become rules: "Do X, not Y (because ...)".
+- Knowledge items are dated. When two of them conflict, the newer one wins; drop the older claim instead of keeping both.
 - Never include secrets, tokens, account credentials, or anything shown as [REDACTED].
 - Only write the paths you were given. You may read anything else in the repository to match its conventions and avoid duplicating other skills.
 - Stay on the skill's topic (its title and, for an existing skill, its current description). Some knowledge items may only be adjacent: they mention a related tool or word but are about something else. Don't write those in; list them in report_draft's \`excluded\` with a one-line reason, and they will be filed in a better skill. Don't widen the description to cover them.
@@ -326,7 +327,7 @@ export async function draftSkill(tree: Tree, runner: PiRunner, cfg: Config, node
     const base = await snapshot(target.root, target.writable);
     scratch = await makeScratch(target);
     log(`draft ${target.skillName} (${kind}): proposal #${proposalId}`);
-    const siblings = skill.parentId !== undefined ? tree.children(skill.parentId).map((c) => ({ ...c, children: [], nuggets: [] })) : [];
+    const siblings = skill.parentId !== undefined ? tree.children(skill.parentId).map((c) => ({ ...c, children: [], nuggets: [], forgotten: [] })) : [];
     const review = reviewFeedbackPrompt(tree, skill);
     const res = await runner.run({
       model: cfg.models.distill,

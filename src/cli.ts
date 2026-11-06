@@ -73,6 +73,9 @@ files change only through proposals; every edit re-scores right away):
   lbg tree rename <id> [--title T] [--name skill-name]
   lbg tree unlock <id>                                 Let automation reorganize it again
   lbg nuggets move <nugget> <node>
+  lbg nuggets forget <nugget>... [--reason "..."]       Stop it counting (outdated); kept so its session isn't re-read
+  lbg nuggets forget --skill <id> --before <date>        Forget a skill's evidence from before a date
+  lbg nuggets unforget <nugget>...
 
   lbg nuggets [--json]                                       List stored nuggets
 
@@ -87,9 +90,10 @@ Proposals (lbg never runs git: accept writes the files; commit them yourself if 
   lbg proposal revise <id>                     Chat with pi about the draft (your pi TUI; writes only the draft's files)
   lbg proposal revise <id> "feedback"          One shot: pi redrafts with your feedback
   lbg proposal edit <id>                       Edit the drafted files in $VISUAL / $EDITOR
-  lbg proposal reject <id> [--reason "..."] [--kind outdated|not-useful|wrong-place|later] [--to <skill>]
+  lbg proposal reject <id> [--reason "..."] [--kind outdated|not-useful|wrong-place|later] [--to <skill>] [--forget]
       No model call. Leaves a rejection memory that the next lbg run classifies (--kind: use mine now;
-      --to: with wrong-place, where it belongs).
+      --to: with wrong-place, where it belongs; --forget: its evidence stops counting. An outdated
+      rejection forgets its evidence anyway).
 
 Rejection memories (what rejections teach lbg):
   lbg rejections [--status pending,active,removed] [--json]   List (default: pending + active)
@@ -143,6 +147,9 @@ async function main(argv: string[]): Promise<number> {
       commit: { type: "boolean", default: false },
       reason: { type: "string" },
       kind: { type: "string" },
+      skill: { type: "string" },
+      before: { type: "string" },
+      "forget": { type: "boolean", default: false },
       rule: { type: "string" },
       to: { type: "string" },
       revise: { type: "boolean", default: false },
@@ -609,7 +616,7 @@ async function main(argv: string[]): Promise<number> {
             out(`\nEvidence (${evidence.length}):\n`);
             for (const n of evidence) {
               const e = n.evidence[0];
-              out(`  - #${n.id} ${n.agent}:${n.sessionId.slice(0, 8)}${e?.ts ? ` ${e.ts.slice(0, 10)}` : ""} ${n.title}${e ? `\n      "${truncate(e.quote, 160)}"` : ""}\n`);
+              out(`  - #${n.id} ${n.agent}:${n.sessionId.slice(0, 8)}${e?.ts ? ` ${e.ts.slice(0, 10)}` : ""} ${n.title}${n.forgottenAt ? `  (forgotten: ${n.forgottenReason ?? ""})` : ""}${e ? `\n      "${truncate(e.quote, 160)}"` : ""}\n`);
             }
           }
           const feedback = new Feedback(db).forNode(p.nodeId);
@@ -770,8 +777,9 @@ async function main(argv: string[]): Promise<number> {
           const kind = values.kind !== undefined ? assertKind(values.kind) : undefined;
           const to = values.to !== undefined ? Number(values.to.replace(/^#/, "")) : undefined;
           if (to !== undefined && !Number.isInteger(to)) throw new Error(`--to expects a skill id, got ${values.to}`);
-          const r = rejectProposal(tree, id, values.reason, { ...(kind ? { kind } : {}), ...(to !== undefined ? { targetNodeId: to } : {}) });
+          const r = rejectProposal(tree, id, values.reason, { ...(kind ? { kind } : {}), ...(to !== undefined ? { targetNodeId: to } : {}), forget: values.forget });
           out(`rejected #${id}${values.reason ? `: ${values.reason}` : ""}.\n`);
+          if (r.forgotten) out(`${r.forgotten} evidence item(s) forgotten: they no longer count.\n`);
           out(
             r.status === "pending"
               ? `Rejection memory #${r.memoryId} is pending: the next lbg run classifies it. Check with: lbg rejections\n`
@@ -803,14 +811,40 @@ async function main(argv: string[]): Promise<number> {
           out(`nugget #${n} → ${tree.path(node!).slice(1).map((p) => `#${p.id} ${p.title}`).join(" › ")}\n`);
           return 0;
         }
-        if (rest[0]) throw new Error(`Unknown nuggets subcommand: ${rest[0]} (move)`);
+        if (rest[0] === "forget" || rest[0] === "unforget") {
+          const ids = rest.slice(1).map((x) => Number(x.replace(/^#/, "")));
+          if (ids.some((x) => !Number.isInteger(x) || x <= 0)) throw new Error(`nuggets ${rest[0]} expects nugget ids`);
+          if (rest[0] === "unforget") {
+            if (!ids.length) throw new Error("nuggets unforget expects nugget ids");
+            const n = tree.unforgetNuggets({ ids });
+            renderScore(scoreTree(tree, cfg.score), out);
+            out(`${n} nugget(s) count again.\n`);
+            return 0;
+          }
+          let targets = ids;
+          if (values.skill !== undefined || values.before !== undefined) {
+            if (ids.length) throw new Error("give nugget ids, or --skill with --before, not both");
+            if (values.skill === undefined || values.before === undefined) throw new Error("--skill and --before go together");
+            const skill = tree.subtree(Number(values.skill.replace(/^#/, "")));
+            if (!skill || skill.depth !== 1) throw new Error(`--skill ${values.skill}: not a skill`);
+            const before = parseSince(values.before);
+            targets = subtreeNuggets(skill).filter((g) => evidenceTime(g) < before.getTime()).map((g) => g.id);
+          }
+          if (!targets.length) throw new Error("nothing to forget");
+          const n = tree.forgetNuggets(targets, values.reason?.trim() || "forgotten by hand");
+          renderScore(scoreTree(tree, cfg.score), out);
+          out(`${n} nugget(s) forgotten: they no longer count or go into drafts (lbg nuggets unforget <id> to undo).\n`);
+          return 0;
+        }
+        if (rest[0]) throw new Error(`Unknown nuggets subcommand: ${rest[0]} (move | forget | unforget)`);
         const rows = db.nuggets();
         if (values.json) return json(rows), 0;
         for (const r of rows) {
           const where = r.nodeId !== undefined ? tree.path(r.nodeId).slice(1).map((p) => p.name ?? p.title).join(" › ") : "(not placed)";
           out(
             `#${r.id} [${r.kind}/${r.scope}] ${r.title}  (${r.agent}:${r.sessionId.slice(0, 12)}, conf ${r.confidence})\n` +
-              `    in: ${where}${r.coveredNodeId !== undefined ? "  (already covered by the live text)" : ""}\n${indent(r.knowledge)}\n\n`,
+              `    in: ${where}${r.coveredNodeId !== undefined ? "  (already covered by the live text)" : ""}` +
+              `${r.forgottenAt ? `  (forgotten: ${r.forgottenReason ?? ""})` : ""}\n${indent(r.knowledge)}\n\n`,
           );
         }
         out(`${rows.length} nugget(s)\n`);
@@ -983,7 +1017,18 @@ function renderNodeDetail(n: TreeNode, path: string[]): string {
     if (c.summary) lines.push(c.summary);
     nuggetLines(c.nuggets, "  ");
   }
+  const forgotten = [n, ...n.children].flatMap((x) => x.forgotten);
+  if (forgotten.length) {
+    lines.push("", `## Forgotten (${forgotten.length}; not counted, not drafted)`);
+    for (const m of forgotten) lines.push(`  #${m.id} ${m.title}  (${m.forgottenReason ?? "forgotten"}, ${m.forgottenAt!.toISOString().slice(0, 10)})`);
+  }
   return `${lines.join("\n")}\n`;
+}
+
+/** When a nugget's evidence was said (first evidence timestamp), else when it was extracted. */
+function evidenceTime(n: { evidence: { ts?: string }[]; createdAt: Date }): number {
+  const ts = n.evidence.map((e) => e.ts).filter((x): x is string => !!x).sort()[0];
+  return ts ? Date.parse(ts) : n.createdAt.getTime();
 }
 
 function summarize(t: Transcript) {

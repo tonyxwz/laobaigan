@@ -292,6 +292,13 @@ export const MIGRATIONS: string[] = [
    );
    CREATE INDEX rejection_status ON rejection_memory (status);
    CREATE INDEX rejection_node ON rejection_memory (node_id);`,
+  // 17: forgotten evidence (outdated, or forgotten by hand): kept so its sessions aren't
+  // re-extracted, but it no longer counts, drafts, or gets inserted. Plus per-memory counters.
+  `ALTER TABLE nugget ADD COLUMN forgotten_at INTEGER;
+   ALTER TABLE nugget ADD COLUMN forgotten_reason TEXT;
+   ALTER TABLE nugget ADD COLUMN forgotten_memory INTEGER;   -- the rejection memory that forgot it
+   ALTER TABLE rejection_memory ADD COLUMN caught INTEGER NOT NULL DEFAULT 0;        -- nuggets insert routed to it
+   ALTER TABLE rejection_memory ADD COLUMN extract_uses INTEGER NOT NULL DEFAULT 0;  -- extraction calls it was in`,
 ];
 
 /** Lifecycle of a skill: open → candidate (earned a proposal) → proposed → open again (accepted: it's live now) or rejected. */
@@ -323,6 +330,11 @@ export interface NuggetRow {
   attachedAt?: Date;
   /** Skills (depth-1 node ids) it was left out of as off-topic; insert never routes it there. */
   excludedFrom: number[];
+  /** Forgotten (outdated, or by hand): kept for dedup, but it no longer counts or drafts. */
+  forgottenAt?: Date;
+  forgottenReason?: string;
+  /** The rejection memory that forgot it (unforgotten if that memory is removed or changes kind). */
+  forgottenMemory?: number;
   createdAt: Date;
 }
 
@@ -555,6 +567,9 @@ function toNugget(r: Row): NuggetRow {
     ...(r.covered_node_id != null ? { coveredNodeId: Number(r.covered_node_id) } : {}),
     ...(r.attached_at != null ? { attachedAt: new Date(Number(r.attached_at)) } : {}),
     excludedFrom: parseJson(r.excluded_from, [] as number[]),
+    ...(r.forgotten_at != null ? { forgottenAt: new Date(Number(r.forgotten_at)) } : {}),
+    ...(r.forgotten_reason ? { forgottenReason: String(r.forgotten_reason) } : {}),
+    ...(r.forgotten_memory != null ? { forgottenMemory: Number(r.forgotten_memory) } : {}),
     createdAt: new Date(Number(r.created_at)),
   };
 }
