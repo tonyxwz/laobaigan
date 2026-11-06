@@ -3,6 +3,7 @@ import { dirname, isAbsolute, join } from "node:path";
 import { createTwoFilesPatch } from "diff";
 import type { Config } from "../config.ts";
 import { Feedback } from "../state/feedback.ts";
+import { Rejections, type RejectedTopic, type RejectionKind } from "../state/rejections.ts";
 import { hashContent, Proposals, type DraftFile, type ProposalRow } from "../state/proposals.ts";
 import type { NuggetRow } from "../state/db.ts";
 import { subtreeNuggets, type Tree } from "../state/tree.ts";
@@ -131,11 +132,63 @@ export async function commitTargetFor(tree: Tree, p: ProposalRow): Promise<Commi
   return { paths: p.files.map((f) => join(p.targetRoot, f.path)), commitMessage: commitMessageFor(tree, p), changedSince };
 }
 
-export function rejectProposal(tree: Tree, id: number, reason?: string): void {
-  tree.db.tx(() => {
-    new Proposals(tree.db).markRejected(id, reason);
+export interface RejectResult {
+  memoryId: number;
+  /** pending: the next lbg run classifies it. active: I gave the kind (or there was no reason). */
+  status: "pending" | "active";
+  kind?: RejectionKind;
+}
+
+/**
+ * Reject a proposal. No model call: it stores the reason as review feedback and
+ * leaves a rejection memory that the next `lbg run` classifies (or, with `kind`,
+ * is active right away with the reason as its rule).
+ */
+export function rejectProposal(
+  tree: Tree,
+  id: number,
+  reason?: string,
+  opts: { kind?: RejectionKind; targetNodeId?: number } = {},
+): RejectResult {
+  const props = new Proposals(tree.db);
+  const p = props.mustGet(id);
+  const text = reason?.trim() ?? "";
+  const node = tree.getNode(p.nodeId);
+  const scope = node ? { scope: node.scope, ...(node.repo ? { repo: node.repo } : {}) } : { scope: p.scope, ...(p.repo ? { repo: p.repo } : {}) };
+  if (opts.targetNodeId !== undefined) {
+    if (opts.kind !== "wrong-place") throw new Error("--to only goes with --kind wrong-place");
+    const t = tree.getNode(opts.targetNodeId);
+    if (!t || t.depth !== 1) throw new Error(`--to ${opts.targetNodeId}: not a skill`);
+    if (t.id === p.nodeId) throw new Error("--to: that's the rejected skill itself");
+    if (t.scope !== scope.scope || (t.repo ?? undefined) !== (scope.repo ?? undefined)) throw new Error(`--to ${t.id}: a skill of another scope`);
+  }
+  const topic: RejectedTopic = {
+    ...(p.skillName ?? node?.name ? { name: p.skillName ?? node!.name! } : {}),
+    title: node?.title ?? p.skillName ?? `skill #${p.nodeId}`,
+    ...(node?.description ? { description: node.description } : {}),
+    proposalKind: p.kind,
+    evidence: p.nuggetIds
+      .slice(0, 12)
+      .map((n) => tree.db.getNugget(n))
+      .filter((n): n is NonNullable<typeof n> => !!n)
+      .map((n) => ({ id: n.id, title: n.title })),
+  };
+  return tree.db.tx(() => {
+    props.markRejected(id, text || undefined);
     // The reason is review feedback: the next draft of this skill (or a nearby one) sees it.
-    new Feedback(tree.db).add({ proposalId: id, kind: "reject", text: reason?.trim() ?? "" });
+    const feedbackId = new Feedback(tree.db).add({ proposalId: id, kind: "reject", text });
+    const mem = new Rejections(tree.db);
+    const base = { proposalId: id, feedbackId, nodeId: p.nodeId, ...scope, topic };
+    if (opts.kind) {
+      const memoryId = mem.add({ ...base, kind: opts.kind, rule: text || `rejected as ${opts.kind}`, ...(opts.targetNodeId !== undefined ? { targetNodeId: opts.targetNodeId } : {}) });
+      return { memoryId, status: "active" as const, kind: opts.kind };
+    }
+    if (!text) {
+      // Nothing to classify: "not now". Unlocked, so I can still edit it.
+      const memoryId = mem.add({ ...base, kind: "later", rule: "rejected without a reason", locked: false });
+      return { memoryId, status: "active" as const, kind: "later" as const };
+    }
+    return { memoryId: mem.add(base), status: "pending" as const };
   });
 }
 

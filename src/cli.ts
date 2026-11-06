@@ -31,6 +31,7 @@ import { chatRevise, editProposal, type InteractiveResult } from "./pipeline/int
 import { createInterface } from "node:readline/promises";
 import { Feedback } from "./state/feedback.ts";
 import { PROPOSAL_STATUSES, Proposals, type ProposalRow, type ProposalStatus } from "./state/proposals.ts";
+import { assertKind, MEMORY_STATUSES, Rejections, type MemoryRow, type MemoryStatus } from "./state/rejections.ts";
 import { parseDuration, parseSince } from "./util/time.ts";
 
 const USAGE = `lbg (laobaigan 老白干) — distill repeated explanations from agent sessions into skills
@@ -85,7 +86,14 @@ Proposals (lbg never runs git: accept writes the files; commit them yourself if 
   lbg proposal revise <id>                     Chat with pi about the draft (your pi TUI; writes only the draft's files)
   lbg proposal revise <id> "feedback"          One shot: pi redrafts with your feedback
   lbg proposal edit <id>                       Edit the drafted files in $VISUAL / $EDITOR
-  lbg proposal reject <id> [--reason "..."]
+  lbg proposal reject <id> [--reason "..."] [--kind outdated|not-useful|wrong-place|later] [--to <skill>]
+      No model call. Leaves a rejection memory that the next lbg run classifies (--kind: use mine now;
+      --to: with wrong-place, where it belongs).
+
+Rejection memories (what rejections teach lbg):
+  lbg rejections [--status pending,active,removed] [--json]   List (default: pending + active)
+  lbg rejections edit <id> [--kind K] [--rule "..."] [--to <skill>]   Correct one; locks it (never reclassified)
+  lbg rejections forget <id>                                  Stop using it
   lbg proposal drop <id> <nugget>... [--reason "..."] [--to <node>] [--revise]
                                                Take evidence off a proposal (off-topic); it's re-filed elsewhere
                                                (or put in --to), never routed back. --revise redrafts without it
@@ -133,6 +141,8 @@ async function main(argv: string[]): Promise<number> {
       force: { type: "boolean", default: false },
       commit: { type: "boolean", default: false },
       reason: { type: "string" },
+      kind: { type: "string" },
+      rule: { type: "string" },
       to: { type: "string" },
       revise: { type: "boolean", default: false },
       title: { type: "string" },
@@ -256,6 +266,7 @@ async function main(argv: string[]): Promise<number> {
         for (const st of r.stages) {
           out(`${st.stage.padEnd(7)} ${st.status === "ok" ? "" : `[${st.status}] `}${st.summary}${st.calls ? ` (${st.calls} call(s), $${st.usage.cost.toFixed(4)})` : ""}\n`);
         }
+        for (const c of r.rejections) out(`rejection #${c.id} classified: ${c.kind}${c.target ? ` (→ ${c.target})` : ""} → ${c.rule} — check: lbg rejections\n`);
         for (const p of r.proposals) out(`new proposal #${p.id}: ${p.skill} (${p.files} file(s)) — review with: lbg proposal show ${p.id}\n`);
         out(`run #${r.runId} finished in ${Math.round(r.ms / 1000)}s: ${r.calls} model call(s), cost≈$${r.usage.cost.toFixed(4)}\n`);
         if (r.abortedReason) process.stderr.write(`run aborted: ${r.abortedReason}\n(if this is a credentials error, refresh your model provider's credentials)\n`);
@@ -493,6 +504,55 @@ async function main(argv: string[]): Promise<number> {
       }
     }
 
+    case "rejections": {
+      const cfg = loadConfig();
+      const db = new StateDb(join(cfg.stateDir, "state.db"));
+      try {
+        const tree = new Tree(db);
+        const mem = new Rejections(db);
+        const [sub, idArg] = rest;
+        const num = (x: string | undefined, what: string) => {
+          const n = Number((x ?? "").replace(/^#/, ""));
+          if (!Number.isInteger(n) || n <= 0) throw new Error(`Expected ${what} id, got ${JSON.stringify(x)}`);
+          return n;
+        };
+        if (!sub) {
+          const statuses = (values.status?.split(",") ?? ["pending", "active"]) as MemoryStatus[];
+          for (const st of statuses) if (!MEMORY_STATUSES.includes(st)) throw new Error(`Bad status ${st}`);
+          const list = mem.list(statuses);
+          if (values.json) return json(list), 0;
+          for (const m of list) out(renderMemory(m, tree));
+          out(`\n${list.length} rejection memor${list.length === 1 ? "y" : "ies"}. Correct one: lbg rejections edit <id> --kind … --rule "…"\n`);
+          return 0;
+        }
+        if (sub === "edit") {
+          const id = num(idArg, "rejection memory");
+          if (values.kind === undefined && values.rule === undefined && values.to === undefined) throw new Error("rejections edit expects --kind, --rule and/or --to");
+          const kind = values.kind !== undefined ? assertKind(values.kind) : undefined;
+          let target: number | undefined;
+          if (values.to !== undefined) {
+            target = num(values.to, "skill");
+            const m = mem.mustGet(id);
+            const t = tree.getNode(target);
+            if (!t || t.depth !== 1 || t.scope !== m.scope || (t.repo ?? undefined) !== (m.repo ?? undefined)) throw new Error(`--to ${target}: not a skill in the same scope`);
+            if ((kind ?? m.kind) !== "wrong-place") throw new Error("--to only goes with --kind wrong-place");
+          }
+          const m = mem.edit(id, { ...(kind ? { kind } : {}), ...(values.rule !== undefined ? { rule: values.rule } : {}), ...(target !== undefined ? { targetNodeId: target } : {}) });
+          out(renderMemory(m, tree));
+          return 0;
+        }
+        if (sub === "forget") {
+          const id = num(idArg, "rejection memory");
+          mem.forget(id);
+          out(`rejection memory #${id} forgotten: lbg no longer uses it.\n`);
+          return 0;
+        }
+        throw new Error(`Unknown rejections subcommand: ${sub} (edit | forget)`);
+      } finally {
+        db.close();
+      }
+    }
+
     case "proposals":
     case "proposal": {
       const cfg = loadConfig();
@@ -706,8 +766,16 @@ async function main(argv: string[]): Promise<number> {
           return r.revised?.problems.length ? 2 : 0;
         }
         if (sub === "reject") {
-          rejectProposal(tree, id, values.reason);
-          out(`rejected #${id}${values.reason ? `: ${values.reason}` : ""}. The skill comes back only with evidence from new sessions.\n`);
+          const kind = values.kind !== undefined ? assertKind(values.kind) : undefined;
+          const to = values.to !== undefined ? Number(values.to.replace(/^#/, "")) : undefined;
+          if (to !== undefined && !Number.isInteger(to)) throw new Error(`--to expects a skill id, got ${values.to}`);
+          const r = rejectProposal(tree, id, values.reason, { ...(kind ? { kind } : {}), ...(to !== undefined ? { targetNodeId: to } : {}) });
+          out(`rejected #${id}${values.reason ? `: ${values.reason}` : ""}.\n`);
+          out(
+            r.status === "pending"
+              ? `Rejection memory #${r.memoryId} is pending: the next lbg run classifies it. Check with: lbg rejections\n`
+              : `Rejection memory #${r.memoryId}: ${r.kind}${kind ? "" : " (no reason given; edit with lbg rejections edit " + r.memoryId + ")"}.\n`,
+          );
           return 0;
         }
         throw new Error(`Unknown proposal subcommand: ${sub} (show | accept | revise | edit | drop | reject)`);
@@ -834,6 +902,20 @@ async function page(text: string, noPager: boolean): Promise<void> {
     child.stdin.on("error", () => {}); // pager quit early
     child.stdin.end(text);
   });
+}
+
+function renderMemory(m: MemoryRow, tree: Tree): string {
+  const skill = m.topic.name ?? m.topic.title;
+  const target = m.targetNodeId !== undefined ? tree.getNode(m.targetNodeId) : undefined;
+  const age = Math.max(0, Math.round((Date.now() - m.createdAt.getTime()) / 86400e3));
+  const head =
+    `#${String(m.id).padEnd(3)} ${m.status.padEnd(7)} ${(m.kind ?? "?").padEnd(11)} ${skill}  ` +
+    `[${m.scope === "global" ? "global" : `repo ${shortPath(m.repo)}`}] proposal #${m.proposalId}, ${age}d${m.locked ? ", edited" : ""}\n`;
+  const lines = [head];
+  if (m.rule) lines.push(`      rule: ${m.rule}${target ? ` (→ #${target.id} ${target.name ?? target.title})` : ""}\n`);
+  if (m.reason) lines.push(`      reason: ${truncate(m.reason.replace(/\s+/g, " "), 160)}\n`);
+  if (m.status === "pending") lines.push(`      ${m.error ? `last try failed: ${m.error}` : "classified by the next lbg run"}\n`);
+  return lines.join("");
 }
 
 function renderProposalLine(p: ProposalRow, tree: Tree): string {

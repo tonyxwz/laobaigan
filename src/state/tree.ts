@@ -329,6 +329,8 @@ export class Tree {
     if (to !== undefined && this.mustGet(to).depth === 0) throw new Error("Can't hand a node's evidence to a root");
     this.sql.prepare("UPDATE nugget SET node_id = ?, attached_at = CASE WHEN ? IS NULL THEN NULL ELSE attached_at END WHERE node_id = ?").run(to ?? null, to ?? null, id);
     this.sql.prepare("UPDATE nugget SET covered_node_id = ? WHERE covered_node_id = ?").run(to ?? null, id);
+    // Rejection memories follow the node (nothing points at a deleted id).
+    this.sql.prepare("UPDATE rejection_memory SET target_node_id = ? WHERE target_node_id = ?").run(to ?? null, id);
     if (this.hasProposals(id)) {
       if (to === undefined || this.mustGet(to).depth !== 1) {
         this.sql.prepare("UPDATE node SET origin = 'latent', source_path = NULL, source_hash = NULL, updated_at = ? WHERE id = ?").run(Date.now(), id);
@@ -336,6 +338,7 @@ export class Tree {
       }
       this.sql.prepare("UPDATE proposal SET node_id = ? WHERE node_id = ?").run(to, id);
     }
+    this.sql.prepare("UPDATE rejection_memory SET node_id = ? WHERE node_id = ?").run(to ?? null, id);
     this.sql.prepare("DELETE FROM node WHERE id = ?").run(id);
     if (to !== undefined) this.markDirty(to);
     return true;

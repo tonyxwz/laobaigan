@@ -156,17 +156,20 @@ depth 2  section  a "##" section of SKILL.md, a references/*.md file, or an AGEN
 **Review feedback**
 : What you tell lbg while reviewing: your messages in a revise chat, one-shot revise feedback, your hand edits, and reject reasons. lbg keeps it with the proposal and shows it to every later draft of that skill, so a redraft keeps your corrections. Reject reasons are also shown when drafting other skills in the same scope. It never counts as evidence for promotion.
 
+**Rejection memory**
+: What a rejection teaches lbg. Rejecting writes it with no model call; the next run classifies it into a **kind** and a one-line **rule**: `outdated` (the knowledge is stale, a corrected version is welcome), `not-useful` (no skill about this topic), `wrong-place` (belongs in another skill, its **target**), `later` (not now). Statuses: `pending` (not classified yet), `active`, `removed` (forgotten). A memory I edited is **locked**: never reclassified. See `lbg rejections`.
+
 **Accept / reject / revise / edit**
 : How you review a proposal:
   - **accept**: write its files into the skills dir or repo, then sync. You commit them yourself.
-  - **reject**: drop it, with a reason.
+  - **reject**: drop it, with a reason. Leaves a rejection memory.
   - **revise**: change it with pi, as a chat or one-shot feedback.
   - **edit**: change it in your editor.
 
 ## Running
 
 **Run**
-: One `lbg run` pass, which the hourly systemd timer starts: **sync → extract → insert → score → draft**, then the prompt file and the run log. With nothing new it makes no model calls.
+: One `lbg run` pass, which the hourly systemd timer starts: **sync → rejections → extract → insert → score → draft**, then the prompt file and the run log. With nothing new it makes no model calls.
 
 **Stage**
 : One step of a run. Each has its own budget (`extract.maxCallsPerRun`, `insert.maxCallsPerRun`, `render.maxPerRun`); work over budget waits for the next run. A failing stage doesn't stop the others.

@@ -269,6 +269,29 @@ export const MIGRATIONS: string[] = [
      created_at   INTEGER NOT NULL
    );
    CREATE INDEX feedback_proposal ON feedback (proposal_id);`,
+  // 16: rejection memory. Rejecting a proposal (no model call) leaves a memory; the next lbg run
+  // classifies it (kind + one-line rule), and later stages use it so similar proposals stop.
+  // Node ids aren't foreign keys: nodes can be replaced, and tree.removeNode remaps them.
+  `CREATE TABLE rejection_memory (
+     id             INTEGER PRIMARY KEY AUTOINCREMENT,
+     proposal_id    INTEGER NOT NULL REFERENCES proposal (id),
+     feedback_id    INTEGER REFERENCES feedback (id),
+     node_id        INTEGER,                -- the rejected skill
+     scope          TEXT NOT NULL,
+     repo           TEXT,
+     kind           TEXT,                   -- outdated | not-useful | wrong-place | later; NULL until classified
+     rule           TEXT,                   -- one line: what to do differently
+     topic          TEXT NOT NULL,          -- JSON snapshot: skill name/title/description, evidence
+     target_node_id INTEGER,                -- wrong-place: where this belongs
+     status         TEXT NOT NULL,          -- pending | active | removed
+     locked         INTEGER NOT NULL DEFAULT 0,  -- edited by me: never reclassified
+     error          TEXT,                   -- last classification error
+     expires_at     INTEGER,
+     created_at     INTEGER NOT NULL,
+     classified_at  INTEGER
+   );
+   CREATE INDEX rejection_status ON rejection_memory (status);
+   CREATE INDEX rejection_node ON rejection_memory (node_id);`,
 ];
 
 /** Lifecycle of a skill: open → candidate (earned a proposal) → proposed → open again (accepted: it's live now) or rejected. */

@@ -4,6 +4,7 @@ import { addUsage, ZERO_USAGE } from "../pi/run-pi.ts";
 import type { SourceAdapter } from "../sources/index.ts";
 import type { StateDb } from "../state/db.ts";
 import { Tree } from "../state/tree.ts";
+import { classifyRejections } from "./classify.ts";
 import { insertNuggets } from "./insert.ts";
 import { processSessions } from "./process.ts";
 import { draftCandidates } from "./render.ts";
@@ -14,7 +15,8 @@ import { writePromptStatus } from "../notify/prompt.ts";
 /**
  * One unattended pass (what the hourly timer runs):
  *
- *   sync     skill files → tree                     (no model)
+ *   sync        skill files → tree                  (no model)
+ *   rejections  classify pending rejection memories (≤ rejections.maxCallsPerRun calls)
  *   extract  new/changed sessions → nuggets         (≤ extract.maxCallsPerRun calls)
  *   insert   unplaced nuggets → skills/sections     (≤ insert.maxCallsPerRun calls)
  *   score    promote / demote candidates            (no model)
@@ -25,7 +27,7 @@ import { writePromptStatus } from "../notify/prompt.ts";
  * a run makes no model calls.
  */
 
-export const STAGES = ["sync", "extract", "insert", "score", "draft"] as const;
+export const STAGES = ["sync", "rejections", "extract", "insert", "score", "draft"] as const;
 export type Stage = (typeof STAGES)[number];
 
 export interface StageReport {
@@ -46,10 +48,19 @@ export interface NewProposal {
   cost: number;
 }
 
+export interface ClassifiedRejection {
+  id: number;
+  kind: string;
+  rule: string;
+  target?: string;
+}
+
 export interface RunReport {
   runId: number;
   stages: StageReport[];
   proposals: NewProposal[];
+  /** Rejection memories classified in this run (for the journal). */
+  rejections: ClassifiedRejection[];
   calls: number;
   usage: Usage;
   /** Set when model stages were skipped after repeated model errors. */
@@ -76,7 +87,7 @@ export async function runPipeline(deps: RunDeps, opts: { stages?: Stage[]; maxEx
   const enabled = new Set(opts.stages ?? STAGES);
   const tree = new Tree(db);
   const runId = db.startRun("run", false);
-  const rep: RunReport = { runId, stages: [], proposals: [], calls: 0, usage: ZERO_USAGE, ms: 0 };
+  const rep: RunReport = { runId, stages: [], proposals: [], rejections: [], calls: 0, usage: ZERO_USAGE, ms: 0 };
 
   const stage = async (name: Stage, model: boolean, fn: () => Promise<Omit<StageReport, "stage" | "status">>): Promise<void> => {
     if (!enabled.has(name)) return;
@@ -101,6 +112,17 @@ export async function runPipeline(deps: RunDeps, opts: { stages?: Stage[]; maxEx
     const all = [r.global, ...Object.values(r.repos), r.declared];
     const changed = all.reduce((a, x) => a + x.created.length + x.updated.length + x.adopted.length + x.removed.length, 0);
     return { calls: 0, usage: ZERO_USAGE, summary: changed ? `${changed} skill change(s) picked up from files` : "skill files unchanged" };
+  });
+
+  await stage("rejections", true, async () => {
+    const r = await classifyRejections(tree, runner, cfg, { log });
+    for (const c of r.classified) rep.rejections.push({ id: c.id, kind: c.kind, rule: c.rule, ...(c.target ? { target: c.target } : {}) });
+    if (!r.calls) return { calls: 0, usage: ZERO_USAGE, summary: "no rejections to classify" };
+    const parts = [`${r.classified.length} classified`];
+    if (r.failed.length) parts.push(`${r.failed.length} failed (stay pending)`);
+    if (r.deferred) parts.push(`${r.deferred} left for the next run`);
+    if (r.failed.length && !r.classified.length) throw new Error(`${parts.join(", ")}: ${r.failed[0]!.error}`);
+    return { calls: r.calls, usage: r.usage, summary: parts.join(", ") };
   });
 
   await stage("extract", true, async () => {
@@ -175,6 +197,7 @@ export async function runPipeline(deps: RunDeps, opts: { stages?: Stage[]; maxEx
   db.finishRun(runId, {
     stages: rep.stages.map(({ stage, status, calls, usage, summary }) => ({ stage, status, calls, cost: usage.cost, tokens: { input: usage.input, output: usage.output }, summary })),
     proposals: rep.proposals,
+    rejections: rep.rejections,
     calls: rep.calls,
     usage: rep.usage,
     ...(rep.abortedReason ? { abortedReason: rep.abortedReason } : {}),

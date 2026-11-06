@@ -105,6 +105,10 @@ export interface Config {
     /** Max routing calls per run (the rest waits for the next run). */
     maxCallsPerRun: number;
   };
+  rejections: {
+    /** Max rejection memories classified per run (one call each). */
+    maxCallsPerRun: number;
+  };
   render: {
     /** Max proposals drafted per run (each is one opus session). */
     maxPerRun: number;
@@ -182,6 +186,7 @@ export const DEFAULT_CONFIG: Config = {
   },
   redact: { extraPatterns: [] },
   insert: { maxCallsPerRun: 20 },
+  rejections: { maxCallsPerRun: 10 },
   render: { maxPerRun: 2, retryAfterHours: 24, maxSkillLines: 300 },
   score: {
     weights: { session: 3, extraAgent: 3, extraDay: 1, correction: 1, covered: 2 },

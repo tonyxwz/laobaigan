@@ -78,6 +78,7 @@ describe("runPipeline", () => {
     const r = await runPipeline(deps);
     expect(r.stages.map((s) => [s.stage, s.status])).toEqual([
       ["sync", "ok"],
+      ["rejections", "ok"],
       ["extract", "ok"],
       ["insert", "ok"],
       ["score", "ok"],
@@ -97,6 +98,7 @@ describe("runPipeline", () => {
     expect(row.map((x) => x.kind)).toEqual(["run"]);
     expect(JSON.parse(row[0]!.stats).stages.map((s: { stage: string; calls: number }) => [s.stage, s.calls])).toEqual([
       ["sync", 0],
+      ["rejections", 0],
       ["extract", 3],
       ["insert", 2],
       ["score", 0],
@@ -118,6 +120,7 @@ describe("runPipeline", () => {
     expect(r.abortedReason).toMatch(/consecutive model errors/);
     expect(r.stages.map((s) => [s.stage, s.status])).toEqual([
       ["sync", "ok"],
+      ["rejections", "ok"],
       ["extract", "ok"],
       ["insert", "skipped"],
       ["score", "ok"],

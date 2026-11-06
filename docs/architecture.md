@@ -26,7 +26,7 @@ Non-goals: searching or summarizing sessions in general, syncing skills across m
                                                          └──────────────── sync (files → tree) ◀──────┘
 ```
 
-One `lbg run` (hourly, systemd user timer) runs the stages in order: **sync → extract → insert → score → draft** (`src/pipeline/run.ts`). Each stage has its own budget, a failing stage doesn't stop the others, and with nothing new a run makes no model calls. Repeated model errors (e.g. expired credentials) stop extraction and skip the remaining model stages. At the end the run writes the prompt file and one run-log row with calls and cost per stage.
+One `lbg run` (hourly, systemd user timer) runs the stages in order: **sync → rejections → extract → insert → score → draft** (`src/pipeline/run.ts`). `rejections` classifies pending rejection memories (≤ `rejections.maxCallsPerRun`, one extract-model call each). Each stage has its own budget, a failing stage doesn't stop the others, and with nothing new a run makes no model calls. Repeated model errors (e.g. expired credentials) stop extraction and skip the remaining model stages. At the end the run writes the prompt file and one run-log row with calls and cost per stage.
 
 ## 1. Source adapters
 
@@ -189,7 +189,8 @@ A failed draft becomes a `failed` proposal and the skill stays a candidate. `lbg
 - **Evidence while a proposal is open:** insert keeps routing nuggets into the proposed skill; the draft isn't redrafted automatically. Each proposal records `drafted_at`, when its evidence was taken (the draft, or the last AI revise; a hand `edit` doesn't change it). Nuggets attached after it are **new since the draft**: `lbg proposals` shows the count, `show` lists them, and revise marks them `(NEW SINCE THE DRAFT)` for pi and then adds them to the proposal's evidence.
 - **show / diff:** the stored files against what's on disk now, plus the evidence. A draft whose targets changed since drafting is **stale**.
 - **accept:** refuses a stale draft unless `--force`. Otherwise it writes the files into the target, marks the proposal accepted, and syncs, so the skill is live immediately. The live skill is dated to `drafted_at`, not to the accept: evidence the files contain counts as absorbed, and evidence that arrived while the proposal waited still counts as new (and can earn an `update`). It prints the paths and a suggested commit message; lbg never runs git.
-- **reject:** the skill becomes `rejected` and records its session count; it returns only with evidence from new sessions.
+- **reject:** no model call. The skill becomes `rejected` and records its session count (it returns only with evidence from new sessions), the reason is stored as review feedback, and a **rejection memory** is written (`src/state/rejections.ts`): a snapshot of what was rejected (skill name, title, description, proposal kind, up to 12 evidence titles), so classifying it doesn't depend on the node surviving. It is `pending`; with `--kind` it is `active` and locked right away, the reason being the rule (`--to <skill>` sets a `wrong-place` target, same scope only). With no reason it is `later`, unlocked.
+- **classify (the `rejections` stage of lbg run):** each pending, unlocked memory gets one call (extract model, `src/pipeline/classify.ts`) with the reason, the topic snapshot and the other skills of the scope; the answer is a kind, a one-line rule (redacted, ≤ 240 chars) and, for `wrong-place`, a target from that list (anything else is dropped). A failed call leaves the memory pending with the error; two failures in a row leave the rest for the next run. `lbg rejections edit` sets kind / rule / target and locks the memory; `forget` marks it `removed`. Memories follow their nodes when a node is replaced (`tree.removeNode`). *Using* memories in later stages is tracked in beads (`lbg-1ps`).
 - **revise "feedback":** pi redrafts in a scratch copy that starts from the live files plus the stored draft, which also rebases a stale draft. The result passes the same checks before replacing the stored files.
 - **revise (interactive):** starts the user's own `pi` CLI from `PATH` in the scratch dir:
 
@@ -245,6 +246,7 @@ session.getSessionStats();                       // tokens and cost for the run 
 | `turn_seen` | human-turn fingerprint → the session it was first seen in (dedup across resumes) |
 | `nugget` | extracted nuggets, evidence, the tree node they're attached to, when they were attached, the live node that already covered them, hand-placement lock |
 | `node` | the knowledge tree: parent, depth, scope/repo, name, title, description, summary (lazy), origin, status, proposal kind, score and stats, locks, source path and hash, render time |
+| `rejection_memory` | proposal, reject feedback, rejected node, scope, kind, rule, topic snapshot, wrong-place target, status (`pending` / `active` / `removed`), locked, last error |
 | `proposal` | node, kind, status (`drafting` → `open` → `accepted` / `rejected`, or `failed`), target root and writable paths, drafted files (path, original hash, content), summary, evidence, cost |
 | `run` | one row per run: calls, tokens and cost per stage |
 
