@@ -1,3 +1,4 @@
+import { Rejections } from "../state/rejections.ts";
 import { Feedback, type FeedbackWithProposal } from "../state/feedback.ts";
 import type { NodeRow, Tree } from "../state/tree.ts";
 import { truncate } from "../util/text.ts";
@@ -29,16 +30,21 @@ export function reviewFeedbackPrompt(tree: Tree, skill: Pick<NodeRow, "id" | "pa
   const max = opts.maxChars ?? 5000;
   const fb = new Feedback(tree.db);
   const own = fb.forNode(skill.id).reverse();
+  // Classified rejection memories (kind + rule) of this skill and its siblings, newest per skill.
+  const memories = new Rejections(tree.db).byNode();
+  const ownRule = memories.get(skill.id);
   const nearby: string[] = [];
   if (skill.parentId !== undefined) {
     for (const s of tree.children(skill.parentId)) {
       if (s.id === skill.id) continue;
+      const m = memories.get(s.id);
       const rejections = fb.forNode(s.id).filter((f) => f.kind === "reject");
       const last = rejections.at(-1);
-      if (last) nearby.push(`- ${s.name ?? s.title}: rejected ${day(last.createdAt)}${last.text ? `: "${truncate(last.text, 300)}"` : " (no reason given)"}`);
+      if (m?.rule) nearby.push(`- ${s.name ?? s.title}: rejected ${day(m.createdAt)} as ${m.kind}: ${m.rule}`);
+      else if (last) nearby.push(`- ${s.name ?? s.title}: rejected ${day(last.createdAt)}${last.text ? `: "${truncate(last.text, 300)}"` : " (no reason given)"}`);
     }
   }
-  if (!own.length && !nearby.length) return "";
+  if (!own.length && !nearby.length && !ownRule?.rule) return "";
 
   const lines: string[] = [];
   let used = 0;
@@ -49,6 +55,9 @@ export function reviewFeedbackPrompt(tree: Tree, skill: Pick<NodeRow, "id" | "pa
     used += s.length;
     return true;
   };
+  if (ownRule?.rule) {
+    push(`<rejection_rule> This skill was rejected before (${ownRule.kind}): ${ownRule.rule}. Follow this rule. </rejection_rule>`);
+  }
   if (own.length) {
     push(
       "<review_feedback> The engineer reviewed earlier drafts of this skill (newest first). These are their decisions: follow them, and don't bring back what they removed or rejected. If newer evidence clearly contradicts one, follow the evidence and say so in your summary.",
