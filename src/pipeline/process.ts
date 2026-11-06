@@ -4,7 +4,8 @@ import { addUsage, ZERO_USAGE } from "../pi/run-pi.ts";
 import { loadSkillsDir, renderSkillIndex, repoContext, type SkillInfo } from "../skills/index.ts";
 import { scan, type AgentId, type SessionRef, type SourceAdapter, type Transcript } from "../sources/index.ts";
 import type { StateDb } from "../state/db.ts";
-import { extractNuggets, type ExtractedNugget } from "./extract.ts";
+import { Rejections } from "../state/rejections.ts";
+import { extractionMemories, extractNuggets, type ExtractedNugget } from "./extract.ts";
 import { fingerprintTranscript } from "./fingerprint.ts";
 import { buildExcerpt, type Excerpt } from "./prefilter.ts";
 import { join } from "node:path";
@@ -74,6 +75,7 @@ export async function processSessions(
   const runId = record ? db.startRun("extract", false) : 0;
 
   const globalSkills = await loadSkillsDir(cfg.skillsDir, "global");
+  const memories = new Rejections(db).inEffect();
   const warnings: ProcessResult["warnings"] = [];
   const found = await scan(adapters, {
     ...(opts.since ? { since: opts.since } : {}),
@@ -155,11 +157,14 @@ export async function processSessions(
     const repo = await repoContext(t.cwd);
     try {
       log(`extract ${t.agent}:${t.sessionId} (${summary.chunks} chunk(s), ~${summary.approxTokens} tok)`);
+      const rejected = extractionMemories(memories, repo?.root ?? (t.cwd || undefined));
+      if (rejected.length) log(`  rejected topics in the prompt: ${rejected.map((m) => `#${m.id}`).join(", ")}`);
       const out = await extractNuggets(
         runner,
-        { transcript: t, ...(repo ? { repoRoot: repo.root } : {}), skillIndex: renderSkillIndex(globalSkills, repo), excerpt },
+        { transcript: t, ...(repo ? { repoRoot: repo.root } : {}), skillIndex: renderSkillIndex(globalSkills, repo), excerpt, rejected },
         { id: cfg.models.extract, thinking: cfg.models.extractThinking },
       );
+      if (persist) new Rejections(db).addExtractUses(rejected.map((m) => m.id), out.calls);
       calls += out.calls;
       usage = addUsage(usage, out.usage);
       const nuggets = out.nuggets.map((n) => normalizeScope(n, repo?.root ?? (t.cwd || undefined), globalSkills));

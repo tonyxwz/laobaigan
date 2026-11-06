@@ -158,6 +158,11 @@ export class Rejections {
     if (n > 0) this.sql.prepare("UPDATE rejection_memory SET caught = caught + ? WHERE id = ?").run(n, id);
   }
 
+  /** These memories were part of `calls` extraction calls. */
+  addExtractUses(ids: number[], calls: number): void {
+    if (calls > 0) for (const id of ids) this.sql.prepare("UPDATE rejection_memory SET extract_uses = extract_uses + ? WHERE id = ?").run(calls, id);
+  }
+
   /** Pending memories, oldest first (what the next run classifies). */
   pending(): MemoryRow[] {
     return this.list(["pending"]);

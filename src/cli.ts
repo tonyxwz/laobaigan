@@ -946,7 +946,7 @@ function renderMemory(m: MemoryRow, tree: Tree): string {
   const head =
     `#${String(m.id).padEnd(3)} ${m.status.padEnd(7)} ${(m.kind ?? "?").padEnd(11)} ${skill}  ` +
     `[${m.scope === "global" ? "global" : `repo ${shortPath(m.repo)}`}] proposal #${m.proposalId}, ${age}d${m.locked ? ", edited" : ""}` +
-    `${m.caught ? `, caught ${m.caught}` : ""}\n`;
+    `${m.caught ? `, caught ${m.caught}` : ""}${m.extractUses ? `, in ${m.extractUses} extraction call(s)` : ""}\n`;
   const lines = [head];
   if (m.rule) lines.push(`      rule: ${m.rule}${target ? ` (→ #${target.id} ${target.name ?? target.title})` : ""}\n`);
   if (m.reason) lines.push(`      reason: ${truncate(m.reason.replace(/\s+/g, " "), 160)}\n`);

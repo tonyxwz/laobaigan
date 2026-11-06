@@ -3,6 +3,7 @@ import type { PiRunner, ThinkingLevel, Usage } from "../pi/run-pi.ts";
 import { addUsage, ZERO_USAGE } from "../pi/run-pi.ts";
 import type { Transcript } from "../sources/types.ts";
 import type { Excerpt } from "./prefilter.ts";
+import type { MemoryRow } from "../state/rejections.ts";
 
 export const NuggetSchema = Type.Object({
   kind: Type.Union([
@@ -71,13 +72,31 @@ Rules:
 - Write \`knowledge\` so it stands alone: include the exact commands/paths/names from the transcript, not "as discussed".
 - scope: ask "would this help in a different repository?" If no, use "repo" and set \`repo\` to the repository root path when you can tell it (from the session working directory or paths in the transcript).
 - If the knowledge is already covered by a listed existing skill or AGENTS.md section, still report it but set \`coveredBySkill\` — the user having to repeat it means that skill isn't being triggered.
-- confidence: 0.9+ the user explicitly taught/corrected; ~0.6 implied by the user's instructions; below 0.5 don't report.`;
+- confidence: 0.9+ the user explicitly taught/corrected; ~0.6 implied by the user's instructions; below 0.5 don't report.
+- <rejected_topics>, when present, lists topics the user rejected as skills. "outdated": don't report the old claim again, but DO report what replaces it (newer, corrected knowledge). "not-useful": don't report knowledge about that topic at all.`;
 
 export interface ExtractInput {
   transcript: Transcript;
   repoRoot?: string;
   skillIndex: string;
   excerpt: Excerpt;
+  /** Rejection memories of the session's scope that matter for extraction (outdated, not-useful). */
+  rejected?: MemoryRow[];
+}
+
+/** The memories extraction should see: in effect, outdated or not-useful, global or this repo. */
+export function extractionMemories(all: MemoryRow[], repoRoot: string | undefined): MemoryRow[] {
+  return all.filter((m) => (m.kind === "outdated" || m.kind === "not-useful") && (m.scope === "global" || (repoRoot !== undefined && m.repo === repoRoot)));
+}
+
+export function renderRejectedTopics(ms: MemoryRow[]): string[] {
+  if (!ms.length) return [];
+  return [
+    "<rejected_topics>",
+    ...ms.map((m) => `- [${m.kind}] ${m.topic.name ?? m.topic.title}${m.scope === "repo" ? " (this repository)" : ""}: ${m.rule ?? ""}`),
+    "</rejected_topics>",
+    "",
+  ];
 }
 
 export interface ExtractOutput {
@@ -101,6 +120,7 @@ export function buildExtractPrompt(input: ExtractInput, chunk: string, part: { i
     input.skillIndex,
     "</existing_knowledge>",
     "",
+    ...renderRejectedTopics(input.rejected ?? []),
     "<transcript>",
     chunk,
     "</transcript>",
