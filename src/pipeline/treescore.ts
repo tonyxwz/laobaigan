@@ -1,5 +1,6 @@
 import type { ScoreConfig } from "../config.ts";
 import type { NuggetRow } from "../state/db.ts";
+import { Rejections, type MemoryRow } from "../state/rejections.ts";
 import { subtreeNuggets, type ProposalKind, type Tree, type TreeNode } from "../state/tree.ts";
 import { evidenceStats, meetsPromotion, scoreOf, type EvidenceStats } from "./stats.ts";
 
@@ -57,6 +58,8 @@ export interface TreeScoreResult {
   promoted: { id: number; title: string; kind: ProposalKind; score: number }[];
   /** Candidates that no longer qualify (e.g. their evidence moved, or a merge absorbed it). */
   demoted: { id: number; title: string }[];
+  /** Nuggets moved from wrong-place rejected skills to their targets. */
+  moved: number;
 }
 
 /**
@@ -65,16 +68,66 @@ export interface TreeScoreResult {
  *  - rejected → candidate again only after `reproposeAfterSessions` new sessions
  *  - proposed is left alone (the proposal lifecycle owns it)
  */
+/**
+ * What a rejected skill's memory (newest one in effect) means for scoring:
+ *   not-useful   never proposed again while the memory is in effect
+ *   outdated     only evidence attached after the rejection counts (the old one is forgotten)
+ *   wrong-place  its evidence moves to the target skill (and won't be routed back)
+ *   later        re-proposed after `reproposeAfterSessions` new sessions (the default rule)
+ * No memory in effect (none, forgotten, expired): the default rule.
+ */
+export function rejectedRule(skill: TreeNode, memory: MemoryRow | undefined): "never" | "after-rejection" | "default" {
+  if (skill.status !== "rejected" || !memory) return "default";
+  if (memory.kind === "not-useful") return "never";
+  if (memory.kind === "outdated") return "after-rejection";
+  return "default";
+}
+
+/** Move the evidence of wrong-place rejected skills to their targets. Returns nuggets moved. */
+export function applyWrongPlace(tree: Tree): number {
+  const mem = new Rejections(tree.db);
+  let moved = 0;
+  for (const [nodeId, m] of mem.byNode()) {
+    if (m.kind !== "wrong-place" || m.targetNodeId === undefined) continue;
+    const skill = tree.subtree(nodeId);
+    const target = tree.getNode(m.targetNodeId);
+    if (!skill || skill.status !== "rejected" || !target || target.depth !== 1) continue;
+    const ns = subtreeNuggets(skill).filter((n) => !n.assignmentLocked);
+    if (!ns.length) continue;
+    for (const n of ns) {
+      tree.excludeNugget(n.id, skill.id); // never routed back
+      tree.attachNugget(n.id, target.id);
+    }
+    mem.addCaught(m.id, ns.length);
+    moved += ns.length;
+  }
+  return moved;
+}
+
+/** A copy of the skill keeping only nuggets attached after `at` (for outdated rejections). */
+function attachedAfter(skill: TreeNode, at: number): TreeNode {
+  const keep = (n: TreeNode): TreeNode => ({
+    ...n,
+    nuggets: n.nuggets.filter((g) => (g.attachedAt?.getTime() ?? 0) > at),
+    children: n.children.map(keep),
+  });
+  return keep(skill);
+}
+
 export function scoreTree(tree: Tree, cfg: ScoreConfig): TreeScoreResult {
-  const res: TreeScoreResult = { scored: 0, promoted: [], demoted: [] };
+  const res: TreeScoreResult = { scored: 0, promoted: [], demoted: [], moved: 0 };
   tree.db.tx(() => {
+    res.moved = applyWrongPlace(tree);
+    const memories = new Rejections(tree.db).byNode();
     for (const root of tree.trees()) {
       for (const skill of root.children) {
-        const stats = skillStats(skill);
+        const rule = rejectedRule(skill, memories.get(skill.id));
+        const counted = rule === "after-rejection" ? attachedAfter(skill, memories.get(skill.id)!.createdAt.getTime()) : skill;
+        const stats = skillStats(counted);
         const score = scoreOf(stats, cfg.weights);
         res.scored++;
-        let kind = earnedProposal(skill, stats, cfg);
-        if (skill.status === "rejected" && stats.sessions < (skill.rejectedSessions ?? 0) + cfg.promote.reproposeAfterSessions) kind = undefined;
+        let kind = rule === "never" ? undefined : earnedProposal(counted, stats, cfg);
+        if (rule === "default" && skill.status === "rejected" && stats.sessions < (skill.rejectedSessions ?? 0) + cfg.promote.reproposeAfterSessions) kind = undefined;
 
         if (skill.status === "proposed") {
           tree.updateNode(skill.id, { stats, score });

@@ -178,6 +178,7 @@ export async function runPipeline(deps: RunDeps, opts: { stages?: Stage[]; maxEx
     const parts = [`${r.scored} skill(s) scored`];
     if (r.promoted.length) parts.push(`new candidate(s): ${r.promoted.map((p) => `#${p.id} ${p.title} (${p.kind})`).join(", ")}`);
     if (r.demoted.length) parts.push(`no longer candidate(s): ${r.demoted.map((d) => `#${d.id}`).join(", ")}`);
+    if (r.moved) parts.push(`${r.moved} nugget(s) moved out of wrong-place rejected skills`);
     return { calls: 0, usage: ZERO_USAGE, summary: parts.join("; ") };
   });
 

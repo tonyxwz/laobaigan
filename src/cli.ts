@@ -970,6 +970,7 @@ function renderProposalLine(p: ProposalRow, tree: Tree): string {
 function renderScore(r: TreeScoreResult, out: (s: string) => void): void {
   for (const p of r.promoted) out(`candidate: #${p.id} ${p.title} → ${p.kind} (score ${p.score})\n`);
   for (const d of r.demoted) out(`no longer a candidate: #${d.id} ${d.title}\n`);
+  if (r.moved) out(`${r.moved} nugget(s) moved out of wrong-place rejected skills to their targets\n`);
 }
 
 /** One skill line plus its sections (a live skill's own sections only when they hold evidence). */
