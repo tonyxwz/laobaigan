@@ -137,7 +137,6 @@ async function main(argv: string[]): Promise<number> {
       "dry-run": { type: "boolean", default: false },
       fresh: { type: "boolean", default: false },
       excerpt: { type: "boolean", default: false },
-      regroup: { type: "boolean", default: false },
       all: { type: "boolean", default: false },
       "max-calls": { type: "string" },
       status: { type: "string" },
