@@ -168,6 +168,7 @@ export async function runPipeline(deps: RunDeps, opts: { stages?: Stage[]; maxEx
     const r = await insertNuggets(tree, runner, cfg, { maxCalls: cfg.insert.maxCallsPerRun, log });
     const parts = [`placed ${r.placed} nugget(s)`];
     if (r.skillsCreated.length) parts.push(`new latent skill(s): ${r.skillsCreated.join(", ")}`);
+    for (const c of r.caught) parts.push(`${c.nuggets} to rejected ${c.skill} (rejection #${c.memoryId})`);
     if (r.deferred) parts.push(`${r.deferred} deferred (budget)`);
     return { calls: r.calls, usage: r.usage, summary: parts.join(", ") };
   });

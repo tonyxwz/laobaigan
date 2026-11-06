@@ -44,6 +44,10 @@ export interface MemoryRow {
   locked: boolean;
   error?: string;
   expiresAt?: Date;
+  /** Nuggets insert routed to the rejected skill since (look-alikes caught). */
+  caught: number;
+  /** Extraction calls it was part of. */
+  extractUses: number;
   createdAt: Date;
   classifiedAt?: Date;
 }
@@ -67,6 +71,8 @@ function toRow(r: Row): MemoryRow {
     locked: Number(r.locked) === 1,
     ...(r.error ? { error: String(r.error) } : {}),
     ...(r.expires_at != null ? { expiresAt: new Date(Number(r.expires_at)) } : {}),
+    caught: Number(r.caught ?? 0),
+    extractUses: Number(r.extract_uses ?? 0),
     createdAt: new Date(Number(r.created_at)),
     ...(r.classified_at != null ? { classifiedAt: new Date(Number(r.classified_at)) } : {}),
   };
@@ -133,6 +139,23 @@ export class Rejections {
 
   list(status?: MemoryStatus[]): MemoryRow[] {
     return status?.length ? this.select(`m.status IN (${status.map(() => "?").join(",")})`, ...status) : this.select("1");
+  }
+
+  /** Memories in effect: active (and, from lbg-1ps.7, not expired). */
+  inEffect(): MemoryRow[] {
+    return this.list(["active"]).filter((m) => !m.expiresAt || m.expiresAt.getTime() > Date.now());
+  }
+
+  /** The newest memory in effect for each node. */
+  byNode(): Map<number, MemoryRow> {
+    const out = new Map<number, MemoryRow>();
+    for (const m of this.inEffect()) if (m.nodeId !== undefined) out.set(m.nodeId, m); // ordered by id: newest wins
+    return out;
+  }
+
+  /** Insert routed `n` nuggets to this memory's skill. */
+  addCaught(id: number, n: number): void {
+    if (n > 0) this.sql.prepare("UPDATE rejection_memory SET caught = caught + ? WHERE id = ?").run(n, id);
   }
 
   /** Pending memories, oldest first (what the next run classifies). */

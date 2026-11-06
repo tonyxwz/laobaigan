@@ -945,7 +945,8 @@ function renderMemory(m: MemoryRow, tree: Tree): string {
   const age = Math.max(0, Math.round((Date.now() - m.createdAt.getTime()) / 86400e3));
   const head =
     `#${String(m.id).padEnd(3)} ${m.status.padEnd(7)} ${(m.kind ?? "?").padEnd(11)} ${skill}  ` +
-    `[${m.scope === "global" ? "global" : `repo ${shortPath(m.repo)}`}] proposal #${m.proposalId}, ${age}d${m.locked ? ", edited" : ""}\n`;
+    `[${m.scope === "global" ? "global" : `repo ${shortPath(m.repo)}`}] proposal #${m.proposalId}, ${age}d${m.locked ? ", edited" : ""}` +
+    `${m.caught ? `, caught ${m.caught}` : ""}\n`;
   const lines = [head];
   if (m.rule) lines.push(`      rule: ${m.rule}${target ? ` (→ #${target.id} ${target.name ?? target.title})` : ""}\n`);
   if (m.reason) lines.push(`      reason: ${truncate(m.reason.replace(/\s+/g, " "), 160)}\n`);

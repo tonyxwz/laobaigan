@@ -3,6 +3,7 @@ import type { Config } from "../config.ts";
 import type { PiRequest, PiRunner, Usage } from "../pi/run-pi.ts";
 import { addUsage, ZERO_USAGE } from "../pi/run-pi.ts";
 import type { NuggetRow } from "../state/db.ts";
+import { Rejections, type MemoryRow } from "../state/rejections.ts";
 import { subtreeNuggets, Tree, type Scope, type TreeNode } from "../state/tree.ts";
 import { truncate } from "../util/text.ts";
 import { skillName } from "./stats.ts";
@@ -49,6 +50,7 @@ Skills are marked:
 - live: an existing skill file the agents already use. Prefer these when the nugget is about the same tool, system, or workflow.
 - declared: a skill the engineer asked for; its description says what belongs there. Prefer it whenever a nugget falls within that description.
 - latent: a skill being grown from earlier evidence, not published yet.
+- rejected="<why>": a proposal for this skill was rejected, and its rule says why. Knowledge on the same topic still goes INTO it: never create a new look-alike skill for it. The one exception: when the rule names another skill where this knowledge belongs, put it there.
 
 Rules:
 - Put each new nugget into the existing skill whose subject it is ABOUT (not one that merely mentions a related word).
@@ -106,13 +108,17 @@ function renderNugget(n: NuggetRow): string {
 const originLabel = (s: TreeNode) => (s.origin === "file" ? "live" : s.origin);
 
 /** Stable first (skill list), new nuggets last, so the prefix can be cached. */
-export function buildSkillPrompt(root: TreeNode, nuggets: NuggetRow[]): string {
+export function buildSkillPrompt(root: TreeNode, nuggets: NuggetRow[], rejected: Map<number, MemoryRow> = new Map()): string {
   const lines = [`Scope: ${root.scope === "global" ? "global (applies across repositories)" : `repository ${root.repo}`}`, "", "<skills>"];
+  const byId = new Map(root.children.map((c) => [c.id, c]));
   for (const s of root.children) {
+    const m = rejected.get(s.id);
+    const target = m?.kind === "wrong-place" && m.targetNodeId !== undefined ? byId.get(m.targetNodeId) : undefined;
     lines.push(
-      `<skill id="${s.id}" kind="${originLabel(s)}"${s.name ? ` name="${s.name}"` : ""}>`,
+      `<skill id="${s.id}" kind="${originLabel(s)}"${s.name ? ` name="${s.name}"` : ""}${m ? ` rejected="${m.kind}"` : ""}>`,
       `title: ${s.title}`,
       ...(s.description ? [`description: ${truncate(s.description, 300)}`] : []),
+      ...(m?.rule ? [`rejection_rule: ${m.rule}${target ? ` (route this knowledge to skill id ${target.id}, ${target.name ?? target.title})` : ""}`] : []),
       ...(s.children.length ? [`sections: ${s.children.map((c) => c.title).join(" | ")}`] : []),
       "</skill>",
     );
@@ -255,6 +261,8 @@ export interface InsertResult {
   usage: Usage;
   /** Nuggets left for the next run (call budget). */
   deferred: number;
+  /** Look-alikes routed to a rejected skill (per rejection memory). */
+  caught: { memoryId: number; skill: string; nuggets: number }[];
 }
 
 /** Level 2 is worth a call when the skill has sections, or is a non-file skill growing several new nuggets. */
@@ -284,7 +292,7 @@ export async function insertNuggets(
   const log = opts.log ?? (() => {});
   const maxCalls = opts.maxCalls ?? Infinity;
   const batchSize = opts.batchSize ?? 40;
-  const res: InsertResult = { placed: 0, skillsCreated: [], sectionsCreated: [], covered: 0, repairs: [], calls: 0, usage: ZERO_USAGE, deferred: 0 };
+  const res: InsertResult = { placed: 0, skillsCreated: [], sectionsCreated: [], covered: 0, repairs: [], calls: 0, usage: ZERO_USAGE, deferred: 0, caught: [] };
   const call = async <S extends TSchema>(req: PiRequest<S>): Promise<Static<S>> => {
     const r = await runner.run(req);
     res.calls++;
@@ -314,6 +322,10 @@ export async function insertNuggets(
       const batch = all.slice(i, i + batchSize);
       const rootId = tree.ensureRoot(scope);
       const root = tree.subtree(rootId)!;
+      // Rejected skills, with the rule of their newest memory: look-alikes go there, not to a twin.
+      const memories = new Rejections(tree.db);
+      const inEffect = memories.byNode();
+      const rejected = new Map([...inEffect].filter(([id]) => root.children.some((c) => c.id === id && c.status === "rejected")));
 
       // ---- level 1: which skill?
       let plan: SkillPlan;
@@ -332,7 +344,7 @@ export async function insertNuggets(
             model: cfg.models.extract,
             thinking: cfg.models.extractThinking,
             systemPrompt: withGuidance(SKILL_SYSTEM_PROMPT, cfg),
-            prompt: buildSkillPrompt(root, batch),
+            prompt: buildSkillPrompt(root, batch, rejected),
             resultTool: { name: "route_to_skills", description: "Place each new nugget in a skill.", parameters: SkillRouteSchema },
           }),
           root,
@@ -375,6 +387,11 @@ export async function insertNuggets(
           );
         }
         res.repairs.push(...sp.repairs);
+        const caught = rejected.get(skillId);
+        if (caught) {
+          memories.addCaught(caught.id, ns.length);
+          res.caught.push({ memoryId: caught.id, skill: skill.name ?? skill.title, nuggets: ns.length });
+        }
         tree.db.tx(() => {
           for (const s of sp.newSections) {
             const id = tree.createNode(skillId, { title: s.title, description: s.description });
