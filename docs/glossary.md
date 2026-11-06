@@ -157,7 +157,10 @@ depth 2  section  a "##" section of SKILL.md, a references/*.md file, or an AGEN
 : What you tell lbg while reviewing: your messages in a revise chat, one-shot revise feedback, your hand edits, and reject reasons. lbg keeps it with the proposal and shows it to every later draft of that skill, so a redraft keeps your corrections. Reject reasons are also shown when drafting other skills in the same scope. It never counts as evidence for promotion.
 
 **Rejection memory**
-: What a rejection teaches lbg. Rejecting writes it with no model call; the next run classifies it into a **kind** and a one-line **rule**: `outdated` (the knowledge is stale, a corrected version is welcome), `not-useful` (no skill about this topic), `wrong-place` (belongs in another skill, its **target**), `later` (not now). Statuses: `pending` (not classified yet), `active`, `removed` (forgotten). A memory I edited is **locked**: never reclassified. See `lbg rejections`.
+: What a rejection teaches lbg. Rejecting writes it with no model call; the next run classifies it into a **kind** and a one-line **rule**: `outdated` (the knowledge is stale, a corrected version is welcome), `not-useful` (no skill about this topic), `wrong-place` (belongs in another skill, its **target**), `later` (not now). Statuses: `pending` (not classified yet), `active`, `removed` (forgotten). A memory I edited is **locked**: never reclassified. `not-useful` memories **expire** after `rejections.expireDays` (90) unless kept. **Caught**: look-alike nuggets routed to the rejected skill (or moved to a wrong-place target). See `lbg rejections`.
+
+**Forgotten evidence**
+: A nugget that no longer counts and isn't drafted, because it's outdated (an `outdated` rejection, `reject --forget`, or `lbg nuggets forget`). It stays in the db, so its session isn't read again, and `lbg tree show` lists it.
 
 **Accept / reject / revise / edit**
 : How you review a proposal:

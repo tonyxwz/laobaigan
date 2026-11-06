@@ -108,6 +108,8 @@ export interface Config {
   rejections: {
     /** Max rejection memories classified per run (one call each). */
     maxCallsPerRun: number;
+    /** not-useful memories stop applying after this many days unless kept (lbg rejections keep). 0: never. */
+    expireDays: number;
   };
   render: {
     /** Max proposals drafted per run (each is one opus session). */
@@ -186,7 +188,7 @@ export const DEFAULT_CONFIG: Config = {
   },
   redact: { extraPatterns: [] },
   insert: { maxCallsPerRun: 20 },
-  rejections: { maxCallsPerRun: 10 },
+  rejections: { maxCallsPerRun: 10, expireDays: 90 },
   render: { maxPerRun: 2, retryAfterHours: 24, maxSkillLines: 300 },
   score: {
     weights: { session: 3, extraAgent: 3, extraDay: 1, correction: 1, covered: 2 },

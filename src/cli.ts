@@ -31,7 +31,7 @@ import { chatRevise, editProposal, type InteractiveResult } from "./pipeline/int
 import { createInterface } from "node:readline/promises";
 import { Feedback } from "./state/feedback.ts";
 import { PROPOSAL_STATUSES, Proposals, type ProposalRow, type ProposalStatus } from "./state/proposals.ts";
-import { assertKind, MEMORY_STATUSES, Rejections, type MemoryRow, type MemoryStatus } from "./state/rejections.ts";
+import { assertKind, isExpired, MEMORY_STATUSES, Rejections, type MemoryRow, type MemoryStatus } from "./state/rejections.ts";
 import { parseDuration, parseSince } from "./util/time.ts";
 
 const USAGE = `lbg (laobaigan 老白干) — distill repeated explanations from agent sessions into skills
@@ -98,6 +98,7 @@ Proposals (lbg never runs git: accept writes the files; commit them yourself if 
 Rejection memories (what rejections teach lbg):
   lbg rejections [--status pending,active,removed] [--json]   List (default: pending + active)
   lbg rejections edit <id> [--kind K] [--rule "..."] [--to <skill>]   Correct one; locks it (never reclassified)
+  lbg rejections keep <id>                                    Renew a not-useful memory (they expire after rejections.expireDays)
   lbg rejections forget <id>                                  Stop using it
   lbg proposal drop <id> <nugget>... [--reason "..."] [--to <node>] [--revise]
                                                Take evidence off a proposal (off-topic); it's re-filed elsewhere
@@ -517,7 +518,7 @@ async function main(argv: string[]): Promise<number> {
       const db = new StateDb(join(cfg.stateDir, "state.db"));
       try {
         const tree = new Tree(db);
-        const mem = new Rejections(db);
+        const mem = new Rejections(db, { expireDays: cfg.rejections.expireDays });
         const [sub, idArg] = rest;
         const num = (x: string | undefined, what: string) => {
           const n = Number((x ?? "").replace(/^#/, ""));
@@ -549,13 +550,18 @@ async function main(argv: string[]): Promise<number> {
           out(renderMemory(m, tree));
           return 0;
         }
+        if (sub === "keep") {
+          const m = mem.keep(num(idArg, "rejection memory"));
+          out(renderMemory(m, tree));
+          return 0;
+        }
         if (sub === "forget") {
           const id = num(idArg, "rejection memory");
           mem.forget(id);
           out(`rejection memory #${id} forgotten: lbg no longer uses it.\n`);
           return 0;
         }
-        throw new Error(`Unknown rejections subcommand: ${sub} (edit | forget)`);
+        throw new Error(`Unknown rejections subcommand: ${sub} (edit | keep | forget)`);
       } finally {
         db.close();
       }
@@ -777,7 +783,7 @@ async function main(argv: string[]): Promise<number> {
           const kind = values.kind !== undefined ? assertKind(values.kind) : undefined;
           const to = values.to !== undefined ? Number(values.to.replace(/^#/, "")) : undefined;
           if (to !== undefined && !Number.isInteger(to)) throw new Error(`--to expects a skill id, got ${values.to}`);
-          const r = rejectProposal(tree, id, values.reason, { ...(kind ? { kind } : {}), ...(to !== undefined ? { targetNodeId: to } : {}), forget: values.forget });
+          const r = rejectProposal(tree, id, values.reason, { ...(kind ? { kind } : {}), ...(to !== undefined ? { targetNodeId: to } : {}), forget: values.forget, expireDays: cfg.rejections.expireDays });
           out(`rejected #${id}${values.reason ? `: ${values.reason}` : ""}.\n`);
           if (r.forgotten) out(`${r.forgotten} evidence item(s) forgotten: they no longer count.\n`);
           out(
@@ -946,7 +952,8 @@ function renderMemory(m: MemoryRow, tree: Tree): string {
   const head =
     `#${String(m.id).padEnd(3)} ${m.status.padEnd(7)} ${(m.kind ?? "?").padEnd(11)} ${skill}  ` +
     `[${m.scope === "global" ? "global" : `repo ${shortPath(m.repo)}`}] proposal #${m.proposalId}, ${age}d${m.locked ? ", edited" : ""}` +
-    `${m.caught ? `, caught ${m.caught}` : ""}${m.extractUses ? `, in ${m.extractUses} extraction call(s)` : ""}\n`;
+    `${m.caught ? `, caught ${m.caught}` : ""}${m.extractUses ? `, in ${m.extractUses} extraction call(s)` : ""}` +
+    `${m.expiresAt ? (isExpired(m) ? `, EXPIRED ${m.expiresAt.toISOString().slice(0, 10)} (lbg rejections keep ${m.id})` : `, expires ${m.expiresAt.toISOString().slice(0, 10)}`) : ""}\n`;
   const lines = [head];
   if (m.rule) lines.push(`      rule: ${m.rule}${target ? ` (→ #${target.id} ${target.name ?? target.title})` : ""}\n`);
   if (m.reason) lines.push(`      reason: ${truncate(m.reason.replace(/\s+/g, " "), 160)}\n`);

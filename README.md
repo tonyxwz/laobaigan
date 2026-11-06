@@ -45,14 +45,16 @@ lbg rejections                         # what your rejections taught lbg
 
 Rejecting makes no model call. lbg keeps a **rejection memory**, and the next `lbg run` classifies it:
 
-| Kind | Meaning |
-|---|---|
-| `outdated` | the knowledge is stale; a corrected version is welcome |
-| `not-useful` | don't make a skill about this topic |
-| `wrong-place` | right knowledge, wrong skill |
-| `later` | not now |
+| Kind | Meaning | What lbg does |
+|---|---|---|
+| `outdated` | the knowledge is stale | its evidence stops counting; corrected knowledge about the topic is welcome and can be proposed |
+| `not-useful` | don't make a skill about this topic | not extracted again, never proposed again; expires after 90 days (`lbg rejections keep <id>` renews) |
+| `wrong-place` | right knowledge, wrong skill | its evidence moves to the skill it belongs in |
+| `later` | not now | proposed again once the topic comes up in 2 new sessions |
 
-The run prints one line per classified memory (`rejection #N classified: … — check: lbg rejections`). If it got it wrong, correct it: `lbg rejections edit <id> --kind not-useful --rule "…"` (your version is never reclassified), or stop using it with `lbg rejections forget <id>`. To skip the classification, say it when rejecting: `--kind wrong-place --to <skill>`.
+Similar knowledge goes to the rejected skill instead of growing a look-alike, and drafts of nearby skills follow the rule. The run prints one line per classified memory (`rejection #N classified: … — check: lbg rejections`). If it got it wrong, correct it: `lbg rejections edit <id> --kind not-useful --rule "…"` (your version is never reclassified), or stop using it with `lbg rejections forget <id>`. To skip the classification, say it when rejecting: `--kind wrong-place --to <skill>`.
+
+Evidence can also go stale without a rejection. `lbg nuggets forget <id>…` (or `--skill <id> --before <date>`) makes it stop counting and keeps it out of drafts; `lbg nuggets unforget` undoes it. `lbg proposal show` lists evidence ids.
 
 lbg remembers what you say while reviewing: your messages in a revise chat, one-shot feedback, your hand edits and reject reasons. The next draft of that skill sees them, so it keeps your corrections instead of starting from scratch, and other skills in the same scope see why you rejected something. Give a reason when you reject: it is the most useful thing you can tell lbg.
 

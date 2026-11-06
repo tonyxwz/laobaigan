@@ -68,7 +68,7 @@ export async function classifyRejections(
 ): Promise<ClassifyResult> {
   const log = opts.log ?? (() => {});
   const max = opts.maxCalls ?? cfg.rejections.maxCallsPerRun;
-  const mem = new Rejections(tree.db);
+  const mem = new Rejections(tree.db, { expireDays: cfg.rejections.expireDays });
   const res: ClassifyResult = { classified: [], failed: [], deferred: 0, calls: 0, usage: ZERO_USAGE };
   const pending = mem.pending().filter((m) => !m.locked);
   let consecutive = 0;

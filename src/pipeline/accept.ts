@@ -150,7 +150,7 @@ export function rejectProposal(
   tree: Tree,
   id: number,
   reason?: string,
-  opts: { kind?: RejectionKind; targetNodeId?: number; forget?: boolean } = {},
+  opts: { kind?: RejectionKind; targetNodeId?: number; forget?: boolean; expireDays?: number } = {},
 ): RejectResult {
   const props = new Proposals(tree.db);
   const p = props.mustGet(id);
@@ -185,7 +185,7 @@ export function rejectProposal(
     props.markRejected(id, text || undefined);
     // The reason is review feedback: the next draft of this skill (or a nearby one) sees it.
     const feedbackId = new Feedback(tree.db).add({ proposalId: id, kind: "reject", text });
-    const mem = new Rejections(tree.db);
+    const mem = new Rejections(tree.db, opts.expireDays !== undefined ? { expireDays: opts.expireDays } : {});
     const base = { proposalId: id, feedbackId, nodeId: p.nodeId, ...scope, topic };
     if (opts.kind) {
       const memoryId = mem.add({ ...base, kind: opts.kind, rule: text || `rejected as ${opts.kind}`, ...(opts.targetNodeId !== undefined ? { targetNodeId: opts.targetNodeId } : {}) });

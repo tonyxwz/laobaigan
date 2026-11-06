@@ -27,6 +27,10 @@ export interface RejectedTopic {
   evidence: { id: number; title: string }[];
 }
 
+export function isExpired(m: Pick<MemoryRow, "expiresAt">, now = Date.now()): boolean {
+  return !!m.expiresAt && m.expiresAt.getTime() <= now;
+}
+
 export interface MemoryRow {
   id: number;
   proposalId: number;
@@ -89,10 +93,29 @@ export function cleanRule(s: string): string {
   return one.length > 240 ? `${one.slice(0, 239)}…` : one;
 }
 
+export const DEFAULT_EXPIRE_DAYS = 90;
+
 export class Rejections {
   readonly db: StateDb;
-  constructor(db: StateDb) {
+  /** not-useful memories stop applying this many days after they become active (renew with keep). */
+  readonly expireDays: number;
+  constructor(db: StateDb, opts: { expireDays?: number } = {}) {
     this.db = db;
+    this.expireDays = opts.expireDays ?? DEFAULT_EXPIRE_DAYS;
+  }
+
+  /** Expiry for a memory that is (now) of `kind`: only not-useful expires. */
+  private expiryFor(kind: RejectionKind | undefined, from = Date.now()): number | null {
+    return kind === "not-useful" && this.expireDays > 0 ? from + this.expireDays * 86400e3 : null;
+  }
+
+  /** Renew a not-useful memory for another `expireDays` (it expired, or will soon). */
+  keep(id: number): MemoryRow {
+    const m = this.mustGet(id);
+    if (m.status !== "active") throw new Error(`Rejection memory ${id} is ${m.status}; only active memories can be kept`);
+    if (m.kind !== "not-useful") throw new Error(`Rejection memory ${id} is ${m.kind}; only not-useful memories expire`);
+    this.sql.prepare("UPDATE rejection_memory SET expires_at = ? WHERE id = ?").run(this.expiryFor(m.kind), id);
+    return this.mustGet(id);
   }
   private get sql() {
     return this.db.db;
@@ -141,7 +164,7 @@ export class Rejections {
     return status?.length ? this.select(`m.status IN (${status.map(() => "?").join(",")})`, ...status) : this.select("1");
   }
 
-  /** Memories in effect: active (and, from lbg-1ps.7, not expired). */
+  /** Memories in effect: active and not expired. */
   inEffect(): MemoryRow[] {
     return this.list(["active"]).filter((m) => !m.expiresAt || m.expiresAt.getTime() > Date.now());
   }
@@ -195,8 +218,8 @@ export class Rejections {
     const id = Number(
       this.sql
         .prepare(
-          `INSERT INTO rejection_memory (proposal_id, feedback_id, node_id, scope, repo, kind, rule, topic, target_node_id, status, locked, created_at, classified_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO rejection_memory (proposal_id, feedback_id, node_id, scope, repo, kind, rule, topic, target_node_id, status, locked, created_at, classified_at, expires_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           m.proposalId,
@@ -212,6 +235,7 @@ export class Rejections {
           (m.locked ?? active) ? 1 : 0, // I chose the kind myself: never reclassify it
           at,
           active ? at : null,
+          active ? this.expiryFor(m.kind, at) : null,
         ).lastInsertRowid,
     );
     if (active) this.syncEvidence(id);
@@ -222,10 +246,10 @@ export class Rejections {
   classify(id: number, c: { kind: RejectionKind; rule: string; targetNodeId?: number }): boolean {
     const r = this.sql
       .prepare(
-        `UPDATE rejection_memory SET kind = ?, rule = ?, target_node_id = ?, status = 'active', error = NULL, classified_at = ?
+        `UPDATE rejection_memory SET kind = ?, rule = ?, target_node_id = ?, status = 'active', error = NULL, classified_at = ?, expires_at = ?
          WHERE id = ? AND status = 'pending' AND locked = 0`,
       )
-      .run(c.kind, cleanRule(c.rule), c.targetNodeId ?? null, Date.now(), id);
+      .run(c.kind, cleanRule(c.rule), c.targetNodeId ?? null, Date.now(), this.expiryFor(c.kind), id);
     if (Number(r.changes) !== 1) return false;
     this.syncEvidence(id);
     return true;
@@ -247,9 +271,10 @@ export class Rejections {
     this.sql
       .prepare(
         `UPDATE rejection_memory SET kind = ?, rule = ?, target_node_id = ?, status = 'active', locked = 1, error = NULL,
-           classified_at = COALESCE(classified_at, ?) WHERE id = ?`,
+           classified_at = COALESCE(classified_at, ?), expires_at = ? WHERE id = ?`,
       )
-      .run(kind, rule, kind === "wrong-place" ? target : null, Date.now(), id);
+      // Keeps the expiry when the kind stays not-useful; starts it when it becomes not-useful.
+      .run(kind, rule, kind === "wrong-place" ? target : null, Date.now(), kind === m.kind && m.kind === "not-useful" ? (m.expiresAt?.getTime() ?? this.expiryFor(kind)) : this.expiryFor(kind), id);
     this.syncEvidence(id);
     return this.mustGet(id);
   }
