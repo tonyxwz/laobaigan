@@ -201,6 +201,7 @@ A failed draft becomes a `failed` proposal and the skill stays a candidate. `lbg
 
   The guard extension (`src/pi/guard-extension.ts`) registers the same guarded tools from `LBG_GUARD`. `--no-approve` skips pi's trust prompt for the scratch dir, and the temp session dir keeps the chat out of `~/.pi/agent/sessions`. When the user exits, the result is verified and stored. If verification fails, the user can go back in or keep the previous draft.
 - **edit:** opens the drafted files in `$VISUAL` / `$EDITOR`, with the same verification loop.
+- **Review feedback** (`src/state/feedback.ts`, `src/pipeline/review.ts`): what I say while reviewing is kept, redacted, per proposal: my turns in a revise chat (read from pi's session file in the temp session dir before it's deleted, without lbg's opening message), the text of a one-shot revise, the diff of a hand edit against the AI draft (only if I changed something), and the reject reason. It is not session evidence: it isn't extracted, never counts toward promotion, and extraction still skips lbg's own draft and chat dirs. Every later draft or revise of the same skill gets it in the prompt (`<review_feedback>`, newest first, size-capped) as decisions to keep, and drafts of other skills in the same scope get the reasons for rejections there (`<rejected_nearby>`). Feedback belongs to its proposal, so it moves with the proposal's history when a skill's node is replaced. `lbg proposal show` lists it.
 
 ## 8. Models (`src/pi/run-pi.ts`)
 

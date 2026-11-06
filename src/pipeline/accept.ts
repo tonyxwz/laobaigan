@@ -2,6 +2,7 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
 import { createTwoFilesPatch } from "diff";
 import type { Config } from "../config.ts";
+import { Feedback } from "../state/feedback.ts";
 import { hashContent, Proposals, type DraftFile, type ProposalRow } from "../state/proposals.ts";
 import type { NuggetRow } from "../state/db.ts";
 import { subtreeNuggets, type Tree } from "../state/tree.ts";
@@ -131,7 +132,22 @@ export async function commitTargetFor(tree: Tree, p: ProposalRow): Promise<Commi
 }
 
 export function rejectProposal(tree: Tree, id: number, reason?: string): void {
-  new Proposals(tree.db).markRejected(id, reason);
+  tree.db.tx(() => {
+    new Proposals(tree.db).markRejected(id, reason);
+    // The reason is review feedback: the next draft of this skill (or a nearby one) sees it.
+    new Feedback(tree.db).add({ proposalId: id, kind: "reject", text: reason?.trim() ?? "" });
+  });
+}
+
+/** Diff of the AI's draft (`before`) against my version (`after`); empty when nothing changed. */
+export function editDiff(before: DraftFile[], after: DraftFile[]): string {
+  const old = new Map(before.map((f) => [f.path, f.content]));
+  const now = new Map(after.map((f) => [f.path, f.content]));
+  const paths = [...new Set([...old.keys(), ...now.keys()])].sort();
+  return paths
+    .map((p) => fileDiff(p, old.has(p) ? (old.get(p) ?? null) : (after.find((f) => f.path === p)?.baseContent ?? null), now.has(p) ? (now.get(p) ?? null) : (before.find((f) => f.path === p)?.baseContent ?? null)))
+    .filter(Boolean)
+    .join("\n");
 }
 
 /** One file as a git-style diff (null = absent). Empty when there's no change. */

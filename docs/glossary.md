@@ -153,6 +153,9 @@ depth 2  section  a "##" section of SKILL.md, a references/*.md file, or an AGEN
 **Stale proposal**
 : One whose target files changed on disk since it was drafted. `show` and `diff` show the draft's own change against the version it was drafted from (not a diff that seems to delete your newer edits), plus what changed on disk. `accept` refuses it unless `--force`. `revise` and `edit` rebase it: the draft's change is merged onto the current file, or, if it doesn't apply cleanly, your current file is kept and the reviser re-applies the draft's change.
 
+**Review feedback**
+: What you tell lbg while reviewing: your messages in a revise chat, one-shot revise feedback, your hand edits, and reject reasons. lbg keeps it with the proposal and shows it to every later draft of that skill, so a redraft keeps your corrections. Reject reasons are also shown when drafting other skills in the same scope. It never counts as evidence for promotion.
+
 **Accept / reject / revise / edit**
 : How you review a proposal:
   - **accept**: write its files into the skills dir or repo, then sync. You commit them yourself.

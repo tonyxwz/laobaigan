@@ -14,6 +14,7 @@ import { hashContent, Proposals, type DraftFile } from "../state/proposals.ts";
 import { subtreeNuggets, type ProposalKind, type Tree, type TreeNode } from "../state/tree.ts";
 import { truncate } from "../util/text.ts";
 import { containsSecrets } from "./redact.ts";
+import { reviewFeedbackPrompt } from "./review.ts";
 import { evidenceText, skillName } from "./stats.ts";
 import { skillStats } from "./treescore.ts";
 import { applyExclusions, type Rehomed } from "./exclude.ts";
@@ -156,7 +157,7 @@ function renderNuggets(ns: NuggetRow[], flags: (n: NuggetRow) => string): string
   );
 }
 
-export function buildDraftPrompt(skill: TreeNode, kind: ProposalKind, target: RenderTarget, siblings: TreeNode[], draftedAt?: Date): string {
+export function buildDraftPrompt(skill: TreeNode, kind: ProposalKind, target: RenderTarget, siblings: TreeNode[], draftedAt?: Date, review?: string): string {
   const since = skill.renderedAt?.getTime() ?? 0;
   const base = (n: NuggetRow) =>
     kind === "new" ? "" : n.coveredNodeId !== undefined ? " (ALREADY IN THE FILE)" : (n.attachedAt?.getTime() ?? Infinity) > since ? " (NEW)" : " (already absorbed)";
@@ -201,6 +202,7 @@ export function buildDraftPrompt(skill: TreeNode, kind: ProposalKind, target: Re
     for (const s of others) lines.push(`- ${s.name ?? s.title}: ${truncate(s.description ?? "", 200)}`);
     lines.push("</other_skills>", "");
   }
+  if (review) lines.push(review, "");
   lines.push("Write the files now, then call report_draft.");
   return lines.join("\n");
 }
@@ -325,11 +327,12 @@ export async function draftSkill(tree: Tree, runner: PiRunner, cfg: Config, node
     scratch = await makeScratch(target);
     log(`draft ${target.skillName} (${kind}): proposal #${proposalId}`);
     const siblings = skill.parentId !== undefined ? tree.children(skill.parentId).map((c) => ({ ...c, children: [], nuggets: [] })) : [];
+    const review = reviewFeedbackPrompt(tree, skill);
     const res = await runner.run({
       model: cfg.models.distill,
       thinking: cfg.models.distillThinking,
       systemPrompt: DRAFT_SYSTEM_PROMPT,
-      prompt: buildDraftPrompt(skill, kind, target, siblings),
+      prompt: buildDraftPrompt(skill, kind, target, siblings, undefined, review),
       tools: [...GUARDED_TOOLS],
       fileGuard: { root: scratch, writable: target.writable },
       resultTool: { name: "report_draft", description: "Report the finished draft.", parameters: ReportDraftSchema },
@@ -347,7 +350,7 @@ export async function draftSkill(tree: Tree, runner: PiRunner, cfg: Config, node
         model: cfg.models.distill,
         thinking: cfg.models.distillThinking,
         systemPrompt: DRAFT_SYSTEM_PROMPT,
-        prompt: `${buildDraftPrompt(skill, kind, target, siblings).replace(/\nWrite the files now, then call report_draft\.$/, "")}\n\nThe files in the current directory are your draft.\n\n${scopeRetryPrompt(scope)}`,
+        prompt: `${buildDraftPrompt(skill, kind, target, siblings, undefined, review).replace(/\nWrite the files now, then call report_draft\.$/, "")}\n\nThe files in the current directory are your draft.\n\n${scopeRetryPrompt(scope)}`,
         tools: [...GUARDED_TOOLS],
         fileGuard: { root: scratch, writable: target.writable },
         resultTool: { name: "report_draft", description: "Report the fixed draft.", parameters: ReportDraftSchema },

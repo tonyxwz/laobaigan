@@ -255,6 +255,20 @@ export const MIGRATIONS: string[] = [
   // it's re-filed elsewhere and insert never routes it back to the skills it was left out of.
   `ALTER TABLE nugget ADD COLUMN excluded_from TEXT NOT NULL DEFAULT '[]';
    ALTER TABLE proposal ADD COLUMN excluded TEXT NOT NULL DEFAULT '[]';`,
+  // 15: review feedback: what I tell lbg while reviewing a proposal (revise chat, one-shot revise,
+  // hand edit, reject reason). Kept apart from session evidence (it never counts toward promotion)
+  // and fed back when the same skill is drafted again. It follows its proposal, so it moves with
+  // the proposal's history if the skill's node is replaced.
+  `CREATE TABLE feedback (
+     id           INTEGER PRIMARY KEY AUTOINCREMENT,
+     proposal_id  INTEGER NOT NULL REFERENCES proposal (id),
+     kind         TEXT NOT NULL,          -- chat | revise | edit | reject
+     text         TEXT NOT NULL,          -- my words (chat: my turns joined), redacted
+     turns        TEXT,                   -- chat: JSON [{role, text}], redacted
+     diff         TEXT,                   -- edit: the AI draft vs my edit, redacted
+     created_at   INTEGER NOT NULL
+   );
+   CREATE INDEX feedback_proposal ON feedback (proposal_id);`,
 ];
 
 /** Lifecycle of a skill: open → candidate (earned a proposal) → proposed → open again (accepted: it's live now) or rejected. */
@@ -334,7 +348,9 @@ export class StateDb {
     }
   }
 
+  /** Run `fn` in a transaction. Nested calls join the outer transaction (all or nothing). */
   tx<T>(fn: () => T): T {
+    if (this.db.isTransaction) return fn();
     this.db.exec("BEGIN");
     try {
       const r = fn();

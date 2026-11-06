@@ -29,6 +29,7 @@ import { acceptProposal, commitTargetFor, newSinceDraft, proposalDiff, proposalV
 import { reviseProposal } from "./pipeline/revise.ts";
 import { chatRevise, editProposal, type InteractiveResult } from "./pipeline/interactive.ts";
 import { createInterface } from "node:readline/promises";
+import { Feedback } from "./state/feedback.ts";
 import { PROPOSAL_STATUSES, Proposals, type ProposalRow, type ProposalStatus } from "./state/proposals.ts";
 import { parseDuration, parseSince } from "./util/time.ts";
 
@@ -548,6 +549,22 @@ async function main(argv: string[]): Promise<number> {
             for (const n of evidence) {
               const e = n.evidence[0];
               out(`  - #${n.id} ${n.agent}:${n.sessionId.slice(0, 8)}${e?.ts ? ` ${e.ts.slice(0, 10)}` : ""} ${n.title}${e ? `\n      "${truncate(e.quote, 160)}"` : ""}\n`);
+            }
+          }
+          const feedback = new Feedback(db).forNode(p.nodeId);
+          if (feedback.length) {
+            out(`\nYour review feedback on this skill (${feedback.length}; drafting sees it):\n`);
+            for (const f of feedback) {
+              const where = f.proposalId === p.id ? "this proposal" : `proposal #${f.proposalId} (${f.proposalStatus})`;
+              const what =
+                f.kind === "reject"
+                  ? `rejected${f.text ? `: "${truncate(f.text, 160)}"` : " (no reason)"}`
+                  : f.kind === "chat"
+                    ? `revise chat, ${(f.turns ?? []).filter((t) => t.role === "user").length} message(s): "${truncate(f.text.replace(/\s+/g, " "), 160)}"`
+                    : f.kind === "edit"
+                      ? f.text
+                      : `revise: "${truncate(f.text, 160)}"`;
+              out(`  - ${f.createdAt.toISOString().slice(0, 16).replace("T", " ")} ${where}: ${what}\n`);
             }
           }
           if (p.files.length) {

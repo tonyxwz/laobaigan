@@ -42,6 +42,8 @@ lbg proposal accept <id> --commit      # write the files, then run your commitCo
 lbg proposal reject <id> --reason "…"
 ```
 
+lbg remembers what you say while reviewing: your messages in a revise chat, one-shot feedback, your hand edits and reject reasons. The next draft of that skill sees them, so it keeps your corrections instead of starting from scratch, and other skills in the same scope see why you rejected something. Give a reason when you reject: it is the most useful thing you can tell lbg.
+
 A draft doesn't change by itself. If you explain the same topic again while a proposal waits, the new evidence still lands on that skill: `lbg proposals` shows it as `+N new since draft`, `lbg proposal show` lists it, and `lbg proposal revise` adds it to the draft. If you accept without revising, nothing is lost: the new evidence still counts, and can lead to an `update` proposal later.
 
 There are three kinds of proposal:

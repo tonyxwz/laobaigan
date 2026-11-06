@@ -1,6 +1,9 @@
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { Feedback } from "../state/feedback.ts";
+import { readChatTurns } from "./chatlog.ts";
+import { editDiff } from "./accept.ts";
 import { tmpdir } from "node:os";
 import { dirname, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -118,7 +121,7 @@ export async function chatRevise(tree: Tree, cfg: Config, id: number, opts: PiCh
       `lbg proposal #${id} ${ws.target.skillName}`,
     ];
     const opening = `This is proposal #${id} (${ws.proposal.kind}) for ${ws.target.skillName}. Read the draft and summarize it in a few lines, then ask me what to change.`;
-    return await loop(
+    const result = await loop(
       tree,
       cfg,
       ws,
@@ -130,6 +133,18 @@ export async function chatRevise(tree: Tree, cfg: Config, id: number, opts: PiCh
       `${ws.proposal.summary ?? ""}${ws.proposal.summary ? "\n" : ""}(Revised in an interactive pi session.)`.trim(),
       true, // pi saw the current evidence
     );
+    // Keep what I said: it's review feedback for this skill (the session dir is deleted next).
+    try {
+      const turns = await readChatTurns(join(side, "sessions"), opening);
+      const mine = turns.filter((t) => t.role === "user");
+      if (mine.length) {
+        new Feedback(tree.db).add({ proposalId: id, kind: "chat", text: mine.map((t) => t.text).join("\n\n"), turns });
+        log(`kept ${mine.length} message(s) of yours from the chat as feedback for ${ws.target.skillName}`);
+      }
+    } catch (e) {
+      log(`couldn't read the chat for feedback: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    return result;
   } finally {
     await discardDraft(ws);
     await rm(side, { recursive: true, force: true });
@@ -150,7 +165,8 @@ export async function editProposal(tree: Tree, cfg: Config, id: number, opts: Ed
   const ws = await openDraft(tree, id);
   try {
     const files = ws.proposal.files.filter((f) => f.content !== null).map((f) => f.path);
-    return await loop(
+    const before = ws.proposal.files;
+    const result = await loop(
       tree,
       cfg,
       ws,
@@ -164,6 +180,15 @@ export async function editProposal(tree: Tree, cfg: Config, id: number, opts: Ed
       ws.proposal.summary ?? "",
       false, // a hand edit doesn't add evidence
     );
+    // My hand edit is feedback: what I changed in the AI's draft.
+    if (result.changed && !result.kept) {
+      const diff = editDiff(before, result.files);
+      if (diff) {
+        const paths = [...new Set(result.files.map((f) => f.path))].filter((p) => diff.includes(`b/${p}`) || diff.includes(`a/${p}`));
+        new Feedback(tree.db).add({ proposalId: id, kind: "edit", text: `Edited the draft by hand: ${paths.join(", ")}`, diff });
+      }
+    }
+    return result;
   } finally {
     await discardDraft(ws);
   }

@@ -4,6 +4,8 @@ import { dirname, join } from "node:path";
 import type { Config } from "../config.ts";
 import { GUARDED_TOOLS } from "../pi/guard.ts";
 import { addUsage, ZERO_USAGE, type PiRunner, type Usage } from "../pi/run-pi.ts";
+import { Feedback } from "../state/feedback.ts";
+import { reviewFeedbackPrompt } from "./review.ts";
 import { hashContent, Proposals, type DraftFile, type ProposalRow } from "../state/proposals.ts";
 import { subtreeNuggets, type Tree, type TreeNode } from "../state/tree.ts";
 import { applyExclusions, type Rehomed } from "./exclude.ts";
@@ -154,7 +156,7 @@ export async function discardDraft(ws: DraftWorkspace): Promise<void> {
 export function reviseContext(tree: Tree, ws: DraftWorkspace): string {
   const siblings = ws.skill.parentId !== undefined ? tree.children(ws.skill.parentId).map((c) => ({ ...c, children: [], nuggets: [] })) : [];
   return [
-    buildDraftPrompt(ws.skill, ws.proposal.kind, ws.target, siblings, ws.proposal.draftedAt).replace(/\nWrite the files now, then call report_draft\.$/, ""),
+    buildDraftPrompt(ws.skill, ws.proposal.kind, ws.target, siblings, ws.proposal.draftedAt, reviewFeedbackPrompt(tree, ws.skill)).replace(/\nWrite the files now, then call report_draft\.$/, ""),
     "",
     "A draft already exists: the files in the current directory ARE the current draft. Revise them; don't start over unless asked.",
     ...(ws.proposal.summary ? [`The drafter's note on it: ${ws.proposal.summary}`] : []),
@@ -173,12 +175,15 @@ export interface ReviseResult extends CloseResult {
 /** One-shot revise: pi redrafts the stored draft with my feedback. Nothing is stored if verification fails. */
 export async function reviseProposal(tree: Tree, runner: PiRunner, cfg: Config, id: number, feedback: string): Promise<ReviseResult> {
   const ws = await openDraft(tree, id);
+  const prompt = `${reviseContext(tree, ws)}\n\nFeedback from the engineer (apply it):\n${feedback}\n\nRevise the files now, then call report_draft.`;
+  // What I asked for is review feedback for this skill, whatever the redraft's outcome.
+  new Feedback(tree.db).add({ proposalId: id, kind: "revise", text: feedback });
   try {
     const res = await runner.run({
       model: cfg.models.distill,
       thinking: cfg.models.distillThinking,
       systemPrompt: DRAFT_SYSTEM_PROMPT,
-      prompt: `${reviseContext(tree, ws)}\n\nFeedback from the engineer (apply it):\n${feedback}\n\nRevise the files now, then call report_draft.`,
+      prompt,
       tools: [...GUARDED_TOOLS],
       fileGuard: { root: ws.scratch, writable: ws.target.writable },
       resultTool: { name: "report_draft", description: "Report the revised draft.", parameters: ReportDraftSchema },
