@@ -1,5 +1,5 @@
 import { mkdtemp } from "node:fs/promises";
-import { realpathSync } from "node:fs";
+import { mkdtempSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -42,7 +42,7 @@ function setup() {
   // a latent skill with evidence (sync keeps it; a file-origin node with no file would be removed)
   const sibling = s.tree.createNode(s.root, { title: "Cloud credentials", name: "cloud-credentials", description: "vault login profiles" });
   s.tree.attachNugget(s.db.insertNugget({ runId: 1, agent: "pi", sessionId: "z", cwd: "/", kind: "fact", title: "vault login", knowledge: "vault login", triggers: [], scope: "global", confidence: 0.9, evidence: [] }), sibling);
-  const cfg: Config = { ...DEFAULT_CONFIG, skillsDir: realpathSync(tmpdir()) };
+  const cfg: Config = { ...DEFAULT_CONFIG, skillsDir: realpathSync(tmpdir()), stateDir: mkdtempSync(join(tmpdir(), "lbg-state-")) };
   return { ...s, proposalId: id, sibling, cfg, mem: new Rejections(s.db) };
 }
 
