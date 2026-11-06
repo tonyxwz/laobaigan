@@ -9,7 +9,7 @@ import { DEFAULT_CONFIG, type Config } from "../src/config.ts";
 import type { PiRequest, PiResult, PiRunner } from "../src/pi/run-pi.ts";
 import { rejectProposal } from "../src/pipeline/accept.ts";
 import { buildClassifyPrompt } from "../src/pipeline/classify.ts";
-import { runPipeline } from "../src/pipeline/run.ts";
+import { exitCode, runPipeline } from "../src/pipeline/run.ts";
 import { MIGRATIONS, StateDb } from "../src/state/db.ts";
 import { Feedback } from "../src/state/feedback.ts";
 import { Rejections } from "../src/state/rejections.ts";
@@ -88,14 +88,14 @@ describe("lbg proposal reject → rejection memory", () => {
   });
 });
 
-describe("the rejections stage of lbg run", () => {
-  it("classifies pending memories first; nothing pending → no call", async () => {
+describe("lbg run's extract stage classifies rejections (before sessions)", () => {
+  it("classifies pending memories; nothing pending → no call", async () => {
     const s = setup();
     const { memoryId } = rejectProposal(s.tree, s.proposalId, "tmux key bindings are personal");
     const c = new Classifier();
     const r = await runPipeline(deps(s, c));
-    expect(r.stages.map((x) => x.stage)).toEqual(["sync", "rejections", "extract", "insert", "score", "draft"]);
-    expect(r.stages[1]).toMatchObject({ status: "ok", calls: 1, summary: "1 classified" });
+    expect(r.stages.map((x) => x.stage)).toEqual(["sync", "extract", "insert", "score", "draft"]);
+    expect(r.stages[1]).toMatchObject({ status: "ok", calls: 1, summary: "0 session(s) extracted, 0 new nugget(s); 1 rejection(s) classified" });
     expect(r.rejections).toEqual([{ id: memoryId, kind: "not-useful", rule: "Don't propose a skill about tmux key bindings." }]);
     expect(s.mem.mustGet(memoryId)).toMatchObject({ status: "active", kind: "not-useful", locked: false });
     expect(c.prompts[0]).toContain("tmux key bindings are personal");
@@ -103,7 +103,7 @@ describe("the rejections stage of lbg run", () => {
     expect(c.prompts[0]).not.toContain(`id ${s.skill}:`); // not offered as its own target
 
     const again = await runPipeline(deps(s, noCalls));
-    expect(again.stages[1]).toMatchObject({ calls: 0, summary: "no rejections to classify" });
+    expect(again.stages[1]).toMatchObject({ calls: 0, summary: "0 session(s) extracted, 0 new nugget(s)" });
   });
 
   it("wrong-place gets a target from the scope's skills; an unknown target is dropped", async () => {
@@ -111,7 +111,7 @@ describe("the rejections stage of lbg run", () => {
     const a = rejectProposal(s.tree, s.proposalId, "this is about vault login, it belongs with the credentials skill").memoryId;
     const c = new Classifier();
     c.answer = () => ({ kind: "wrong-place", rule: "File vault login steps under cloud-credentials.", targetSkillId: s.sibling });
-    const r = await runPipeline(deps(s, c), { stages: ["rejections"] });
+    const r = await runPipeline(deps(s, c), { stages: ["extract"] });
     expect(r.rejections).toEqual([{ id: a, kind: "wrong-place", rule: "File vault login steps under cloud-credentials.", target: "cloud-credentials" }]);
     expect(s.mem.mustGet(a).targetNodeId).toBe(s.sibling);
 
@@ -120,7 +120,7 @@ describe("the rejections stage of lbg run", () => {
     s.props.markOpen(p2, [], "d");
     const b = rejectProposal(s.tree, p2, "wrong place again").memoryId;
     c.answer = () => ({ kind: "wrong-place", rule: "Elsewhere.", targetSkillId: 99999 });
-    await runPipeline(deps(s, c), { stages: ["rejections"] });
+    await runPipeline(deps(s, c), { stages: ["extract"] });
     expect(s.mem.mustGet(b)).toMatchObject({ kind: "wrong-place", status: "active" });
     expect(s.mem.mustGet(b).targetNodeId).toBeUndefined();
   });
@@ -130,14 +130,44 @@ describe("the rejections stage of lbg run", () => {
     const { memoryId } = rejectProposal(s.tree, s.proposalId, "outdated: we moved to mise");
     const c = new Classifier();
     c.fail = true;
-    const r = await runPipeline(deps(s, c), { stages: ["rejections"] });
-    expect(r.stages[0]).toMatchObject({ stage: "rejections", status: "error" });
+    const r = await runPipeline(deps(s, c), { stages: ["extract"] });
+    expect(r.stages[0]).toMatchObject({ stage: "extract", status: "error", calls: 1 });
+    expect(r.abortedReason).toBeUndefined(); // one failure: sessions still ran
     expect(s.mem.mustGet(memoryId)).toMatchObject({ status: "pending", error: "model unavailable" });
     c.fail = false;
     c.answer = () => ({ kind: "outdated", rule: "Use mise, not nvm, for Node versions." });
-    await runPipeline(deps(s, c), { stages: ["rejections"] });
+    await runPipeline(deps(s, c), { stages: ["extract"] });
     expect(s.mem.mustGet(memoryId)).toMatchObject({ status: "active", kind: "outdated" });
     expect(s.mem.mustGet(memoryId).error).toBeUndefined();
+  });
+});
+
+describe("repeated classification errors", () => {
+  it("skip the session part and the later model stages (exit 3)", async () => {
+    const s = setup();
+    rejectProposal(s.tree, s.proposalId, "first");
+    const p2 = s.props.create(s.draft());
+    s.props.markOpen(p2, [], "d");
+    rejectProposal(s.tree, p2, "second");
+    const c = new Classifier();
+    c.fail = true;
+    let sessionsListed = false;
+    const adapter = {
+      agent: "pi" as const,
+      available: async () => true,
+      async *list() {
+        sessionsListed = true;
+      },
+      load: async () => {
+        throw new Error("unused");
+      },
+    };
+    const r = await runPipeline({ ...deps(s, c), adapters: [adapter] });
+    expect(sessionsListed).toBe(false);
+    expect(r.abortedReason).toMatch(/2 consecutive model errors classifying rejections/);
+    expect(r.stages.find((x) => x.stage === "extract")).toMatchObject({ status: "error", calls: 2, summary: expect.stringContaining("sessions skipped (model errors)") });
+    expect(r.stages.filter((x) => x.status === "skipped").map((x) => x.stage)).toEqual(["insert", "draft"]);
+    expect(exitCode(r)).toBe(3);
   });
 });
 
@@ -149,7 +179,7 @@ describe("lbg rejections edit | forget", () => {
     const m = s.mem.edit(memoryId, { kind: "not-useful", rule: "No skill about tmux key bindings." });
     expect(m).toMatchObject({ kind: "not-useful", rule: "No skill about tmux key bindings.", status: "active", locked: true });
     expect(s.mem.classify(memoryId, { kind: "later", rule: "nope" })).toBe(false);
-    await runPipeline(deps(s, noCalls), { stages: ["rejections"] });
+    await runPipeline(deps(s, noCalls), { stages: ["extract"] });
     expect(s.mem.mustGet(memoryId).kind).toBe("not-useful");
 
     s.mem.forget(memoryId);

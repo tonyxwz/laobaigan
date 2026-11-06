@@ -169,7 +169,7 @@ depth 2  section  a "##" section of SKILL.md, a references/*.md file, or an AGEN
 ## Running
 
 **Run**
-: One `lbg run` pass, which the hourly systemd timer starts: **sync → rejections → extract → insert → score → draft**, then the prompt file and the run log. With nothing new it makes no model calls.
+: One `lbg run` pass, which the hourly systemd timer starts: **sync → extract → insert → score → draft** (extract classifies new rejections first, then reads sessions), then the prompt file and the run log. With nothing new it makes no model calls.
 
 **Stage**
 : One step of a run. Each has its own budget (`extract.maxCallsPerRun`, `insert.maxCallsPerRun`, `render.maxPerRun`); work over budget waits for the next run. A failing stage doesn't stop the others.

@@ -15,9 +15,10 @@ import { writePromptStatus } from "../notify/prompt.ts";
 /**
  * One unattended pass (what the hourly timer runs):
  *
- *   sync        skill files → tree                  (no model)
- *   rejections  classify pending rejection memories (≤ rejections.maxCallsPerRun calls)
- *   extract  new/changed sessions → nuggets         (≤ extract.maxCallsPerRun calls)
+ *   sync     skill files → tree                     (no model)
+ *   extract  my words → knowledge: pending reject reasons → rules
+ *            (≤ rejections.maxCallsPerRun calls), then new/changed
+ *            sessions → nuggets                     (≤ extract.maxCallsPerRun calls)
  *   insert   unplaced nuggets → skills/sections     (≤ insert.maxCallsPerRun calls)
  *   score    promote / demote candidates            (no model)
  *   draft    top candidates → proposals             (≤ render.maxPerRun drafts)
@@ -27,7 +28,7 @@ import { writePromptStatus } from "../notify/prompt.ts";
  * a run makes no model calls.
  */
 
-export const STAGES = ["sync", "rejections", "extract", "insert", "score", "draft"] as const;
+export const STAGES = ["sync", "extract", "insert", "score", "draft"] as const;
 export type Stage = (typeof STAGES)[number];
 
 export interface StageReport {
@@ -102,8 +103,14 @@ export async function runPipeline(deps: RunDeps, opts: { stages?: Stage[]; maxEx
       rep.usage = addUsage(rep.usage, r.usage);
     } catch (e) {
       const error = e instanceof Error ? e.message : String(e);
+      // A stage may fail after spending some calls (e.g. extract: rejections failed, sessions ran).
+      const spent = e as { calls?: number; usage?: Usage };
+      const calls = spent.calls ?? 0;
+      const usage = spent.usage ?? ZERO_USAGE;
       log(`${name}: failed: ${error}`);
-      rep.stages.push({ stage: name, status: "error", calls: 0, usage: ZERO_USAGE, summary: `failed: ${error}`, error });
+      rep.stages.push({ stage: name, status: "error", calls, usage, summary: `failed: ${error}`, error });
+      rep.calls += calls;
+      rep.usage = addUsage(rep.usage, usage);
     }
   };
 
@@ -114,32 +121,45 @@ export async function runPipeline(deps: RunDeps, opts: { stages?: Stage[]; maxEx
     return { calls: 0, usage: ZERO_USAGE, summary: changed ? `${changed} skill change(s) picked up from files` : "skill files unchanged" };
   });
 
-  await stage("rejections", true, async () => {
-    const r = await classifyRejections(tree, runner, cfg, { log });
-    for (const c of r.classified) rep.rejections.push({ id: c.id, kind: c.kind, rule: c.rule, ...(c.target ? { target: c.target } : {}) });
-    if (!r.calls) return { calls: 0, usage: ZERO_USAGE, summary: "no rejections to classify" };
-    const parts = [`${r.classified.length} classified`];
-    if (r.failed.length) parts.push(`${r.failed.length} failed (stay pending)`);
-    if (r.deferred) parts.push(`${r.deferred} left for the next run`);
-    if (r.failed.length && !r.classified.length) throw new Error(`${parts.join(", ")}: ${r.failed[0]!.error}`);
-    return { calls: r.calls, usage: r.usage, summary: parts.join(", ") };
-  });
-
+  // extract: my words → knowledge. First reject reasons → rules (so extraction can use
+  // them), then session messages → nuggets. Separate budgets, shared model-error handling.
   await stage("extract", true, async () => {
-    const r = await processSessions(adapters, db, runner, cfg, {
-      ...(opts.maxExtractCalls !== undefined ? { maxCalls: opts.maxExtractCalls } : {}),
-      log,
-      recordRun: false,
-    });
-    if (r.abortedReason) rep.abortedReason = r.abortedReason;
-    const count = (s: string) => r.outcomes.filter((o) => o.status === s).length;
-    const nuggets = r.outcomes.reduce((a, o) => a + (o.nuggets?.length ?? 0), 0);
-    const parts = [`${count("extracted")} session(s) extracted, ${nuggets} new nugget(s)`];
-    if (count("deferred")) parts.push(`${count("deferred")} deferred (budget)`);
-    if (count("error")) parts.push(`${count("error")} error(s)`);
-    if (r.abortedReason) parts.push(`aborted: ${r.abortedReason}`);
-    for (const w of r.warnings) parts.push(`skipped ${w.agent}: ${w.message}`);
-    return { calls: r.calls, usage: r.usage, summary: parts.join(", ") };
+    const rj = await classifyRejections(tree, runner, cfg, { log });
+    for (const c of rj.classified) rep.rejections.push({ id: c.id, kind: c.kind, rule: c.rule, ...(c.target ? { target: c.target } : {}) });
+    const rjParts: string[] = [];
+    if (rj.calls) {
+      rjParts.push(`${rj.classified.length} rejection(s) classified`);
+      if (rj.failed.length) rjParts.push(`${rj.failed.length} failed (stay pending)`);
+      if (rj.deferred) rjParts.push(`${rj.deferred} left for the next run`);
+    }
+    const rjFailedAll = rj.failed.length > 0 && rj.classified.length === 0;
+    let calls = rj.calls;
+    let usage = rj.usage;
+    const parts: string[] = [];
+    if (rjFailedAll && rj.failed.length >= 2) {
+      // Repeated model errors (e.g. expired credentials): don't spend the session budget failing too.
+      rep.abortedReason = `${rj.failed.length} consecutive model errors classifying rejections; last: ${rj.failed.at(-1)!.error}`;
+      parts.push("sessions skipped (model errors)");
+    } else {
+      const r = await processSessions(adapters, db, runner, cfg, {
+        ...(opts.maxExtractCalls !== undefined ? { maxCalls: opts.maxExtractCalls } : {}),
+        log,
+        recordRun: false,
+      });
+      if (r.abortedReason) rep.abortedReason = r.abortedReason;
+      calls += r.calls;
+      usage = addUsage(usage, r.usage);
+      const count = (st: string) => r.outcomes.filter((o) => o.status === st).length;
+      const nuggets = r.outcomes.reduce((a, o) => a + (o.nuggets?.length ?? 0), 0);
+      parts.push(`${count("extracted")} session(s) extracted, ${nuggets} new nugget(s)`);
+      if (count("deferred")) parts.push(`${count("deferred")} deferred (budget)`);
+      if (count("error")) parts.push(`${count("error")} error(s)`);
+      if (r.abortedReason) parts.push(`aborted: ${r.abortedReason}`);
+      for (const w of r.warnings) parts.push(`skipped ${w.agent}: ${w.message}`);
+    }
+    const summary = [parts.join(", "), rjParts.join(", ")].filter(Boolean).join("; ");
+    if (rjFailedAll) throw Object.assign(new Error(`${summary}: ${rj.failed[0]!.error}`), { calls, usage });
+    return { calls, usage, summary };
   });
 
   await stage("insert", true, async () => {

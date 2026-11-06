@@ -49,9 +49,10 @@ Pipeline:
       --dry-run  call the model but persist nothing
       --fresh    ignore dedup state (prompt tuning; use with --dry-run)
   lbg run     [--stages sync,extract,insert,score,draft] [--max-calls N] [--json]
-      One unattended pass (what the systemd timer runs): sync skill files, extract new sessions,
-      place nuggets in the tree, score, draft the top candidates into proposals. Budgets:
-      extract.maxCallsPerRun, insert.maxCallsPerRun, render.maxPerRun (--max-calls: extract only).
+      One unattended pass (what the systemd timer runs): sync skill files, extract (classify new
+      rejections, then read new sessions), place nuggets in the tree, score, draft the top candidates
+      into proposals. Budgets: rejections.maxCallsPerRun, extract.maxCallsPerRun, insert.maxCallsPerRun,
+      render.maxPerRun (--max-calls: sessions only).
       Exit 0 ok, 2 a stage failed, 3 aborted (repeated model errors), 75 another run holds the lock.
   lbg cluster [--all] [--dry-run] [--max-calls N]       Same as: lbg tree insert
 
