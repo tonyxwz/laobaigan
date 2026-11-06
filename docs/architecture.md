@@ -1,6 +1,6 @@
 # Architecture
 
-How lbg (laobaigan) works inside. For using it, see the [README](../README.md); for the terms, the [glossary](glossary.md); for working on the code, [development.md](development.md).
+How lbg (laobaigan) works inside. For using it, see [usage](usage.md); for the terms, the [glossary](glossary.md); for working on the code, [development.md](development.md).
 
 ## The problem
 
