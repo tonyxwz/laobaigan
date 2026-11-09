@@ -21,6 +21,7 @@
     "url": "git+https://github.com/tonyxwz/laobaigan.git"
   },
   "author": "tonyxwz",
+  "license": "Apache-2.0",
   "type": "module",
   "engines": {
     "node": ">=24"

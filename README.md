@@ -37,3 +37,7 @@ To see in your shell prompt when something is waiting, run `lbg prompt` for a st
 - [Glossary](docs/glossary.md): the terms lbg uses
 - [Architecture](docs/architecture.md): how it works inside
 - [Development](docs/development.md): working on lbg itself
+
+## License
+
+[Apache 2.0](LICENSE)
