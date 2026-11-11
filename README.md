@@ -4,7 +4,7 @@
 
 You keep telling your agents the same things in new sessions: how a project is built, where the logs live, which command to use instead of the obvious one. **lbg** reads your Claude Code, pi and opencode sessions in the background, notices what you've explained more than once, and drafts it as a [skill](https://pi.dev/docs/latest/skills), or as a section of a repository's `AGENTS.md`.
 
-Nothing changes until you review a **proposal** and accept it. lbg never runs git: accepting writes the files, and you commit them if you want. All model calls go through [pi](https://pi.dev), with the provider, model and credentials pi is configured with.
+Nothing changes until you review a **proposal** and accept it. All model calls go through [pi](https://pi.dev), with the provider, model and credentials pi is configured with.
 
 ## Install
 
