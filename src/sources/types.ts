@@ -60,6 +60,14 @@ export interface Transcript {
   updatedAt: Date;
   /** Set when this session was spawned by another one (sub-agent). */
   parentSessionId?: string;
+  /**
+   * Set when this "transcript" is an agent's memory note (e.g. Claude Code's
+   * `memory/*.md`) rather than a conversation: one user turn holding the note.
+   */
+  memory?: {
+    /** The session the agent wrote the note in, if it recorded one. */
+    originSessionId?: string;
+  };
   /** All branches in chronological order, oldest first. See `Turn.offBranch`. */
   turns: Turn[];
 }

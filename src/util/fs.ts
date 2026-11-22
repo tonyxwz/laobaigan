@@ -36,6 +36,27 @@ export async function readFirstJsonlLine(path: string): Promise<unknown | undefi
   }
 }
 
+/** The first non-undefined `pick(line)` over a JSONL file's lines, reading only as far as needed. */
+export async function findInJsonl<T>(path: string, pick: (line: unknown) => T | undefined): Promise<T | undefined> {
+  const rl = createInterface({ input: createReadStream(path, { encoding: "utf8" }), crlfDelay: Infinity });
+  try {
+    for await (const line of rl) {
+      if (!line.trim()) continue;
+      let v: unknown;
+      try {
+        v = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      const found = pick(v);
+      if (found !== undefined) return found;
+    }
+    return undefined;
+  } finally {
+    rl.close();
+  }
+}
+
 export async function exists(path: string): Promise<boolean> {
   try {
     await stat(path);

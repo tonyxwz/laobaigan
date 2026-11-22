@@ -14,7 +14,7 @@ sessions ─extract─▶ nuggets ─insert─▶ knowledge tree ─score─▶ 
 : A coding assistant whose history lbg reads: Claude Code, pi, opencode (Kiro and Codex later).
 
 **Session**
-: One conversation with an agent, as the agent stored it (a JSONL file for Claude Code and pi, rows in opencode's SQLite db). Identified by `agent:sessionId`.
+: One conversation with an agent, as the agent stored it (a JSONL file for Claude Code and pi, rows in opencode's SQLite db). Identified by `agent:sessionId`. Claude Code's memory notes (`~/.claude/projects/*/memory/*.md`) are read as one-turn sessions too (`claude:mem-…`).
 
 **Source adapter**
 : The code that reads one agent's storage and turns its sessions into transcripts (`src/sources/`). If an agent's storage can't be read (e.g. the opencode 1.x schema), that agent is skipped with a warning.

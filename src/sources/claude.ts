@@ -1,9 +1,10 @@
 import { DEFAULT_LIMITS, DEFAULT_PATHS, type NormalizeLimits } from "../config.ts";
-import { exists, filesWithExt, readJsonl, subdirs } from "../util/fs.ts";
+import { exists, filesWithExt, findInJsonl, readJsonl, subdirs } from "../util/fs.ts";
 import { isRecord, renderInput, str, toDate, truncate } from "../util/text.ts";
 import { activeBranch } from "../util/tree.ts";
-import { stat } from "node:fs/promises";
-import { basename } from "node:path";
+import { createHash } from "node:crypto";
+import { readFile, stat } from "node:fs/promises";
+import { basename, join } from "node:path";
 import type { ListOptions, SessionRef, SourceAdapter, ToolCall, Transcript, Turn } from "./types.ts";
 
 /**
@@ -16,6 +17,11 @@ import type { ListOptions, SessionRef, SourceAdapter, ToolCall, Transcript, Turn
  * Lines are emitted in file (chronological) order; turns off the active branch
  * (rewinds / edited prompts) are kept and flagged `offBranch`.
  * Sub-agent transcripts live in `<session-uuid>/` subdirectories and are ignored.
+ *
+ * Memory notes Claude saved for the project live in `<cwd-slug>/memory/*.md`
+ * (`MEMORY.md` is only an index of them). Each note is listed as its own
+ * "session" (`mem-<name>-<hash>`) and loaded as a one-turn transcript, see
+ * `parseClaudeMemory`.
  */
 export class ClaudeAdapter implements SourceAdapter {
   readonly agent = "claude" as const;
@@ -45,10 +51,26 @@ export class ClaudeAdapter implements SourceAdapter {
           version: `${st.mtimeMs}:${st.size}`,
         };
       }
+      for (const file of await filesWithExt(join(dir, "memory"), ".md")) {
+        if (basename(file) === "MEMORY.md") continue;
+        const st = await stat(file);
+        if (opts.since && st.mtime < opts.since) continue;
+        yield {
+          agent: this.agent,
+          sessionId: memorySessionId(file),
+          location: file,
+          updatedAt: st.mtime,
+          version: `${st.mtimeMs}:${st.size}`,
+        };
+      }
     }
   }
 
   async load(ref: SessionRef): Promise<Transcript> {
+    if (isMemoryFile(ref.location)) {
+      const md = await readFile(ref.location, "utf8");
+      return parseClaudeMemory(md, ref, await projectCwd(join(ref.location, "..", "..")));
+    }
     const lines = (await readJsonl(ref.location)).filter(isRecord);
     return parseClaude(lines, ref, this.limits);
   }
@@ -205,4 +227,63 @@ export function classifyUserText(raw: string): Pick<Turn, "text" | "origin"> | u
   const bash = /^<bash-input>([\s\S]*?)<\/bash-input>$/.exec(s);
   if (bash) return { text: `!${bash[1]!.trim()}`, origin: "command" };
   return { text: s, origin: "prompt" };
+}
+
+/** A memory note: `<projects>/<cwd-slug>/memory/<name>.md`. */
+function isMemoryFile(path: string): boolean {
+  return path.endsWith(".md") && basename(join(path, "..")) === "memory";
+}
+
+/** Stable, unique per file (note names repeat across projects), readable in a 12-char prefix. */
+export function memorySessionId(path: string): string {
+  const hash = createHash("sha256").update(path).digest("hex").slice(0, 6);
+  return `mem-${basename(path, ".md")}-${hash}`;
+}
+
+/**
+ * The project's working directory, from the `cwd` of one of its session files.
+ * The directory slug can't be decoded reliably (both `/` and `-` become `-`).
+ * Empty when no session file says.
+ */
+async function projectCwd(dir: string): Promise<string> {
+  for (const file of await filesWithExt(dir, ".jsonl")) {
+    try {
+      const cwd = await findInJsonl(file, (l) => (isRecord(l) ? str(l.cwd) : undefined));
+      if (cwd) return cwd;
+    } catch {
+      // unreadable session file: try the next one
+    }
+  }
+  return "";
+}
+
+/**
+ * A Claude Code memory note as a transcript with one user turn.
+ *
+ * The note is what Claude wrote down of what I told it, so it is treated as my
+ * words: the extract prompt says so (`Transcript.memory`). The turn's timestamp
+ * is the note's `modified` date, so an edited note is a new turn (and extracted
+ * again) while an untouched one stays seen.
+ */
+export function parseClaudeMemory(md: string, ref: SessionRef, cwd: string): Transcript {
+  const fm = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(md);
+  const front = fm?.[1] ?? "";
+  const field = (k: string) => new RegExp(`^\\s*${k}:\\s*(.*)$`, "m").exec(front)?.[1]?.trim().replace(/^["']|["']$/g, "") || undefined;
+  const name = field("name") ?? basename(ref.location, ".md");
+  const description = field("description");
+  const origin = field("originSessionId");
+  const ts = toDate(field("modified")) ?? ref.updatedAt;
+  const body = (fm ? md.slice(fm[0].length) : md).trim();
+  const text = [`Memory note "${name}"${description ? `: ${description}` : ""}`, body].filter(Boolean).join("\n\n");
+  return {
+    agent: "claude",
+    sessionId: ref.sessionId,
+    location: ref.location,
+    cwd,
+    title: `memory: ${name}`,
+    startedAt: ts,
+    updatedAt: ts,
+    memory: origin ? { originSessionId: origin } : {},
+    turns: body || description ? [{ role: "user", origin: "prompt", text, ts }] : [],
+  };
 }

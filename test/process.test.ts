@@ -1,4 +1,4 @@
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Static, TSchema } from "typebox";
@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { DEFAULT_CONFIG, loadConfig, type Config } from "../src/config.ts";
 import type { PiRequest, PiResult, PiRunner } from "../src/pi/run-pi.ts";
 import { processSessions } from "../src/pipeline/process.ts";
+import { ClaudeAdapter } from "../src/sources/claude.ts";
 import type { SessionRef, SourceAdapter, Transcript, Turn } from "../src/sources/types.ts";
 import { StateDb } from "../src/state/db.ts";
 
@@ -167,6 +168,31 @@ describe("processSessions abort", () => {
     const res = await processSessions([adapter], db, runner, cfg, { maxConsecutiveErrors: 2 });
     expect(res.outcomes.map((o) => o.status)).toEqual(["error", "error", "aborted", "aborted"]);
     expect(res.abortedReason).toMatch(/2 consecutive model errors/);
+    expect(runner.prompts).toHaveLength(2);
+  });
+
+  it("extracts Claude memory notes, attributed to the session they came from, and re-extracts only when edited", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lbg-mem-"));
+    const memDir = join(root, "-p", "memory");
+    await mkdir(memDir, { recursive: true });
+    const note = (body: string, modified: string) =>
+      `---\nname: build\ndescription: how to build\nmetadata:\n  originSessionId: orig-1\n  modified: ${modified}\n---\n\n${body}\n`;
+    await writeFile(join(memDir, "build.md"), note("Always `make release`.", "2026-01-01T00:00:00Z"));
+    const db = new StateDb(":memory:");
+    const runner = new FakeRunner();
+    const adapters = [new ClaudeAdapter(root)];
+
+    let res = await processSessions(adapters, db, runner, cfg);
+    expect(res.outcomes.map((o) => o.status)).toEqual(["extracted"]);
+    expect(runner.prompts[0]).toContain("Source: memory note saved by claude in session orig-1");
+    expect(db.nuggets().map((n) => [n.agent, n.sessionId])).toEqual([["claude", "orig-1"]]);
+
+    res = await processSessions(adapters, db, runner, cfg);
+    expect(res.outcomes.map((o) => o.status)).toEqual(["up-to-date"]);
+
+    await writeFile(join(memDir, "build.md"), note("Always `make release`, never npm.", "2026-01-02T00:00:00Z"));
+    res = await processSessions(adapters, db, runner, cfg);
+    expect(res.outcomes.map((o) => o.status)).toEqual(["extracted"]);
     expect(runner.prompts).toHaveLength(2);
   });
 });

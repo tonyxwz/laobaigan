@@ -45,6 +45,7 @@ Each agent stores sessions differently. An adapter (`src/sources/`) lists sessio
 | Agent | Storage | Format | Change token |
 |---|---|---|---|
 | Claude Code | `~/.claude/projects/<cwd-slug>/<uuid>.jsonl` | JSONL events; a tree via `uuid` / `parentUuid` | `mtimeMs:size` |
+| Claude Code memory | `~/.claude/projects/<cwd-slug>/memory/*.md` (not the `MEMORY.md` index) | one markdown note per file, frontmatter with `originSessionId`, `modified` | `mtimeMs:size` |
 | pi | `~/.pi/agent/sessions/<cwd-slug>/<ts>_<id>.jsonl` | JSONL entries; a tree via `parentId` | `mtimeMs:size` |
 | opencode | `~/.local/share/opencode/opencode.db` | SQLite 2.x schema (`session_v2`, `session_message`) | `session_v2.time_updated` |
 
@@ -56,7 +57,7 @@ interface SourceAdapter {
   load(ref: SessionRef): Promise<Transcript>;
 }
 
-interface Transcript { agent; sessionId; cwd; startedAt; updatedAt; turns: Turn[] }
+interface Transcript { agent; sessionId; cwd; startedAt; updatedAt; turns: Turn[]; memory?: { originSessionId? } }
 interface Turn {
   role: "user" | "assistant" | "tool";
   text: string;                                  // tool results truncated
@@ -69,6 +70,7 @@ interface Turn {
 
 - **Branches:** Claude Code (rewinds, edited prompts) and pi (`/tree`) sessions are trees. Every branch is emitted in chronological order, and turns off the active leaf-to-root path are flagged `offBranch`. A rewound prompt followed by a rephrased one is often a correction.
 - **Noise filtered by the adapters:** thinking blocks, system and meta messages, skill-body injections, local command output, task notifications, sub-agent sidechains. Slash commands become `/cmd args` with origin `command`.
+- **Memory notes:** Claude Code saves notes of what I told it in `memory/*.md`, and they outlive its transcript cleanup. Each note is its own session (`claude:mem-<name>-<hash>`), loaded as one user turn (name, description, body) dated to its `modified` field, so editing a note makes it new again. The working directory comes from a session file of the same project (the slug can't be decoded). Extraction is told the source is a note, not a conversation. Its nuggets are attributed to the note's `originSessionId`, so a note and the session it was written in count as one session.
 - **Isolation:** an adapter that can't read its storage (e.g. an opencode 1.x database) raises `SourceUnavailable`. That agent is skipped with a warning, and the others still run.
 
 ## 2. Change detection and dedup

@@ -174,7 +174,8 @@ export async function processSessions(
             db.insertNugget({
               runId,
               agent: t.agent,
-              sessionId: t.sessionId,
+              // A memory note restates its session: count them as one.
+              sessionId: t.memory?.originSessionId ?? t.sessionId,
               cwd: t.cwd,
               kind: n.kind,
               title: n.title,

@@ -210,3 +210,50 @@ describe("unreadable sources", () => {
     expect(warnings).toEqual(["EACCES: permission denied, scandir '/x'"]);
   });
 });
+
+describe("ClaudeAdapter memory notes", () => {
+  it("lists memory/*.md (not the MEMORY.md index) as one-turn transcripts with the project's cwd", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lbg-claude-mem-"));
+    const dir = join(root, "-proj-x");
+    await mkdir(join(dir, "memory"), { recursive: true });
+    await writeFile(
+      join(dir, "s1.jsonl"),
+      jsonl([{ type: "mode", mode: "normal" }, { type: "user", uuid: "u1", cwd: "/proj-x", timestamp: "2026-01-01T00:00:00Z", message: { role: "user", content: "hi there, build it" } }]),
+    );
+    await writeFile(join(dir, "memory", "MEMORY.md"), "- [Build](build.md) — use make\n");
+    await writeFile(
+      join(dir, "memory", "build.md"),
+      [
+        "---",
+        "name: build-with-make",
+        'description: "Build with make release, not npm"',
+        "metadata:",
+        "  type: feedback",
+        "  originSessionId: s1",
+        "  modified: 2026-02-03T04:05:06.000Z",
+        "---",
+        "",
+        "Run `make release`.",
+        "",
+      ].join("\n"),
+    );
+
+    const adapter = new ClaudeAdapter(root);
+    const refs = [];
+    for await (const r of adapter.list()) refs.push(r);
+    const mem = refs.filter((r) => r.location.endsWith(".md"));
+    expect(mem).toHaveLength(1);
+    expect(mem[0]!.sessionId).toMatch(/^mem-build-[0-9a-f]{6}$/);
+
+    const t = await adapter.load(mem[0]!);
+    expect(t).toMatchObject({ cwd: "/proj-x", title: "memory: build-with-make", memory: { originSessionId: "s1" } });
+    expect(t.turns).toEqual([
+      {
+        role: "user",
+        origin: "prompt",
+        text: 'Memory note "build-with-make": Build with make release, not npm\n\nRun `make release`.',
+        ts: new Date("2026-02-03T04:05:06.000Z"),
+      },
+    ]);
+  });
+});

@@ -73,6 +73,7 @@ Rules:
 - scope: ask "would this help in a different repository?" If no, use "repo" and set \`repo\` to the repository root path when you can tell it (from the session working directory or paths in the transcript).
 - If the knowledge is already covered by a listed existing skill or AGENTS.md section, still report it but set \`coveredBySkill\` — the user having to repeat it means that skill isn't being triggered.
 - confidence: 0.9+ the user explicitly taught/corrected; ~0.6 implied by the user's instructions; below 0.5 don't report.
+- A "memory note" source is not a conversation: it is a note the agent saved of what the user told it in earlier sessions, written as a single U1 turn. Treat its content as knowledge the user supplied and cite U1. The same rules apply: skip one-off task state and anything that wouldn't help a new session.
 - <rejected_topics>, when present, lists topics the user rejected as skills. "outdated": don't report the old claim again, but DO report what replaces it (newer, corrected knowledge). "not-useful": don't report knowledge about that topic at all.`;
 
 export interface ExtractInput {
@@ -111,6 +112,9 @@ export function buildExtractPrompt(input: ExtractInput, chunk: string, part: { i
   const t = input.transcript;
   return [
     `Session: ${t.agent}:${t.sessionId}${t.title ? ` — "${t.title}"` : ""}`,
+    ...(t.memory
+      ? [`Source: memory note saved by ${t.agent}${t.memory.originSessionId ? ` in session ${t.memory.originSessionId}` : ""} (not a conversation; see the rules)`]
+      : []),
     `Working directory: ${t.cwd || "(unknown)"}`,
     `Repository root: ${input.repoRoot ?? "(not a git repo / unknown)"}`,
     `Dates: ${t.startedAt.toISOString().slice(0, 10)} → ${t.updatedAt.toISOString().slice(0, 10)}`,
