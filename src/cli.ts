@@ -4,7 +4,8 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { CONFIG_PATH, loadConfig } from "./config.ts";
-import { PiConfigRunner, piDefaults } from "./pi/run-pi.ts";
+import { piDefaults } from "./pi/run-pi.ts";
+import { modelRunner } from "./pi/run-claude.ts";
 import * as curate from "./pipeline/curate.ts";
 import { processSessions, type ProcessOptions, type SessionOutcome } from "./pipeline/process.ts";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -235,7 +236,7 @@ async function main(argv: string[]): Promise<number> {
           ...(values.settle ? { settleMinutes: parseDuration(values.settle) / 60e3 } : {}),
           log: (m) => process.stderr.write(`${m}\n`),
         };
-        const res = await processSessions(adapters, db, new PiConfigRunner(), cfg, opts);
+        const res = await processSessions(adapters, db, modelRunner(cfg), cfg, opts);
         if (values.json) return json(res), 0;
         renderOutcomes(res.outcomes, out);
         if (values.excerpt) {
@@ -270,7 +271,7 @@ async function main(argv: string[]): Promise<number> {
       const db = tmp ? real.snapshotTo(join(tmp, "state.db")) : real;
       try {
         const r = await runPipeline(
-          { adapters, db, runner: new PiConfigRunner(), cfg: tmp ? { ...cfg, stateDir: tmp } : cfg, log: (m) => out(`  ${m}\n`) },
+          { adapters, db, runner: modelRunner(cfg), cfg: tmp ? { ...cfg, stateDir: tmp } : cfg, log: (m) => out(`  ${m}\n`) },
           {
             ...(stages ? { stages } : only ? { stages: ["sync", "score", "draft"] as Stage[] } : {}),
             ...(values["max-calls"] ? { maxExtractCalls: Number(values["max-calls"]) } : {}),
@@ -690,7 +691,7 @@ async function main(argv: string[]): Promise<number> {
             return 0;
           };
           if (sub === "revise" && feedback) {
-            const r = await reviseProposal(tree, new PiConfigRunner(), cfg, id, feedback);
+            const r = await reviseProposal(tree, modelRunner(cfg), cfg, id, feedback);
             if (!r.problems.length) out(`${r.summary}\n`);
             for (const e of r.excluded) out(`left out (off-topic): #${e.nuggetId} ${e.title} → ${e.now?.path ?? "unplaced, next run files it"}\n`);
             out(`cost≈$${r.usage.cost.toFixed(4)}\n`);
@@ -716,7 +717,7 @@ async function main(argv: string[]): Promise<number> {
           if (!nuggets.length || nuggets.some((x) => !Number.isInteger(x) || x <= 0)) throw new Error(`proposal drop expects <id> <nugget>... (nugget ids: lbg proposal show ${id})`);
           const to = values.to !== undefined ? Number(values.to.replace(/^#/, "")) : undefined;
           if (to !== undefined && (!Number.isInteger(to) || to <= 0)) throw new Error(`--to expects a node id, got ${values.to}`);
-          const r = await dropEvidence(tree, new PiConfigRunner(), cfg, id, nuggets, {
+          const r = await dropEvidence(tree, modelRunner(cfg), cfg, id, nuggets, {
             ...(values.reason ? { reason: values.reason } : {}),
             ...(to !== undefined ? { to } : {}),
             revise: values.revise,

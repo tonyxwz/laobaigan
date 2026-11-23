@@ -74,7 +74,9 @@ export const DEFAULT_PATHS = {
 /**
  * Optional per-stage overrides. Unset = pi's own default (defaultModel / defaultThinkingLevel
  * in ~/.pi/agent/settings.json), so the model is chosen in one place. A value is
- * "provider/id", or an id of pi's default provider.
+ * "provider/id", or an id of pi's default provider. `extract` may also be "claude-code" or
+ * "claude-code/<model>" (e.g. "claude-code/sonnet"): those calls go to Claude Code through
+ * its Agent SDK instead of pi. `distill` can't: drafting needs pi's guarded file tools.
  */
 export interface ModelConfig {
   extract?: string;
@@ -88,6 +90,13 @@ export interface Config {
   skillsDir: string;
   stateDir: string;
   models: ModelConfig;
+  /** How to run Claude Code when a model is "claude-code[/model]". */
+  claudeCode: {
+    /** The `claude` executable. Default: the one bundled with the Agent SDK. */
+    executable?: string;
+    /** Claude Code settings files to load. Default ["user"] (your login / provider settings). */
+    settingSources?: ("user" | "project" | "local")[];
+  };
   /** Skip sessions modified more recently than this (minutes). */
   settleMinutes: number;
   extract: {
@@ -181,6 +190,7 @@ export const DEFAULT_CONFIG: Config = {
   skillsDir: DEFAULT_PATHS.skillsDir,
   stateDir: DEFAULT_PATHS.stateDir,
   models: {},
+  claudeCode: {},
   settleMinutes: 30,
   extract: {
     chunkTokens: 40_000,
@@ -253,8 +263,21 @@ export function loadConfig(path = CONFIG_PATH): Config {
     skillsDir: expandPath(c.skillsDir),
     topics: validateTopics(Array.isArray(c.topics) ? c.topics : []),
     ...validateCommitCommand(c.commitCommand),
+    models: validateModels(c.models ?? {}),
+    claudeCode: {
+      ...c.claudeCode,
+      // A bare name ("claude") is looked up on PATH; anything path-like is expanded.
+      ...(c.claudeCode?.executable && /[/~]/.test(c.claudeCode.executable) ? { executable: expandPath(c.claudeCode.executable) } : {}),
+    },
     stateDir: expandPath(c.stateDir),
   };
+}
+
+function validateModels(m: ModelConfig): ModelConfig {
+  if (m.distill === "claude-code" || m.distill?.startsWith("claude-code/")) {
+    throw new Error("config.models.distill can't be Claude Code (drafting needs pi's file tools); use it for models.extract");
+  }
+  return m;
 }
 
 function validateCommitCommand(v: unknown): { commitCommand?: string | { global?: string; repo?: string } } {

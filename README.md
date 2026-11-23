@@ -4,7 +4,7 @@
 
 You keep telling your agents the same things in new sessions: how a project is built, where the logs live, which command to use instead of the obvious one. **lbg** reads your Claude Code, pi and opencode sessions in the background, notices what you've explained more than once, and drafts it as a [skill](https://pi.dev/docs/latest/skills), or as a section of a repository's `AGENTS.md`.
 
-Nothing changes until you review a **proposal** and accept it. All model calls go through [pi](https://pi.dev), with the provider, model and credentials pi is configured with.
+Nothing changes until you review a **proposal** and accept it. Model calls go through [pi](https://pi.dev), with the provider, model and credentials pi is configured with, or optionally through Claude Code for extraction ([see below](#use-claude-code-for-extraction)).
 
 ## Install
 
@@ -16,6 +16,21 @@ lbg init                       # finds your agents' sessions, skills dir and mod
 lbg run                        # first pass over your history (takes a while; uses the model)
 lbg service install            # then run hourly in the background
 ```
+
+## Use Claude Code for extraction
+
+Reading sessions for knowledge (extraction, plus classifying rejections and placing knowledge in the tree) can run on Claude Code through its [Agent SDK](https://code.claude.com/docs/en/agent-sdk/overview), with your Claude Code login and billing. In `~/.config/laobaigan/config.json`:
+
+```jsonc
+{
+  "models": { "extract": "claude-code/sonnet" },  // or "claude-code" for Claude Code's default model
+  // Optional. executable: a path or a name on PATH (default: the claude bundled with the SDK).
+  // settingSources: Claude Code settings to load (default ["user"], for your login / Bedrock settings).
+  "claudeCode": { "executable": "claude", "settingSources": ["user"] }
+}
+```
+
+Each call is isolated (no tools, skills, hooks or MCP servers) and isn't saved to `~/.claude/projects`. Drafting skills stays on pi, because it needs pi's file tools. Details: [Usage](docs/usage.md#claude-code-as-the-extractor).
 
 ## Review proposals
 

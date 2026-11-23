@@ -249,6 +249,7 @@ session.getSessionStats();                       // tokens and cost for the run 
 - **Credentials** are pi's own.
 - **Missing result:** if the model doesn't call the result tool, it's asked once more; then the call fails.
 - **Tests** run real pi sessions on pi's faux provider, through the same `SdkPiRunner`.
+- **Claude Code** (`src/pi/run-claude.ts`): a model spec `claude-code[/model]` routes a call to `ClaudeCodeRunner`, which runs one Agent SDK `query()` with the result tool's schema as `outputFormat` (structured output), no tools/skills/hooks/MCP, an empty temp cwd, and `persistSession: false` (lbg reads `~/.claude/projects`). It refuses requests with tools, so only tool-less stages (extract, classify, insert) can use it.
 
 ## 9. Running unattended
 
@@ -292,7 +293,7 @@ src/
     render.ts accept.ts revise.ts interactive.ts
     run.ts                   the lbg run pass
   skills/                    parse SKILL.md / AGENTS.md, repo resolution
-  pi/run-pi.ts guard.ts guard-extension.ts
+  pi/run-pi.ts run-claude.ts guard.ts guard-extension.ts
   notify/prompt.ts           the shell prompt file
 systemd/                     unit templates
 test/

@@ -268,6 +268,10 @@ systemctl --user disable --now laobaigan.timer   # pause
   // Models follow pi (defaultModel / defaultThinkingLevel in ~/.pi/agent/settings.json).
   // Override a stage with "provider/id", or an id of pi's default provider:
   // "models": { "extract": "…", "distill": "…" },
+  // Or extract with Claude Code (its Agent SDK, your Claude Code login): "claude-code" for
+  // Claude Code's default model, or "claude-code/<model>". Drafting (distill) stays on pi.
+  // "models": { "extract": "claude-code/sonnet" },
+  // "claudeCode": { "executable": "claude", "settingSources": ["user"] },
 
   // Skip sessions changed in the last N minutes (they may still be going).
   "settleMinutes": 30,
@@ -304,6 +308,13 @@ systemctl --user disable --now laobaigan.timer   # pause
 | `render.maxSkillLines` | a drafted `SKILL.md` longer than this fails its check (detail belongs in `references/`) |
 | `rejections.maxCallsPerRun` | rejections classified per run |
 | `rejections.expireDays` | when `not-useful` memories expire (0 = never) |
+| `models.extract` | model for extraction, rejection classification and tree routing; `claude-code[/model]` runs them through Claude Code |
+| `claudeCode.executable` | the `claude` to run for `claude-code` models (a path, or a name on `PATH`); default: the one bundled with the Agent SDK |
+| `claudeCode.settingSources` | Claude Code settings files loaded for those calls; default `["user"]`, so your login and provider settings (e.g. Bedrock) apply |
+
+### Claude Code as the extractor
+
+With `"models": { "extract": "claude-code/sonnet" }`, the extract, classify and routing calls run in headless Claude Code sessions through the [Agent SDK](https://code.claude.com/docs/en/agent-sdk/overview) instead of pi, using Claude Code's login and billing. Each call is isolated: no tools, skills, hooks or MCP servers, an empty temporary working directory, and `persistSession: false`, so lbg's own calls never land in `~/.claude/projects` (which lbg reads). The answer comes back as Claude Code's JSON-schema structured output. `extractThinking` maps to Claude Code's effort (`off` disables thinking). Drafting needs pi's guarded file tools, so `models.distill` can't be `claude-code`.
 
 ### commitCommand
 
