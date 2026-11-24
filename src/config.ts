@@ -71,31 +71,49 @@ export const DEFAULT_PATHS = {
   stateDir: process.env.LBG_STATE_DIR ?? join(home, ".local", "state", "laobaigan"),
 };
 
-/**
- * Optional per-stage overrides. Unset = pi's own default (defaultModel / defaultThinkingLevel
- * in ~/.pi/agent/settings.json), so the model is chosen in one place. A value is
- * "provider/id", or an id of pi's default provider. `extract` may also be "claude-code" or
- * "claude-code/<model>" (e.g. "claude-code/sonnet"): those calls go to Claude Code through
- * its Agent SDK instead of pi. `distill` can't: drafting needs pi's guarded file tools.
- */
-export interface ModelConfig {
-  extract?: string;
-  distill?: string;
-  extractThinking?: "off" | "minimal" | "low" | "medium" | "high";
-  distillThinking?: "off" | "minimal" | "low" | "medium" | "high";
+export type ThinkingSetting = "off" | "minimal" | "low" | "medium" | "high";
+
+export const AGENTS = ["pi", "claude-code"] as const;
+export type AgentKind = (typeof AGENTS)[number];
+
+/** The active agent's model and thinking level: what every model call asks for. */
+export function agentModel(cfg: Pick<Config, "agent" | "pi" | "claudeCode">): { model?: string; thinking?: ThinkingSetting } {
+  const s = cfg.agent === "claude-code" ? cfg.claudeCode : cfg.pi;
+  return { ...(s.model ? { model: s.model } : {}), ...(s.thinking ? { thinking: s.thinking } : {}) };
 }
 
 export interface Config {
   /** The global skills directory the agents load. Default: detected (see detectSkillsDir). */
   skillsDir: string;
   stateDir: string;
-  models: ModelConfig;
-  /** How to run Claude Code when a model is "claude-code[/model]". */
+  /**
+   * The agent every model call goes through: extraction, routing, drafting, revising (one-shot
+   * and interactive). Its section below holds the model. Default "pi".
+   */
+  agent: AgentKind;
+  /** pi, when agent is "pi". */
+  pi: {
+    /** "provider/id", or an id of pi's default provider. Unset: pi's defaultModel (~/.pi/agent/settings.json). */
+    model?: string;
+    /** Unset: pi's defaultThinkingLevel. */
+    thinking?: ThinkingSetting;
+  };
+  /** Claude Code (through its Agent SDK; interactive revise: the CLI), when agent is "claude-code". */
   claudeCode: {
+    /** A Claude Code model ("sonnet", "opus", a full id). Unset: Claude Code's default model. */
+    model?: string;
+    /** Mapped to Claude Code's effort ("off" disables thinking). Unset: Claude Code's default. */
+    thinking?: ThinkingSetting;
     /** The `claude` executable. Default: the one bundled with the Agent SDK. */
     executable?: string;
     /** Claude Code settings files to load. Default ["user"] (your login / provider settings). */
     settingSources?: ("user" | "project" | "local")[];
+    /**
+     * Claude Code settings for lbg's sessions only (SDK calls and interactive revise), e.g.
+     * { "enabledPlugins": { "x@y": false }, "env": { … } }. lbg's own settings go on top;
+     * hooks are added next to lbg's guard hook. Keys that could switch the guard off are refused.
+     */
+    settings?: Record<string, unknown>;
   };
   /** Skip sessions modified more recently than this (minutes). */
   settleMinutes: number;
@@ -189,7 +207,8 @@ export interface ScoreConfig {
 export const DEFAULT_CONFIG: Config = {
   skillsDir: DEFAULT_PATHS.skillsDir,
   stateDir: DEFAULT_PATHS.stateDir,
-  models: {},
+  agent: "pi",
+  pi: {},
   claudeCode: {},
   settleMinutes: 30,
   extract: {
@@ -255,6 +274,12 @@ export function loadConfig(path = CONFIG_PATH): Config {
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw new Error(`Bad config ${path}: ${String(err)}`);
   }
+  const old = fileCfg ? ["models", "model", "thinking"].filter((k) => k in fileCfg!) : [];
+  if (old.length) {
+    throw new Error(
+      `${path}: ${old.map((k) => `"${k}"`).join(", ")} moved into the agent's section: set "agent": "pi" or "claude-code", and "model" / "thinking" in "pi" or "claudeCode" (e.g. { "agent": "claude-code", "claudeCode": { "model": "sonnet" } }).`,
+    );
+  }
   const c = merge(DEFAULT_CONFIG, fileCfg);
   // Redaction runs deep inside extraction and verification; install the patterns once, here.
   setExtraPatterns(Array.isArray(c.redact?.extraPatterns) ? c.redact.extraPatterns : []);
@@ -263,9 +288,12 @@ export function loadConfig(path = CONFIG_PATH): Config {
     skillsDir: expandPath(c.skillsDir),
     topics: validateTopics(Array.isArray(c.topics) ? c.topics : []),
     ...validateCommitCommand(c.commitCommand),
-    models: validateModels(c.models ?? {}),
+    agent: validateAgent(c.agent),
+    pi: { ...c.pi, ...validateModel("pi", c.pi?.model, c.pi?.thinking) },
     claudeCode: {
       ...c.claudeCode,
+      ...validateModel("claudeCode", c.claudeCode?.model, c.claudeCode?.thinking),
+      ...validateClaudeSettings(c.claudeCode?.settings),
       // A bare name ("claude") is looked up on PATH; anything path-like is expanded.
       ...(c.claudeCode?.executable && /[/~]/.test(c.claudeCode.executable) ? { executable: expandPath(c.claudeCode.executable) } : {}),
     },
@@ -273,11 +301,34 @@ export function loadConfig(path = CONFIG_PATH): Config {
   };
 }
 
-function validateModels(m: ModelConfig): ModelConfig {
-  if (m.distill === "claude-code" || m.distill?.startsWith("claude-code/")) {
-    throw new Error("config.models.distill can't be Claude Code (drafting needs pi's file tools); use it for models.extract");
+/** Settings that would switch off (or let tools around) lbg's guard hook. */
+const GUARD_UNSAFE_SETTINGS = ["disableAllHooks", "allowManagedHooksOnly", "permissions"];
+
+function validateClaudeSettings(v: unknown): { settings?: Record<string, unknown> } {
+  if (v === undefined) return {};
+  if (!v || typeof v !== "object" || Array.isArray(v)) throw new Error("config.claudeCode.settings must be an object of Claude Code settings");
+  const bad = Object.keys(v).filter((k) => GUARD_UNSAFE_SETTINGS.includes(k));
+  if (bad.length) {
+    throw new Error(`config.claudeCode.settings: ${bad.join(", ")} can't be set: it could switch off lbg's file guard (lbg already sets what its sessions need)`);
   }
-  return m;
+  const hooks = (v as Record<string, unknown>).hooks;
+  if (hooks !== undefined && (!hooks || typeof hooks !== "object" || Array.isArray(hooks) || Object.values(hooks).some((h) => !Array.isArray(h)))) {
+    throw new Error("config.claudeCode.settings.hooks must map hook events to arrays, as in Claude Code's settings.json");
+  }
+  return { settings: v as Record<string, unknown> };
+}
+
+const THINKING: ThinkingSetting[] = ["off", "minimal", "low", "medium", "high"];
+
+function validateAgent(v: unknown): AgentKind {
+  if (!AGENTS.includes(v as AgentKind)) throw new Error(`config.agent must be one of ${AGENTS.map((a) => `"${a}"`).join(", ")} (got ${JSON.stringify(v)})`);
+  return v as AgentKind;
+}
+
+function validateModel(section: string, model: unknown, thinking: unknown): { model?: string; thinking?: ThinkingSetting } {
+  if (model !== undefined && (typeof model !== "string" || !model.trim())) throw new Error(`config.${section}.model must be a non-empty string`);
+  if (thinking !== undefined && !THINKING.includes(thinking as ThinkingSetting)) throw new Error(`config.${section}.thinking must be one of ${THINKING.join(", ")}`);
+  return { ...(model ? { model: model as string } : {}), ...(thinking ? { thinking: thinking as ThinkingSetting } : {}) };
 }
 
 function validateCommitCommand(v: unknown): { commitCommand?: string | { global?: string; repo?: string } } {

@@ -196,7 +196,7 @@ export class PiConfigRunner extends SdkPiRunner {
       const rt = await runtime;
       const d = defaults();
       const spec = id ?? d.model;
-      if (!spec) throw new Error("No model: set a default model in pi (/model, or defaultModel in ~/.pi/agent/settings.json), or models.* in lbg's config");
+      if (!spec) throw new Error("No model: set a default model in pi (/model, or defaultModel in ~/.pi/agent/settings.json), or pi.model in lbg's config");
       const slash = spec.indexOf("/");
       const [provider, modelId] = slash > 0 && id ? [spec.slice(0, slash), spec.slice(slash + 1)] : [d.provider, spec];
       if (!provider) throw new Error(`No provider for model ${spec}: set defaultProvider in pi, or use "provider/id"`);

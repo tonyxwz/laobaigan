@@ -74,7 +74,7 @@ export function renderInit(r: InitReport, h: string = homedir()): string {
     ...r.skillsDirs.map((d) => `  ${d.exists ? "✓" : "·"} ${t(d.path)}`),
     "agents' sessions:",
     ...r.agents.map((a) => `  ${a.available ? "✓" : "·"} ${a.agent}`),
-    `model: ${r.pi.provider && r.pi.model ? `${r.pi.provider}/${r.pi.model} (pi's default; override with models.* in the config)` : "pi has no default model yet: run pi and pick one (/model), or set models.* in the config"}`,
+    `model: ${r.pi.provider && r.pi.model ? `${r.pi.provider}/${r.pi.model} (pi's default; override with pi.model in the config)` : "pi has no default model yet: run pi and pick one (/model), or set pi.model in the config"}`,
     `pi CLI: ${r.pi.cli ? t(r.pi.cli) : "not on PATH (needed only for lbg proposal revise)"}`,
     "",
     "Next:",

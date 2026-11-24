@@ -130,11 +130,11 @@ describe("loadConfig", () => {
   it("merges the file over defaults and expands ~", async () => {
     const dir = await mkdtemp(join(tmpdir(), "lbg-cfg-"));
     const path = join(dir, "config.json");
-    await writeFile(path, `{\n  // comment\n  "skillsDir": "~/my-skills",\n  "models": { "extract": "x" }\n}`);
+    await writeFile(path, `{\n  // comment\n  "skillsDir": "~/my-skills",\n  "pi": { "model": "x" }\n}`);
     const c = loadConfig(path);
     expect(c.skillsDir).toMatch(/\/my-skills$/);
     expect(c.skillsDir).not.toContain("~");
-    expect(c.models).toEqual({ extract: "x" }); // distill: pi's default
+    expect(c.pi.model).toBe("x");
   });
 
   it("validates declared topics", async () => {
@@ -154,7 +154,7 @@ describe("loadConfig", () => {
   });
 
   it("uses defaults when the file is missing", () => {
-    expect(loadConfig("/nonexistent/config.json").models).toEqual({}); // everything follows pi
+    expect(loadConfig("/nonexistent/config.json")).toMatchObject({ agent: "pi", pi: {} }); // everything follows pi
   });
 });
 

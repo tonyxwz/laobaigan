@@ -245,11 +245,11 @@ await session.prompt(prompt);
 session.getSessionStats();                       // tokens and cost for the run log
 ```
 
-- **Model:** pi's `defaultProvider` / `defaultModel` / `defaultThinkingLevel` from `~/.pi/agent/settings.json`, read through `SettingsManager`. `models.*` in lbg's config can override a stage. lbg has no provider policy of its own.
+- **Model:** pi's `defaultProvider` / `defaultModel` / `defaultThinkingLevel` from `~/.pi/agent/settings.json`, read through `SettingsManager`. `pi.model` / `pi.thinking` in lbg's config override that. Every stage (extract, classify, insert, draft, revise; interactive revise too) uses the one agent in `agent` (`pi` or `claude-code`) with that agent's section's model (`agentModel(cfg)`). lbg has no provider policy of its own.
 - **Credentials** are pi's own.
 - **Missing result:** if the model doesn't call the result tool, it's asked once more; then the call fails.
 - **Tests** run real pi sessions on pi's faux provider, through the same `SdkPiRunner`.
-- **Claude Code** (`src/pi/run-claude.ts`): a model spec `claude-code[/model]` routes a call to `ClaudeCodeRunner`, which runs one Agent SDK `query()` with the result tool's schema as `outputFormat` (structured output), no tools/skills/hooks/MCP, an empty temp cwd, and `persistSession: false` (lbg reads `~/.claude/projects`). It refuses requests with tools, so only tool-less stages (extract, classify, insert) can use it.
+- **Claude Code** (`src/pi/run-claude.ts`): with `agent: "claude-code"`, `modelRunner` is a `ClaudeCodeRunner`, which runs one Agent SDK `query()` with the result tool's schema as `outputFormat` (structured output), no skills/MCP/settings hooks, none of the user's Claude Code context (`CLAUDE_CODE_DISABLE_CLAUDE_MDS`, `CLAUDE_CODE_DISABLE_AUTO_MEMORY`, `outputStyle: "default"`; settings files still load for login/provider), and `persistSession: false` (lbg reads `~/.claude/projects`). Tool-less stages (extract, classify, insert) get no tools and an empty temp cwd. A request with a `fileGuard` (draft, revise) runs in the worktree with Claude Code's built-in `Read`/`Glob`/`Grep`/`Write`/`Edit` (mapped from pi's tool names); `src/pi/claude-guard.ts` decides each call with the same `resolveGuard` checks as pi's guarded tools, through a `PreToolUse` hook (runs regardless of settings allow rules) and `canUseTool`, under permission mode `dontAsk`. Interactive revise runs the `claude` CLI with the same checks as a hook command (`src/pi/claude-guard-hook.ts`, fails closed), passed in `--settings` (prompt last, so wrapper builds that parse the command line keep it), and deletes the chat's session file after reading it for feedback.
 
 ## 9. Running unattended
 
@@ -293,7 +293,7 @@ src/
     render.ts accept.ts revise.ts interactive.ts
     run.ts                   the lbg run pass
   skills/                    parse SKILL.md / AGENTS.md, repo resolution
-  pi/run-pi.ts run-claude.ts guard.ts guard-extension.ts
+  pi/run-pi.ts run-claude.ts claude-guard.ts claude-guard-hook.ts guard.ts guard-extension.ts
   notify/prompt.ts           the shell prompt file
 systemd/                     unit templates
 test/
@@ -306,7 +306,7 @@ test/
 | Repo knowledge | Goes into the repo (`AGENTS.md` for short rules, `.agents/skills/<name>/` for procedures), never into a global skill. |
 | History | Backfill all history on the first run; dedup state makes re-runs cheap. |
 | Resumed sessions | Change tokens plus per-turn fingerprints: only new turns are extracted, even when an agent copies old history into a new file. |
-| Models and provider | Whatever pi uses (`~/.pi/agent/settings.json`), so pi's settings are the single place to choose. `models.*` can override a stage. |
+| Models and provider | One agent for every stage (`agent`: pi or Claude Code), with that agent's model: its own default, or `pi.model` / `claudeCode.model` in lbg's config. |
 | Skill granularity | Few skills, each about one coherent topic, with details in sections and references; prefer extending an existing skill. |
 | Applying changes | Never automatic, and no git. A proposal is a snapshot of drafted files with hashes of the originals; accepting writes them and refuses stale ones. Committing is up to the user. |
 | Interactive revise | The user's own `pi` TUI with lbg's guard extension, rather than a chat UI inside lbg. |

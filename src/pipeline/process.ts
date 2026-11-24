@@ -1,4 +1,4 @@
-import type { Config } from "../config.ts";
+import { agentModel, type Config } from "../config.ts";
 import type { PiRunner, Usage } from "../pi/run-pi.ts";
 import { addUsage, ZERO_USAGE } from "../pi/run-pi.ts";
 import { loadSkillsDir, renderSkillIndex, repoContext, type SkillInfo } from "../skills/index.ts";
@@ -162,7 +162,7 @@ export async function processSessions(
       const out = await extractNuggets(
         runner,
         { transcript: t, ...(repo ? { repoRoot: repo.root } : {}), skillIndex: renderSkillIndex(globalSkills, repo), excerpt, rejected },
-        { id: cfg.models.extract, thinking: cfg.models.extractThinking },
+        { id: agentModel(cfg).model, thinking: agentModel(cfg).thinking },
       );
       if (persist) new Rejections(db).addExtractUses(rejected.map((m) => m.id), out.calls);
       calls += out.calls;
@@ -222,7 +222,7 @@ export async function processSessions(
       byStatus,
       calls,
       usage,
-      models: { extract: cfg.models.extract ?? "pi default" },
+      models: { agent: cfg.agent, model: agentModel(cfg).model ?? "default" },
       ...(abortedReason ? { abortedReason } : {}),
     });
   }

@@ -3,13 +3,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
-import { loadConfig } from "../src/config.ts";
-import { claudeCodeModel, ClaudeCodeRunner, RoutingRunner } from "../src/pi/run-claude.ts";
+import { agentModel, loadConfig } from "../src/config.ts";
+import { ClaudeCodeRunner, claudeSettings, modelRunner } from "../src/pi/run-claude.ts";
+import { PiConfigRunner } from "../src/pi/run-pi.ts";
 import type { PiRequest, PiRunner } from "../src/pi/run-pi.ts";
 
 const schema = Type.Object({ items: Type.Array(Type.String()), note: Type.Optional(Type.String()) });
 const req = (over: Partial<PiRequest<typeof schema>> = {}): PiRequest<typeof schema> => ({
-  model: "claude-code/sonnet",
+  model: "sonnet",
   systemPrompt: "sys",
   prompt: "hello",
   resultTool: { name: "report", description: "d", parameters: schema },
@@ -30,15 +31,11 @@ function fakeQuery(messages: unknown[]) {
   return { q, calls };
 }
 
-describe("claudeCodeModel", () => {
-  it("recognizes claude-code specs only", () => {
-    expect(claudeCodeModel("claude-code")).toBe("");
-    expect(claudeCodeModel("claude-code/claude-sonnet-4-5")).toBe("claude-sonnet-4-5");
-    expect(claudeCodeModel("anthropic/claude-sonnet-4-5")).toBeUndefined();
-    expect(claudeCodeModel("claude-codex")).toBeUndefined();
-    expect(claudeCodeModel(undefined)).toBeUndefined();
-  });
-});
+/** Run the PreToolUse hook the runner passed to the SDK. */
+async function hook(o: Record<string, any>, tool_name: string, tool_input: unknown): Promise<string> {
+  const out = await o.hooks.PreToolUse[0].hooks[0]({ hook_event_name: "PreToolUse", tool_name, tool_input, tool_use_id: "t" }, "t", { signal: new AbortController().signal });
+  return out.hookSpecificOutput.permissionDecision;
+}
 
 describe("ClaudeCodeRunner", () => {
   it("asks for the result tool's schema as structured output, isolated, and returns it with usage", async () => {
@@ -52,18 +49,32 @@ describe("ClaudeCodeRunner", () => {
     const o = calls[0]!.options;
     expect(calls[0]!.prompt).toBe("hello");
     expect(o.model).toBe("sonnet");
-    expect(o.systemPrompt).toBe("sys");
+    expect(o.systemPrompt).toMatch(/^sys\n\n/);
     expect(o.outputFormat).toEqual({ type: "json_schema", schema: JSON.parse(JSON.stringify(schema)) });
     expect(o.thinking).toEqual({ type: "disabled" });
     expect(o.tools).toEqual([]);
     expect(o.persistSession).toBe(false); // lbg reads ~/.claude/projects: never write its own calls there
     expect(o.settingSources).toEqual(["user"]);
     expect(o.pathToClaudeCodeExecutable).toBe("/bin/claude");
+    // None of my own Claude Code context (like pi's no-context-files), settings files still load.
+    expect(o.env).toMatchObject({ CLAUDE_CODE_DISABLE_CLAUDE_MDS: "1", CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1", PATH: process.env.PATH });
+    expect(o.settings).toEqual({ disableAllHooks: true, outputStyle: "default" });
   });
 
-  it("leaves the model to Claude Code for a bare claude-code spec", async () => {
+  it("without a guard: no tools, and the hook denies anything but the answer", async () => {
     const { q, calls } = fakeQuery([{ type: "result", subtype: "success", is_error: false, result: "", structured_output: { items: [] }, total_cost_usd: 0, modelUsage: {} }]);
-    await new ClaudeCodeRunner({ query: q }).run(req({ model: "claude-code", thinking: "high" }));
+    await new ClaudeCodeRunner({ query: q }).run(req());
+    const o = calls[0]!.options as Record<string, any>;
+    expect(o.tools).toEqual([]);
+    expect(o.permissionMode).toBe("dontAsk");
+    expect(o.systemPrompt).toMatch(/^sys\n\n.*`report` is the StructuredOutput tool/);
+    expect(await hook(o, "Read", { file_path: "/etc/passwd" })).toBe("deny");
+    expect(await hook(o, "StructuredOutput", { items: [] })).toBe("allow");
+  });
+
+  it("leaves the model to Claude Code when none is configured", async () => {
+    const { q, calls } = fakeQuery([{ type: "result", subtype: "success", is_error: false, result: "", structured_output: { items: [] }, total_cost_usd: 0, modelUsage: {} }]);
+    await new ClaudeCodeRunner({ query: q }).run(req({ model: undefined, thinking: "high" }));
     expect(calls[0]!.options.model).toBeUndefined();
     expect(calls[0]!.options.effort).toBe("high");
   });
@@ -75,35 +86,76 @@ describe("ClaudeCodeRunner", () => {
     await expect(new ClaudeCodeRunner({ query: none.q }).run(req())).rejects.toThrow(/no structured output.*just text/);
     const empty = fakeQuery([]);
     await expect(new ClaudeCodeRunner({ query: empty.q }).run(req())).rejects.toThrow(/without a result/);
-    await expect(new ClaudeCodeRunner({ query: empty.q }).run(req({ tools: ["read"] }))).rejects.toThrow(/file tools/);
-    expect(empty.calls).toHaveLength(1); // the tools request never started Claude Code
+    await expect(new ClaudeCodeRunner({ query: empty.q }).run(req({ tools: ["read"] }))).rejects.toThrow(/file guard/);
+    expect(empty.calls).toHaveLength(1); // unguarded tools never start Claude Code
   });
 });
 
-describe("RoutingRunner", () => {
-  it("sends claude-code specs to Claude Code and everything else to pi", async () => {
-    const seen: string[] = [];
-    const fake = (name: string): PiRunner => ({
-      run: async (r) => (seen.push(`${name}:${r.model}`), { value: {} as never, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 } }),
+describe("claudeSettings (config claudeCode.settings + lbg's)", () => {
+  it("keeps mine, puts lbg's on top, adds lbg's hooks after mine, merges env", () => {
+    const mine = {
+      enabledPlugins: { "x@y": false },
+      outputStyle: "Concise",
+      env: { MINE: "1", CLAUDE_CODE_DISABLE_CLAUDE_MDS: "0" },
+      hooks: { PreToolUse: [{ matcher: "Write", hooks: [{ type: "command", command: "fmt" }] }], Stop: [{ hooks: [{ type: "command", command: "bell" }] }] },
+    };
+    const lbg = { outputStyle: "default", env: { CLAUDE_CODE_DISABLE_CLAUDE_MDS: "1" }, hooks: { PreToolUse: [{ matcher: "*", hooks: [{ type: "command", command: "guard" }] }] } };
+    expect(claudeSettings(mine, lbg)).toEqual({
+      enabledPlugins: { "x@y": false },
+      outputStyle: "default",
+      env: { MINE: "1", CLAUDE_CODE_DISABLE_CLAUDE_MDS: "1" },
+      hooks: {
+        PreToolUse: [{ matcher: "Write", hooks: [{ type: "command", command: "fmt" }] }, { matcher: "*", hooks: [{ type: "command", command: "guard" }] }],
+        Stop: [{ hooks: [{ type: "command", command: "bell" }] }],
+      },
     });
-    const r = new RoutingRunner(fake("pi"), fake("cc"));
-    await r.run(req({ model: "claude-code/opus" }));
-    await r.run(req({ model: "anthropic/claude-opus" }));
-    await r.run(req({ model: undefined }));
-    expect(seen).toEqual(["cc:claude-code/opus", "pi:anthropic/claude-opus", "pi:undefined"]);
+    expect(claudeSettings(undefined, { outputStyle: "default" })).toEqual({ outputStyle: "default" });
+  });
+
+  it("the SDK runner passes them, with lbg's isolation on top", async () => {
+    const { q, calls } = fakeQuery([{ type: "result", subtype: "success", is_error: false, result: "", structured_output: { items: [] }, total_cost_usd: 0, modelUsage: {} }]);
+    await new ClaudeCodeRunner({ query: q, settings: { enabledPlugins: { "x@y": false }, outputStyle: "Concise" } }).run(req());
+    expect(calls[0]!.options.settings).toEqual({ enabledPlugins: { "x@y": false }, disableAllHooks: true, outputStyle: "default" });
+  });
+});
+
+describe("modelRunner", () => {
+  it("is the configured agent", () => {
+    expect(modelRunner({ agent: "pi", claudeCode: {} })).toBeInstanceOf(PiConfigRunner);
+    expect(modelRunner({ agent: "claude-code", claudeCode: {} })).toBeInstanceOf(ClaudeCodeRunner);
   });
 });
 
 describe("config", () => {
-  it("accepts Claude Code for extract, not for distill", async () => {
+  it("one agent for every stage, its model in its own section; the old top-level keys are refused", async () => {
     const dir = await mkdtemp(join(tmpdir(), "lbg-cfg-"));
     const ok = join(dir, "ok.json");
-    await writeFile(ok, JSON.stringify({ models: { extract: "claude-code/sonnet" }, claudeCode: { executable: "claude" } }));
+    await writeFile(ok, JSON.stringify({ agent: "claude-code", pi: { model: "anthropic/x" }, claudeCode: { model: "sonnet", thinking: "low", executable: "claude" } }));
     const c = loadConfig(ok);
-    expect(c.models.extract).toBe("claude-code/sonnet");
+    expect(c).toMatchObject({ agent: "claude-code", pi: { model: "anthropic/x" }, claudeCode: { model: "sonnet", thinking: "low" } });
+    expect(agentModel(c)).toEqual({ model: "sonnet", thinking: "low" });
+    expect(agentModel({ ...c, agent: "pi" })).toEqual({ model: "anthropic/x" });
+    expect(loadConfig(join(dir, "missing.json"))).toMatchObject({ agent: "pi", pi: {}, claudeCode: {} }); // pi, with pi's own defaults
     expect(c.claudeCode.executable).toBe("claude"); // bare names stay for PATH lookup
+    const extra = join(dir, "extra.json");
+    await writeFile(extra, JSON.stringify({ claudeCode: { settings: { enabledPlugins: { "x@y": false }, hooks: { Stop: [] } } } }));
+    expect(loadConfig(extra).claudeCode.settings).toEqual({ enabledPlugins: { "x@y": false }, hooks: { Stop: [] } });
+    for (const unsafe of [{ disableAllHooks: true }, { allowManagedHooksOnly: true }, { permissions: { allow: ["Write"] } }]) {
+      await writeFile(extra, JSON.stringify({ claudeCode: { settings: unsafe } }));
+      expect(() => loadConfig(extra)).toThrow(/switch off lbg's file guard/);
+    }
+    await writeFile(extra, JSON.stringify({ claudeCode: { settings: { hooks: { Stop: "bell" } } } }));
+    expect(() => loadConfig(extra)).toThrow(/hooks must map hook events to arrays/);
+    await writeFile(extra, JSON.stringify({ claudeCode: { settings: [] } }));
+    expect(() => loadConfig(extra)).toThrow(/must be an object/);
     const bad = join(dir, "bad.json");
-    await writeFile(bad, JSON.stringify({ models: { distill: "claude-code" } }));
-    expect(() => loadConfig(bad)).toThrow(/distill/);
+    for (const old of [{ models: { extract: "x" } }, { model: "claude-code/sonnet" }, { thinking: "low" }]) {
+      await writeFile(bad, JSON.stringify(old));
+      expect(() => loadConfig(bad)).toThrow(/moved into the agent's section.*"agent"/);
+    }
+    for (const [v, msg] of [[{ agent: "claude" }, /config.agent must be one of "pi", "claude-code"/], [{ pi: { thinking: "max" } }, /config.pi.thinking/], [{ claudeCode: { model: "" } }, /config.claudeCode.model/]] as const) {
+      await writeFile(bad, JSON.stringify(v));
+      expect(() => loadConfig(bad)).toThrow(msg);
+    }
   });
 });

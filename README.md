@@ -4,7 +4,7 @@
 
 You keep telling your agents the same things in new sessions: how a project is built, where the logs live, which command to use instead of the obvious one. **lbg** reads your Claude Code, pi and opencode sessions in the background, notices what you've explained more than once, and drafts it as a [skill](https://pi.dev/docs/latest/skills), or as a section of a repository's `AGENTS.md`.
 
-Nothing changes until you review a **proposal** and accept it. Model calls go through [pi](https://pi.dev), with the provider, model and credentials pi is configured with, or optionally through Claude Code for extraction ([see below](#use-claude-code-for-extraction)).
+Nothing changes until you review a **proposal** and accept it. Model calls go through [pi](https://pi.dev), with the provider, model and credentials pi is configured with, or optionally through Claude Code ([see below](#use-claude-code)).
 
 ## Install
 
@@ -17,20 +17,29 @@ lbg run                        # first pass over your history (takes a while; us
 lbg service install            # then run hourly in the background
 ```
 
-## Use Claude Code for extraction
+## Use Claude Code
 
-Reading sessions for knowledge (extraction, plus classifying rejections and placing knowledge in the tree) can run on Claude Code through its [Agent SDK](https://code.claude.com/docs/en/agent-sdk/overview), with your Claude Code login and billing. In `~/.config/laobaigan/config.json`:
+lbg runs everything through one agent: reading sessions, placing knowledge in the tree, drafting, and revising. By default that's pi, with pi's default model. To use Claude Code instead (its [Agent SDK](https://code.claude.com/docs/en/agent-sdk/overview), with your Claude Code login and billing), set it in `~/.config/laobaigan/config.json`:
 
 ```jsonc
 {
-  "models": { "extract": "claude-code/sonnet" },  // or "claude-code" for Claude Code's default model
-  // Optional. executable: a path or a name on PATH (default: the claude bundled with the SDK).
+  "agent": "claude-code",
+  // Each agent has its own section. All optional.
+  // model: unset for Claude Code's default model. thinking: off, minimal, low, medium or high.
+  // executable: a path or a name on PATH (default: the claude bundled with the SDK).
   // settingSources: Claude Code settings to load (default ["user"], for your login / Bedrock settings).
-  "claudeCode": { "executable": "claude", "settingSources": ["user"] }
+  // settings: extra Claude Code settings for lbg's sessions only, e.g. plugins off.
+  "claudeCode": {
+    "model": "sonnet",
+    "thinking": "medium",
+    "executable": "~/.local/bin/claude",
+    "settingSources": ["user"],
+    "settings": { "enabledPlugins": { "some-plugin@marketplace": false } }
+  }
 }
 ```
 
-Each call is isolated (no tools, skills, hooks or MCP servers) and isn't saved to `~/.claude/projects`. Drafting skills stays on pi, because it needs pi's file tools. Details: [Usage](docs/usage.md#claude-code-as-the-extractor).
+Calls aren't saved to `~/.claude/projects`, and skills and MCP servers are off. Extraction gets no tools. Drafting and revising get Claude Code's built-in `Read`, `Glob`, `Grep`, `Write` and `Edit`, and lbg checks every call before it runs: reads stay inside the draft's worktree, writes only go to the proposal's paths. `lbg proposal revise <id>` opens your `claude` with the same check. Details: [Usage](docs/usage.md#claude-code).
 
 ## Review proposals
 

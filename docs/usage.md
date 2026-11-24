@@ -265,13 +265,14 @@ systemctl --user disable --now laobaigan.timer   # pause
   // The skills directory your agents load (detected by lbg init).
   "skillsDir": "~/.config/opencode/skills",
 
-  // Models follow pi (defaultModel / defaultThinkingLevel in ~/.pi/agent/settings.json).
-  // Override a stage with "provider/id", or an id of pi's default provider:
-  // "models": { "extract": "…", "distill": "…" },
-  // Or extract with Claude Code (its Agent SDK, your Claude Code login): "claude-code" for
-  // Claude Code's default model, or "claude-code/<model>". Drafting (distill) stays on pi.
-  // "models": { "extract": "claude-code/sonnet" },
-  // "claudeCode": { "executable": "claude", "settingSources": ["user"] },
+  // The agent for every model call: "pi" (default) or "claude-code" (its Agent SDK, your Claude Code login).
+  // "agent": "pi",
+  // Each agent's model and thinking level, used when it's the agent. Unset: the agent's own defaults
+  // (pi: defaultModel / defaultThinkingLevel in ~/.pi/agent/settings.json).
+  // "pi": { "model": "provider/id", "thinking": "medium" },
+  // "claudeCode": { "model": "sonnet", "thinking": "medium",
+  //                 "executable": "~/.local/bin/claude", "settingSources": ["user"],
+  //                 "settings": { "enabledPlugins": { "some-plugin@marketplace": false } } },
 
   // Skip sessions changed in the last N minutes (they may still be going).
   "settleMinutes": 30,
@@ -308,13 +309,35 @@ systemctl --user disable --now laobaigan.timer   # pause
 | `render.maxSkillLines` | a drafted `SKILL.md` longer than this fails its check (detail belongs in `references/`) |
 | `rejections.maxCallsPerRun` | rejections classified per run |
 | `rejections.expireDays` | when `not-useful` memories expire (0 = never) |
-| `models.extract` | model for extraction, rejection classification and tree routing; `claude-code[/model]` runs them through Claude Code |
-| `claudeCode.executable` | the `claude` to run for `claude-code` models (a path, or a name on `PATH`); default: the one bundled with the Agent SDK |
+| `agent` | `pi` (default) or `claude-code`: the agent for every call (extraction, rejection classification, tree routing, drafting, revise one-shot and interactive) |
+| `pi.model`, `pi.thinking` | pi's model (`provider/id`, or an id of pi's default provider) and thinking level (`off`, `minimal`, `low`, `medium`, `high`). Unset: pi's defaults |
+| `claudeCode.model`, `claudeCode.thinking` | Claude Code's model (`sonnet`, `opus`, a full id) and thinking level (mapped to its effort; `off` disables thinking). Unset: Claude Code's defaults |
+| `claudeCode.executable` | the `claude` to run for `claude-code` models (a path, or a name on `PATH`); default: the one bundled with the Agent SDK (interactive revise: `claude` on `PATH`) |
 | `claudeCode.settingSources` | Claude Code settings files loaded for those calls; default `["user"]`, so your login and provider settings (e.g. Bedrock) apply |
+| `claudeCode.settings` | Claude Code settings for lbg's sessions only, on top of your settings files (e.g. turn plugins off, set `env`, a separate credentials helper). lbg's own settings win; your `hooks` run next to lbg's guard hook (interactive revise only: background calls run no settings hooks). `disableAllHooks`, `allowManagedHooksOnly` and `permissions` are refused, since they could switch the guard off |
 
-### Claude Code as the extractor
+### Claude Code
 
-With `"models": { "extract": "claude-code/sonnet" }`, the extract, classify and routing calls run in headless Claude Code sessions through the [Agent SDK](https://code.claude.com/docs/en/agent-sdk/overview) instead of pi, using Claude Code's login and billing. Each call is isolated: no tools, skills, hooks or MCP servers, an empty temporary working directory, and `persistSession: false`, so lbg's own calls never land in `~/.claude/projects` (which lbg reads). The answer comes back as Claude Code's JSON-schema structured output. `extractThinking` maps to Claude Code's effort (`off` disables thinking). Drafting needs pi's guarded file tools, so `models.distill` can't be `claude-code`.
+With `"agent": "claude-code"`, those calls run in headless Claude Code sessions through the [Agent SDK](https://code.claude.com/docs/en/agent-sdk/overview) instead of pi, using Claude Code's login and billing. `claudeCode.executable` picks the `claude` binary; set it if you don't want the one bundled with the SDK.
+
+Every session:
+- loads only the settings in `claudeCode.settingSources` (default `["user"]`: login, provider, model overrides);
+- gets none of your own Claude Code context, like pi's sessions: no `CLAUDE.md` (yours or a project's), no `~/.claude/rules`, no auto-memory, and the default output style instead of yours (`CLAUDE_CODE_DISABLE_CLAUDE_MDS=1`, `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`, `outputStyle: "default"`);
+- has skills, MCP servers, and hooks from settings files and plugins turned off;
+- is not saved (`persistSession: false`), so lbg's own calls never land in `~/.claude/projects`, which lbg reads;
+- answers with Claude Code's JSON-schema structured output;
+- maps `claudeCode.thinking` to Claude Code's effort (`off` disables thinking).
+
+**Extract, classify and routing** get no tools and run in an empty temporary directory.
+
+**Drafting and one-shot revise** run in the proposal's scratch worktree with Claude Code's built-in `Read`, `Glob`, `Grep`, `Write` and `Edit`, and nothing else (no `Bash`, no web, no subagents). lbg decides every tool call before it runs, with the same checks as pi's guarded tools:
+- `Read`, `Glob`, `Grep`: only inside the worktree (symlinks resolved; glob patterns can't be absolute or use `..`);
+- `Write`, `Edit`: only the proposal's writable paths, never `.git`;
+- anything else is denied, and the model is told why.
+
+The check is a `PreToolUse` hook, which runs whatever your settings' allow rules or default permission mode say, with `canUseTool` as a backstop and permission mode `dontAsk`, which denies whatever lbg didn't allow.
+
+**Interactive `lbg proposal revise <id>`** (no feedback text) opens your `claude` (`claudeCode.executable`, else `claude` on `PATH`) in the scratch worktree, with `claudeCode.model`, the same five tools, permission mode `dontAsk`, no MCP servers, skills, slash commands, `CLAUDE.md`, rules or memory, the default output style, and the same guard as a `PreToolUse` hook command. The hook is passed in `--settings`, with the opening prompt as the last argument, because some wrapper builds of `claude` that merge `--settings` with their own drop it when the prompt comes first. Your own hooks and your plugins' hooks still run there. They can't weaken the guard, because a deny from any hook wins. To keep plugins out of lbg's sessions, turn them off in `claudeCode.settings` (`"enabledPlugins": { "<plugin>@<marketplace>": false }`). When you're done, lbg reads your turns from the session file as review feedback, then deletes the file. Claude Code may ask you once to trust the scratch folder. With `"agent": "pi"` it opens your `pi` CLI instead, with `pi.model` / `pi.thinking` when set.
 
 ### commitCommand
 

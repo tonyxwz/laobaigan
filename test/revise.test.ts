@@ -1,5 +1,5 @@
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
-import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,6 +12,7 @@ import { reviseProposal } from "../src/pipeline/revise.ts";
 import { syncTree } from "../src/pipeline/sync.ts";
 import { scoreTree } from "../src/pipeline/treescore.ts";
 import { StateDb, type NuggetInsert } from "../src/state/db.ts";
+import { Feedback } from "../src/state/feedback.ts";
 import { Proposals } from "../src/state/proposals.ts";
 import { Tree } from "../src/state/tree.ts";
 import { fauxRunner } from "./helpers/faux.ts";
@@ -131,6 +132,73 @@ describe("interactive (chat revise and edit)", () => {
     expect(args.at(-1)).toMatch(/proposal #\d+ \(new\) for dotfiles-management/);
   });
 
+  it("chat: pi gets the configured model and thinking level", async () => {
+    const { cfg, tree, id } = await openProposal();
+    const calls: { cmd: string; args: string[]; env: NodeJS.ProcessEnv }[] = [];
+    await chatRevise(tree, { ...cfg, pi: { model: "anthropic/claude-x", thinking: "high" } }, id, { launcher: fakeTool([() => {}], calls), ask: async () => false });
+    const { cmd, args } = calls[0]!;
+    expect(cmd).toBe("pi");
+    expect(args[args.indexOf("--model") + 1]).toBe("anthropic/claude-x");
+    expect(args[args.indexOf("--thinking") + 1]).toBe("high");
+  });
+
+  it("chat: a claude-code model starts Claude Code guarded by lbg's hook, keeps my turns, deletes its session", async () => {
+    const { cfg, tree, id, props, db } = await openProposal();
+    const projects = await mkdtemp(join(tmpdir(), "lbg-ccprojects-"));
+    const calls: { cmd: string; args: string[]; env: NodeJS.ProcessEnv }[] = [];
+    let sessionId = "";
+    const launcher = fakeTool(
+      [
+        (cwd, args) => {
+          sessionId = args[args.indexOf("--session-id") + 1]!;
+          const dir = join(projects, cwd.replace(/[^a-zA-Z0-9]/g, "-"));
+          mkdirSync(dir, { recursive: true });
+          const base = { sessionId, cwd, version: "2.1.0" };
+          const lines = [
+            { ...base, type: "user", uuid: "u1", parentUuid: null, timestamp: "2026-11-05T10:00:00Z", message: { role: "user", content: args.at(-1) } },
+            { ...base, type: "assistant", uuid: "a1", parentUuid: "u1", timestamp: "2026-11-05T10:00:01Z", message: { id: "m1", role: "assistant", content: [{ type: "text", text: "It covers zsh. What should change?" }] } },
+            { ...base, type: "user", uuid: "u2", parentUuid: "a1", timestamp: "2026-11-05T10:00:02Z", message: { role: "user", content: "add the tmux prefix is C-a" } },
+          ];
+          writeFileSync(join(dir, `${sessionId}.jsonl`), lines.map((l) => JSON.stringify(l)).join("\n") + "\n");
+          writeFileSyncish(join(cwd, PATH), md("broken", "Bad Name"));
+        },
+        (cwd) => writeFileSyncish(join(cwd, PATH), md("v2 with C-a")),
+      ],
+      calls,
+    );
+    const answers = [true];
+    const ccCfg: Config = {
+      ...cfg,
+      agent: "claude-code",
+      claudeCode: { model: "opus", thinking: "medium", executable: "/opt/claude", settings: { enabledPlugins: { "x@y": false }, hooks: { PreToolUse: [{ matcher: "Write", hooks: [{ type: "command", command: "fmt" }] }] } } },
+    };
+    const r = await chatRevise(tree, ccCfg, id, { launcher, ask: async () => answers.shift() ?? false, claudeProjects: projects });
+    expect(r).toMatchObject({ problems: [], changed: true });
+    expect(content(props, id)).toContain("v2 with C-a");
+
+    const [first, again] = calls;
+    expect(first!.cmd).toBe("/opt/claude");
+    // The prompt last, after every option (a wrapper claude may drop --settings otherwise).
+    expect(first!.args.at(-1)).toMatch(/proposal #\d+ \(new\) for dotfiles-management/);
+    expect(first!.args).toContain("--tools=Read,Glob,Grep,Write,Edit"); // one argument: a list value can't swallow the prompt
+    expect(first!.args[first!.args.indexOf("--permission-mode") + 1]).toBe("dontAsk");
+    expect(first!.args[first!.args.indexOf("--model") + 1]).toBe("opus");
+    expect(first!.args[first!.args.indexOf("--effort") + 1]).toBe("medium");
+    expect(first!.args).toEqual(expect.arrayContaining(["--strict-mcp-config", "--disable-slash-commands"]));
+    const settings = JSON.parse(first!.args[first!.args.indexOf("--settings") + 1]!);
+    // My claudeCode.settings, with lbg's guard hook after my own.
+    expect(settings.enabledPlugins).toEqual({ "x@y": false });
+    expect(settings.hooks.PreToolUse.map((g: { hooks: { command: string }[] }) => g.hooks[0]!.command)).toEqual(["fmt", expect.stringMatching(/src\/pi\/claude-guard-hook\.ts'$/)]);
+    expect(settings.outputStyle).toBe("default");
+    expect(first!.env).toMatchObject({ CLAUDE_CODE_DISABLE_CLAUDE_MDS: "1", CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1" });
+    expect(first!.env.MAX_THINKING_TOKENS).toBeUndefined(); // thinking "medium"
+    expect(JSON.parse(first!.env.LBG_GUARD!)).toMatchObject({ writable: ["dotfiles-management/"] });
+    expect(again!.args[again!.args.indexOf("--resume") + 1]).toBe(sessionId);
+
+    expect(new Feedback(db).forProposal(id)).toMatchObject([{ kind: "chat", text: "add the tmux prefix is C-a" }]);
+    expect(await readdir(projects)).toEqual([]); // the chat's session is gone, so lbg never learns from it
+  });
+
   it("chat: on problems I can go back in (pi --continue) or keep the previous draft", async () => {
     const { cfg, tree, id, props } = await openProposal();
     const calls: { cmd: string; args: string[]; env: NodeJS.ProcessEnv }[] = [];
@@ -166,7 +234,6 @@ describe("interactive (chat revise and edit)", () => {
   });
 });
 
-import { writeFileSync } from "node:fs";
 function writeFileSyncish(p: string, c: string) {
   writeFileSync(p, c);
 }

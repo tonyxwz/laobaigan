@@ -1,5 +1,5 @@
 import { Type, type Static, type TSchema } from "typebox";
-import type { Config } from "../config.ts";
+import { agentModel, type Config } from "../config.ts";
 import type { PiRequest, PiRunner, Usage } from "../pi/run-pi.ts";
 import { addUsage, ZERO_USAGE } from "../pi/run-pi.ts";
 import type { NuggetRow } from "../state/db.ts";
@@ -341,8 +341,7 @@ export async function insertNuggets(
         log(`insert ${scopeKey(scope)}: ${batch.length} nugget(s) vs ${root.children.length} skill(s)`);
         plan = validateSkillRoute(
           await call({
-            model: cfg.models.extract,
-            thinking: cfg.models.extractThinking,
+            ...agentModel(cfg),
             systemPrompt: withGuidance(SKILL_SYSTEM_PROMPT, cfg),
             prompt: buildSkillPrompt(root, batch, rejected),
             resultTool: { name: "route_to_skills", description: "Place each new nugget in a skill.", parameters: SkillRouteSchema },
@@ -376,8 +375,7 @@ export async function insertNuggets(
           log(`insert ${skill.name ?? skill.title}: ${ns.length} nugget(s) vs ${skill.children.length} section(s)`);
           sp = validateSectionRoute(
             await call({
-              model: cfg.models.extract,
-              thinking: cfg.models.extractThinking,
+              ...agentModel(cfg),
               systemPrompt: withGuidance(SECTION_SYSTEM_PROMPT, cfg),
               prompt: buildSectionPrompt(skill, ns),
               resultTool: { name: "route_to_sections", description: "Place each nugget in a section of this skill.", parameters: SectionRouteSchema },

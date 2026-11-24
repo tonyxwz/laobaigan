@@ -1,5 +1,5 @@
 import { Type, type Static } from "typebox";
-import type { Config } from "../config.ts";
+import { agentModel, type Config } from "../config.ts";
 import type { PiRunner, Usage } from "../pi/run-pi.ts";
 import { addUsage, ZERO_USAGE } from "../pi/run-pi.ts";
 import { REJECTION_KINDS, Rejections, type MemoryRow, type RejectionKind } from "../state/rejections.ts";
@@ -85,8 +85,7 @@ export async function classifyRejections(
     try {
       res.calls++;
       const r = await runner.run({
-        model: cfg.models.extract,
-        thinking: cfg.models.extractThinking,
+        ...agentModel(cfg),
         systemPrompt: CLASSIFY_SYSTEM_PROMPT,
         prompt: buildClassifyPrompt(m, skills),
         resultTool: { name: "classify_rejection", description: "Classify this rejection.", parameters: ClassifySchema },

@@ -3,7 +3,7 @@ import { cp, mkdir, mkdtemp, readdir, readFile, rm, stat } from "node:fs/promise
 import { tmpdir } from "node:os";
 import { basename, dirname, join, relative } from "node:path";
 import { Type } from "typebox";
-import type { Config } from "../config.ts";
+import { agentModel, type Config } from "../config.ts";
 import { GUARDED_TOOLS } from "../pi/guard.ts";
 import type { PiRunner, Usage } from "../pi/run-pi.ts";
 import { parseFrontmatter } from "../skills/index.ts";
@@ -330,8 +330,7 @@ export async function draftSkill(tree: Tree, runner: PiRunner, cfg: Config, node
     const siblings = skill.parentId !== undefined ? tree.children(skill.parentId).map((c) => ({ ...c, children: [], nuggets: [], forgotten: [] })) : [];
     const review = reviewFeedbackPrompt(tree, skill);
     const res = await runner.run({
-      model: cfg.models.distill,
-      thinking: cfg.models.distillThinking,
+      ...agentModel(cfg),
       systemPrompt: DRAFT_SYSTEM_PROMPT,
       prompt: buildDraftPrompt(skill, kind, target, siblings, undefined, review),
       tools: [...GUARDED_TOOLS],
@@ -348,8 +347,7 @@ export async function draftSkill(tree: Tree, runner: PiRunner, cfg: Config, node
     if (scope?.widened) {
       log(`draft ${target.skillName}: description widens the scope (${scope.added.join(", ")}); asking the drafter to fix it`);
       const retry = await runner.run({
-        model: cfg.models.distill,
-        thinking: cfg.models.distillThinking,
+        ...agentModel(cfg),
         systemPrompt: DRAFT_SYSTEM_PROMPT,
         prompt: `${buildDraftPrompt(skill, kind, target, siblings, undefined, review).replace(/\nWrite the files now, then call report_draft\.$/, "")}\n\nThe files in the current directory are your draft.\n\n${scopeRetryPrompt(scope)}`,
         tools: [...GUARDED_TOOLS],

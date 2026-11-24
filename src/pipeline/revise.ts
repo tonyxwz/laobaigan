@@ -1,7 +1,7 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { applyPatch, createPatch } from "diff";
 import { dirname, join } from "node:path";
-import type { Config } from "../config.ts";
+import { agentModel, type Config } from "../config.ts";
 import { GUARDED_TOOLS } from "../pi/guard.ts";
 import { addUsage, ZERO_USAGE, type PiRunner, type Usage } from "../pi/run-pi.ts";
 import { Feedback } from "../state/feedback.ts";
@@ -180,8 +180,7 @@ export async function reviseProposal(tree: Tree, runner: PiRunner, cfg: Config, 
   new Feedback(tree.db).add({ proposalId: id, kind: "revise", text: feedback });
   try {
     const res = await runner.run({
-      model: cfg.models.distill,
-      thinking: cfg.models.distillThinking,
+      ...agentModel(cfg),
       systemPrompt: DRAFT_SYSTEM_PROMPT,
       prompt,
       tools: [...GUARDED_TOOLS],
