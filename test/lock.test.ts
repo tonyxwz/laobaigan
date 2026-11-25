@@ -1,7 +1,7 @@
+import { existsSync } from "node:fs";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { existsSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { acquireLock } from "../src/util/lock.ts";
 

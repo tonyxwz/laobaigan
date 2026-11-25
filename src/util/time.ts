@@ -7,7 +7,9 @@ export function parseDuration(s: string): number {
   if (!m) throw new Error(`Invalid duration: ${s} (expected e.g. 30m, 6h, 7d)`);
   const n = Number(m[1]);
   const unit = (m[2] ?? "m").toLowerCase();
-  const mult = { s: 1e3, m: 60e3, h: 3600e3, d: 86400e3, w: 7 * 86400e3 }[unit]!;
+  const mult = { s: 1e3, m: 60e3, h: 3600e3, d: 86400e3, w: 7 * 86400e3 }[
+    unit
+  ]!;
   return n * mult;
 }
 

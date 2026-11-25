@@ -1,7 +1,7 @@
 import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
-import { setExtraPatterns, type ExtraPattern } from "./pipeline/redact.ts";
+import { type ExtraPattern, setExtraPatterns } from "./pipeline/redact.ts";
 
 /** Truncation limits applied when normalizing transcripts. */
 export interface NormalizeLimits {
@@ -20,13 +20,18 @@ const home = homedir();
 
 /** Expand a leading `~` and make the path absolute. */
 export function expandPath(p: string): string {
-  const expanded = p === "~" ? home : p.startsWith("~/") ? join(home, p.slice(2)) : p;
+  const expanded =
+    p === "~" ? home : p.startsWith("~/") ? join(home, p.slice(2)) : p;
   return isAbsolute(expanded) ? expanded : resolve(expanded);
 }
 
 /** Global skills dirs of the agents lbg knows, in order of preference. */
 export function skillsDirCandidates(h: string = home): string[] {
-  return [join(h, ".pi", "agent", "skills"), join(h, ".claude", "skills"), join(h, ".config", "opencode", "skills")];
+  return [
+    join(h, ".pi", "agent", "skills"),
+    join(h, ".claude", "skills"),
+    join(h, ".config", "opencode", "skills"),
+  ];
 }
 
 export interface FsProbe {
@@ -53,22 +58,38 @@ const realFs: FsProbe = {
  * the real directory is used, keeping the path as written (no /home → /local/home churn).
  * Falls back to pi's dir when none exists yet.
  */
-export function detectSkillsDir(h: string = home, fs: FsProbe = realFs): string {
+export function detectSkillsDir(
+  h: string = home,
+  fs: FsProbe = realFs,
+): string {
   const cands = skillsDirCandidates(h);
   const first = cands.find((c) => fs.exists(c));
   if (!first) return cands[0]!;
   if (!fs.isSymlink(first)) return first;
   const real = fs.realpath(first);
-  return cands.find((c) => c !== first && fs.exists(c) && !fs.isSymlink(c) && fs.realpath(c) === real) ?? real;
+  return (
+    cands.find(
+      (c) =>
+        c !== first &&
+        fs.exists(c) &&
+        !fs.isSymlink(c) &&
+        fs.realpath(c) === real,
+    ) ?? real
+  );
 }
 
 /** Default on-disk locations of each agent's session storage. */
 export const DEFAULT_PATHS = {
-  claudeProjects: process.env.LBG_CLAUDE_PROJECTS ?? join(home, ".claude", "projects"),
-  piSessions: process.env.LBG_PI_SESSIONS ?? join(home, ".pi", "agent", "sessions"),
-  opencodeDb: process.env.LBG_OPENCODE_DB ?? join(home, ".local", "share", "opencode", "opencode.db"),
+  claudeProjects:
+    process.env.LBG_CLAUDE_PROJECTS ?? join(home, ".claude", "projects"),
+  piSessions:
+    process.env.LBG_PI_SESSIONS ?? join(home, ".pi", "agent", "sessions"),
+  opencodeDb:
+    process.env.LBG_OPENCODE_DB ??
+    join(home, ".local", "share", "opencode", "opencode.db"),
   skillsDir: process.env.LBG_SKILLS_DIR ?? detectSkillsDir(),
-  stateDir: process.env.LBG_STATE_DIR ?? join(home, ".local", "state", "laobaigan"),
+  stateDir:
+    process.env.LBG_STATE_DIR ?? join(home, ".local", "state", "laobaigan"),
 };
 
 export type ThinkingSetting = "off" | "minimal" | "low" | "medium" | "high";
@@ -77,9 +98,15 @@ export const AGENTS = ["pi", "claude-code"] as const;
 export type AgentKind = (typeof AGENTS)[number];
 
 /** The active agent's model and thinking level: what every model call asks for. */
-export function agentModel(cfg: Pick<Config, "agent" | "pi" | "claudeCode">): { model?: string; thinking?: ThinkingSetting } {
+export function agentModel(cfg: Pick<Config, "agent" | "pi" | "claudeCode">): {
+  model?: string;
+  thinking?: ThinkingSetting;
+} {
   const s = cfg.agent === "claude-code" ? cfg.claudeCode : cfg.pi;
-  return { ...(s.model ? { model: s.model } : {}), ...(s.thinking ? { thinking: s.thinking } : {}) };
+  return {
+    ...(s.model ? { model: s.model } : {}),
+    ...(s.thinking ? { thinking: s.thinking } : {}),
+  };
 }
 
 export interface Config {
@@ -220,8 +247,20 @@ export const DEFAULT_CONFIG: Config = {
   rejections: { maxCallsPerRun: 10, expireDays: 90 },
   render: { maxPerRun: 2, retryAfterHours: 24, maxSkillLines: 300 },
   score: {
-    weights: { session: 3, extraAgent: 3, extraDay: 1, correction: 1, covered: 2 },
-    promote: { minSessions: 3, minSessionsCrossAgent: 2, reproposeAfterSessions: 2, updateMinSessions: 2, fixDescriptionMinSessions: 2 },
+    weights: {
+      session: 3,
+      extraAgent: 3,
+      extraDay: 1,
+      correction: 1,
+      covered: 2,
+    },
+    promote: {
+      minSessions: 3,
+      minSessionsCrossAgent: 2,
+      reproposeAfterSessions: 2,
+      updateMinSessions: 2,
+      fixDescriptionMinSessions: 2,
+    },
     updateSimilarity: 0.25,
     agentsMdMaxChars: 1200,
   },
@@ -234,12 +273,23 @@ const SKILL_NAME = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 function validateTopics(topics: DeclaredTopic[]): DeclaredTopic[] {
   const seen = new Set<string>();
   return topics.map((t, i) => {
-    if (!t || typeof t.name !== "string" || !SKILL_NAME.test(t.name) || t.name.length > 64) {
-      throw new Error(`config.topics[${i}].name must be lowercase letters, digits and single hyphens (got ${JSON.stringify(t?.name)})`);
+    if (
+      !t ||
+      typeof t.name !== "string" ||
+      !SKILL_NAME.test(t.name) ||
+      t.name.length > 64
+    ) {
+      throw new Error(
+        `config.topics[${i}].name must be lowercase letters, digits and single hyphens (got ${JSON.stringify(t?.name)})`,
+      );
     }
-    if (typeof t.description !== "string" || !t.description.trim()) throw new Error(`config.topics[${i}] (${t.name}) needs a description`);
+    if (typeof t.description !== "string" || !t.description.trim())
+      throw new Error(`config.topics[${i}] (${t.name}) needs a description`);
     const scope = t.scope ?? "global";
-    if (scope === "repo" && !t.repo) throw new Error(`config.topics[${i}] (${t.name}) has scope "repo" but no repo`);
+    if (scope === "repo" && !t.repo)
+      throw new Error(
+        `config.topics[${i}] (${t.name}) has scope "repo" but no repo`,
+      );
     const key = `${scope}:${t.repo ?? ""}:${t.name}`;
     if (seen.has(key)) throw new Error(`config.topics: duplicate ${t.name}`);
     seen.add(key);
@@ -248,9 +298,16 @@ function validateTopics(topics: DeclaredTopic[]): DeclaredTopic[] {
 }
 
 export const CONFIG_PATH =
-  process.env.LBG_CONFIG ?? join(process.env.XDG_CONFIG_HOME ?? join(home, ".config"), "laobaigan", "config.json");
+  process.env.LBG_CONFIG ??
+  join(
+    process.env.XDG_CONFIG_HOME ?? join(home, ".config"),
+    "laobaigan",
+    "config.json",
+  );
 
-type DeepPartial<T> = { [K in keyof T]?: T[K] extends object ? DeepPartial<T[K]> : T[K] };
+type DeepPartial<T> = {
+  [K in keyof T]?: T[K] extends object ? DeepPartial<T[K]> : T[K];
+};
 
 function merge<T>(base: T, over: DeepPartial<T> | undefined): T {
   if (!over) return base;
@@ -258,7 +315,11 @@ function merge<T>(base: T, over: DeepPartial<T> | undefined): T {
   for (const [k, v] of Object.entries(over)) {
     const b = out[k];
     out[k] =
-      v && typeof v === "object" && !Array.isArray(v) && b && typeof b === "object"
+      v &&
+      typeof v === "object" &&
+      !Array.isArray(v) &&
+      b &&
+      typeof b === "object"
         ? merge(b, v as DeepPartial<typeof b>)
         : v;
   }
@@ -272,9 +333,12 @@ export function loadConfig(path = CONFIG_PATH): Config {
     const raw = readFileSync(path, "utf8").replace(/^\s*\/\/.*$/gm, "");
     fileCfg = JSON.parse(raw) as DeepPartial<Config>;
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw new Error(`Bad config ${path}: ${String(err)}`);
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT")
+      throw new Error(`Bad config ${path}: ${String(err)}`);
   }
-  const old = fileCfg ? ["models", "model", "thinking"].filter((k) => k in fileCfg!) : [];
+  const old = fileCfg
+    ? ["models", "model", "thinking"].filter((k) => k in fileCfg!)
+    : [];
   if (old.length) {
     throw new Error(
       `${path}: ${old.map((k) => `"${k}"`).join(", ")} moved into the agent's section: set "agent": "pi" or "claude-code", and "model" / "thinking" in "pi" or "claudeCode" (e.g. { "agent": "claude-code", "claudeCode": { "model": "sonnet" } }).`,
@@ -282,7 +346,9 @@ export function loadConfig(path = CONFIG_PATH): Config {
   }
   const c = merge(DEFAULT_CONFIG, fileCfg);
   // Redaction runs deep inside extraction and verification; install the patterns once, here.
-  setExtraPatterns(Array.isArray(c.redact?.extraPatterns) ? c.redact.extraPatterns : []);
+  setExtraPatterns(
+    Array.isArray(c.redact?.extraPatterns) ? c.redact.extraPatterns : [],
+  );
   return {
     ...c,
     skillsDir: expandPath(c.skillsDir),
@@ -292,28 +358,53 @@ export function loadConfig(path = CONFIG_PATH): Config {
     pi: { ...c.pi, ...validateModel("pi", c.pi?.model, c.pi?.thinking) },
     claudeCode: {
       ...c.claudeCode,
-      ...validateModel("claudeCode", c.claudeCode?.model, c.claudeCode?.thinking),
+      ...validateModel(
+        "claudeCode",
+        c.claudeCode?.model,
+        c.claudeCode?.thinking,
+      ),
       ...validateClaudeSettings(c.claudeCode?.settings),
       // A bare name ("claude") is looked up on PATH; anything path-like is expanded.
-      ...(c.claudeCode?.executable && /[/~]/.test(c.claudeCode.executable) ? { executable: expandPath(c.claudeCode.executable) } : {}),
+      ...(c.claudeCode?.executable && /[/~]/.test(c.claudeCode.executable)
+        ? { executable: expandPath(c.claudeCode.executable) }
+        : {}),
     },
     stateDir: expandPath(c.stateDir),
   };
 }
 
 /** Settings that would switch off (or let tools around) lbg's guard hook. */
-const GUARD_UNSAFE_SETTINGS = ["disableAllHooks", "allowManagedHooksOnly", "permissions"];
+const GUARD_UNSAFE_SETTINGS = [
+  "disableAllHooks",
+  "allowManagedHooksOnly",
+  "permissions",
+];
 
-function validateClaudeSettings(v: unknown): { settings?: Record<string, unknown> } {
+function validateClaudeSettings(v: unknown): {
+  settings?: Record<string, unknown>;
+} {
   if (v === undefined) return {};
-  if (!v || typeof v !== "object" || Array.isArray(v)) throw new Error("config.claudeCode.settings must be an object of Claude Code settings");
+  if (!v || typeof v !== "object" || Array.isArray(v))
+    throw new Error(
+      "config.claudeCode.settings must be an object of Claude Code settings",
+    );
   const bad = Object.keys(v).filter((k) => GUARD_UNSAFE_SETTINGS.includes(k));
   if (bad.length) {
-    throw new Error(`config.claudeCode.settings: ${bad.join(", ")} can't be set: it could switch off lbg's file guard (lbg already sets what its sessions need)`);
+    throw new Error(
+      `config.claudeCode.settings: ${bad.join(", ")} can't be set: it could switch off lbg's file guard (lbg already sets what its sessions need)`,
+    );
   }
   const hooks = (v as Record<string, unknown>).hooks;
-  if (hooks !== undefined && (!hooks || typeof hooks !== "object" || Array.isArray(hooks) || Object.values(hooks).some((h) => !Array.isArray(h)))) {
-    throw new Error("config.claudeCode.settings.hooks must map hook events to arrays, as in Claude Code's settings.json");
+  if (
+    hooks !== undefined &&
+    (!hooks ||
+      typeof hooks !== "object" ||
+      Array.isArray(hooks) ||
+      Object.values(hooks).some((h) => !Array.isArray(h)))
+  ) {
+    throw new Error(
+      "config.claudeCode.settings.hooks must map hook events to arrays, as in Claude Code's settings.json",
+    );
   }
   return { settings: v as Record<string, unknown> };
 }
@@ -321,26 +412,50 @@ function validateClaudeSettings(v: unknown): { settings?: Record<string, unknown
 const THINKING: ThinkingSetting[] = ["off", "minimal", "low", "medium", "high"];
 
 function validateAgent(v: unknown): AgentKind {
-  if (!AGENTS.includes(v as AgentKind)) throw new Error(`config.agent must be one of ${AGENTS.map((a) => `"${a}"`).join(", ")} (got ${JSON.stringify(v)})`);
+  if (!AGENTS.includes(v as AgentKind))
+    throw new Error(
+      `config.agent must be one of ${AGENTS.map((a) => `"${a}"`).join(", ")} (got ${JSON.stringify(v)})`,
+    );
   return v as AgentKind;
 }
 
-function validateModel(section: string, model: unknown, thinking: unknown): { model?: string; thinking?: ThinkingSetting } {
-  if (model !== undefined && (typeof model !== "string" || !model.trim())) throw new Error(`config.${section}.model must be a non-empty string`);
-  if (thinking !== undefined && !THINKING.includes(thinking as ThinkingSetting)) throw new Error(`config.${section}.thinking must be one of ${THINKING.join(", ")}`);
-  return { ...(model ? { model: model as string } : {}), ...(thinking ? { thinking: thinking as ThinkingSetting } : {}) };
+function validateModel(
+  section: string,
+  model: unknown,
+  thinking: unknown,
+): { model?: string; thinking?: ThinkingSetting } {
+  if (model !== undefined && (typeof model !== "string" || !model.trim()))
+    throw new Error(`config.${section}.model must be a non-empty string`);
+  if (thinking !== undefined && !THINKING.includes(thinking as ThinkingSetting))
+    throw new Error(
+      `config.${section}.thinking must be one of ${THINKING.join(", ")}`,
+    );
+  return {
+    ...(model ? { model: model as string } : {}),
+    ...(thinking ? { thinking: thinking as ThinkingSetting } : {}),
+  };
 }
 
-function validateCommitCommand(v: unknown): { commitCommand?: string | { global?: string; repo?: string } } {
+function validateCommitCommand(v: unknown): {
+  commitCommand?: string | { global?: string; repo?: string };
+} {
   if (v === undefined) return {};
-  const ok = (x: unknown) => x === undefined || (typeof x === "string" && x.trim() !== "");
+  const ok = (x: unknown) =>
+    x === undefined || (typeof x === "string" && x.trim() !== "");
   if (typeof v === "string" && ok(v)) return { commitCommand: v };
   if (v && typeof v === "object" && !Array.isArray(v)) {
     const o = v as Record<string, unknown>;
     const extra = Object.keys(o).filter((k) => k !== "global" && k !== "repo");
     if (!extra.length && ok(o.global) && ok(o.repo)) {
-      return { commitCommand: { ...(o.global ? { global: String(o.global) } : {}), ...(o.repo ? { repo: String(o.repo) } : {}) } };
+      return {
+        commitCommand: {
+          ...(o.global ? { global: String(o.global) } : {}),
+          ...(o.repo ? { repo: String(o.repo) } : {}),
+        },
+      };
     }
   }
-  throw new Error('config.commitCommand must be a non-empty string, or { "global": "...", "repo": "..." }');
+  throw new Error(
+    'config.commitCommand must be a non-empty string, or { "global": "...", "repo": "..." }',
+  );
 }

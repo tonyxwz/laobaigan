@@ -1,11 +1,28 @@
-import { DEFAULT_LIMITS, DEFAULT_PATHS, type NormalizeLimits } from "../config.ts";
-import { exists, filesWithExt, findInJsonl, readJsonl, subdirs } from "../util/fs.ts";
-import { isRecord, renderInput, str, toDate, truncate } from "../util/text.ts";
-import { activeBranch } from "../util/tree.ts";
 import { createHash } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
 import { basename, join } from "node:path";
-import type { ListOptions, SessionRef, SourceAdapter, ToolCall, Transcript, Turn } from "./types.ts";
+import {
+  DEFAULT_LIMITS,
+  DEFAULT_PATHS,
+  type NormalizeLimits,
+} from "../config.ts";
+import {
+  exists,
+  filesWithExt,
+  findInJsonl,
+  readJsonl,
+  subdirs,
+} from "../util/fs.ts";
+import { isRecord, renderInput, str, toDate, truncate } from "../util/text.ts";
+import { activeBranch } from "../util/tree.ts";
+import type {
+  ListOptions,
+  SessionRef,
+  SourceAdapter,
+  ToolCall,
+  Transcript,
+  Turn,
+} from "./types.ts";
 
 /**
  * Claude Code: ~/.claude/projects/<cwd-slug>/<session-uuid>.jsonl
@@ -29,7 +46,10 @@ export class ClaudeAdapter implements SourceAdapter {
   private readonly root: string;
   private readonly limits: NormalizeLimits;
 
-  constructor(root = DEFAULT_PATHS.claudeProjects, limits: NormalizeLimits = DEFAULT_LIMITS) {
+  constructor(
+    root = DEFAULT_PATHS.claudeProjects,
+    limits: NormalizeLimits = DEFAULT_LIMITS,
+  ) {
     this.root = root;
     this.limits = limits;
   }
@@ -69,7 +89,11 @@ export class ClaudeAdapter implements SourceAdapter {
   async load(ref: SessionRef): Promise<Transcript> {
     if (isMemoryFile(ref.location)) {
       const md = await readFile(ref.location, "utf8");
-      return parseClaudeMemory(md, ref, await projectCwd(join(ref.location, "..", "..")));
+      return parseClaudeMemory(
+        md,
+        ref,
+        await projectCwd(join(ref.location, "..", "..")),
+      );
     }
     const lines = (await readJsonl(ref.location)).filter(isRecord);
     return parseClaude(lines, ref, this.limits);
@@ -78,19 +102,33 @@ export class ClaudeAdapter implements SourceAdapter {
 
 type Line = Record<string, unknown>;
 
-export function parseClaude(lines: Line[], ref: SessionRef, limits: NormalizeLimits): Transcript {
+export function parseClaude(
+  lines: Line[],
+  ref: SessionRef,
+  limits: NormalizeLimits,
+): Transcript {
   const byId = new Map<string, Line>();
   let leaf: string | undefined;
   let title: string | undefined;
   for (const l of lines) {
     const uuid = str(l.uuid);
     if (uuid) byId.set(uuid, l);
-    if ((l.type === "user" || l.type === "assistant") && uuid && l.isSidechain !== true) leaf = uuid;
-    if (l.type === "ai-title" || l.type === "summary") title = str(l.title) ?? str(l.summary) ?? title;
+    if (
+      (l.type === "user" || l.type === "assistant") &&
+      uuid &&
+      l.isSidechain !== true
+    )
+      leaf = uuid;
+    if (l.type === "ai-title" || l.type === "summary")
+      title = str(l.title) ?? str(l.summary) ?? title;
   }
 
   // Follow parentUuid, and across compaction boundaries follow logicalParentUuid.
-  const active = activeBranch(byId, leaf, (l) => str(l.parentUuid) ?? str(l.logicalParentUuid));
+  const active = activeBranch(
+    byId,
+    leaf,
+    (l) => str(l.parentUuid) ?? str(l.logicalParentUuid),
+  );
 
   const toolNames = new Map<string, string>();
   const turns: Turn[] = [];
@@ -104,19 +142,38 @@ export function parseClaude(lines: Line[], ref: SessionRef, limits: NormalizeLim
     const message = isRecord(l.message) ? l.message : undefined;
     if (!message) continue;
     const ts = toDate(l.timestamp);
-    const off = active.size > 0 && !active.has(str(l.uuid) ?? "") ? { offBranch: true } : {};
+    const off =
+      active.size > 0 && !active.has(str(l.uuid) ?? "")
+        ? { offBranch: true }
+        : {};
 
     if (l.type === "assistant") {
-      const { text, toolCalls } = assistantContent(message.content, toolNames, limits);
+      const { text, toolCalls } = assistantContent(
+        message.content,
+        toolNames,
+        limits,
+      );
       if (!text && toolCalls.length === 0) continue;
       const msgId = str(message.id);
       const prev = turns[turns.length - 1];
-      if (prev && prev.role === "assistant" && msgId && msgId === lastAssistantMsgId) {
+      if (
+        prev &&
+        prev.role === "assistant" &&
+        msgId &&
+        msgId === lastAssistantMsgId
+      ) {
         // Same API response split over multiple lines: merge.
         prev.text = [prev.text, text].filter(Boolean).join("\n");
-        if (toolCalls.length) prev.toolCalls = [...(prev.toolCalls ?? []), ...toolCalls];
+        if (toolCalls.length)
+          prev.toolCalls = [...(prev.toolCalls ?? []), ...toolCalls];
       } else {
-        turns.push({ role: "assistant", text, ts, ...(toolCalls.length ? { toolCalls } : {}), ...off });
+        turns.push({
+          role: "assistant",
+          text,
+          ts,
+          ...(toolCalls.length ? { toolCalls } : {}),
+          ...off,
+        });
       }
       lastAssistantMsgId = msgId;
       continue;
@@ -185,7 +242,10 @@ function assistantContent(
         const name = str(b.name) ?? "unknown";
         const id = str(b.id);
         if (id) toolNames.set(id, name);
-        toolCalls.push({ name, input: renderInput(b.input, limits.toolInputChars) });
+        toolCalls.push({
+          name,
+          input: renderInput(b.input, limits.toolInputChars),
+        });
       }
       // thinking blocks are intentionally dropped
     }
@@ -197,7 +257,13 @@ function blockText(content: unknown): string {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
   return content
-    .map((b) => (isRecord(b) && b.type === "text" ? (str(b.text) ?? "") : isRecord(b) ? `[${String(b.type)}]` : ""))
+    .map((b) =>
+      isRecord(b) && b.type === "text"
+        ? (str(b.text) ?? "")
+        : isRecord(b)
+          ? `[${String(b.type)}]`
+          : "",
+    )
     .join("\n");
 }
 
@@ -214,15 +280,23 @@ const NOISE_PREFIXES = [
 ];
 
 /** Classify a user-role text: drop injected noise, normalize slash commands. */
-export function classifyUserText(raw: string): Pick<Turn, "text" | "origin"> | undefined {
+export function classifyUserText(
+  raw: string,
+): Pick<Turn, "text" | "origin"> | undefined {
   const s = raw.trim();
   if (!s) return undefined;
   if (NOISE_PREFIXES.some((p) => s.startsWith(p))) return undefined;
-  if (s.startsWith("[Request interrupted by user")) return { text: s, origin: "interrupt" };
+  if (s.startsWith("[Request interrupted by user"))
+    return { text: s, origin: "interrupt" };
   const cmd = /<command-name>([^<]*)<\/command-name>/.exec(s);
   if (cmd) {
-    const args = /<command-args>([\s\S]*?)<\/command-args>/.exec(s)?.[1]?.trim();
-    return { text: [cmd[1]!.trim(), args].filter(Boolean).join(" "), origin: "command" };
+    const args = /<command-args>([\s\S]*?)<\/command-args>/
+      .exec(s)?.[1]
+      ?.trim();
+    return {
+      text: [cmd[1]!.trim(), args].filter(Boolean).join(" "),
+      origin: "command",
+    };
   }
   const bash = /^<bash-input>([\s\S]*?)<\/bash-input>$/.exec(s);
   if (bash) return { text: `!${bash[1]!.trim()}`, origin: "command" };
@@ -248,7 +322,9 @@ export function memorySessionId(path: string): string {
 async function projectCwd(dir: string): Promise<string> {
   for (const file of await filesWithExt(dir, ".jsonl")) {
     try {
-      const cwd = await findInJsonl(file, (l) => (isRecord(l) ? str(l.cwd) : undefined));
+      const cwd = await findInJsonl(file, (l) =>
+        isRecord(l) ? str(l.cwd) : undefined,
+      );
       if (cwd) return cwd;
     } catch {
       // unreadable session file: try the next one
@@ -265,16 +341,29 @@ async function projectCwd(dir: string): Promise<string> {
  * is the note's `modified` date, so an edited note is a new turn (and extracted
  * again) while an untouched one stays seen.
  */
-export function parseClaudeMemory(md: string, ref: SessionRef, cwd: string): Transcript {
+export function parseClaudeMemory(
+  md: string,
+  ref: SessionRef,
+  cwd: string,
+): Transcript {
   const fm = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(md);
   const front = fm?.[1] ?? "";
-  const field = (k: string) => new RegExp(`^\\s*${k}:\\s*(.*)$`, "m").exec(front)?.[1]?.trim().replace(/^["']|["']$/g, "") || undefined;
+  const field = (k: string) =>
+    new RegExp(`^\\s*${k}:\\s*(.*)$`, "m")
+      .exec(front)?.[1]
+      ?.trim()
+      .replace(/^["']|["']$/g, "") || undefined;
   const name = field("name") ?? basename(ref.location, ".md");
   const description = field("description");
   const origin = field("originSessionId");
   const ts = toDate(field("modified")) ?? ref.updatedAt;
   const body = (fm ? md.slice(fm[0].length) : md).trim();
-  const text = [`Memory note "${name}"${description ? `: ${description}` : ""}`, body].filter(Boolean).join("\n\n");
+  const text = [
+    `Memory note "${name}"${description ? `: ${description}` : ""}`,
+    body,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
   return {
     agent: "claude",
     sessionId: ref.sessionId,
@@ -284,6 +373,7 @@ export function parseClaudeMemory(md: string, ref: SessionRef, cwd: string): Tra
     startedAt: ts,
     updatedAt: ts,
     memory: origin ? { originSessionId: origin } : {},
-    turns: body || description ? [{ role: "user", origin: "prompt", text, ts }] : [],
+    turns:
+      body || description ? [{ role: "user", origin: "prompt", text, ts }] : [],
   };
 }

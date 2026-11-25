@@ -84,11 +84,14 @@ export interface HeadingPart {
 }
 
 /** Split markdown on headings of exactly `level`, ignoring fenced code. */
-export function splitByHeading(md: string, level: number): { preamble: string; parts: HeadingPart[] } {
+export function splitByHeading(
+  md: string,
+  level: number,
+): { preamble: string; parts: HeadingPart[] } {
   const marker = `${"#".repeat(level)} `;
   const lines = md.split("\n");
   let fence: string | undefined;
-  let preamble: string[] = [];
+  const preamble: string[] = [];
   const parts: { title: string; lines: string[] }[] = [];
   for (const line of lines) {
     const f = /^\s*(```+|~~~+)/.exec(line);
@@ -103,7 +106,13 @@ export function splitByHeading(md: string, level: number): { preamble: string; p
     if (parts.length) parts[parts.length - 1]!.lines.push(line);
     else preamble.push(line);
   }
-  return { preamble: preamble.join("\n").trim(), parts: parts.map((p) => ({ title: p.title, body: p.lines.join("\n").trim() })) };
+  return {
+    preamble: preamble.join("\n").trim(),
+    parts: parts.map((p) => ({
+      title: p.title,
+      body: p.lines.join("\n").trim(),
+    })),
+  };
 }
 
 function stripFrontmatter(md: string): string {
@@ -113,10 +122,14 @@ function stripFrontmatter(md: string): string {
 /** Remove a leading "# Title" line, returning it. */
 function takeH1(body: string): { h1?: string; rest: string } {
   const m = /^\s*# (.+)\n?/.exec(body);
-  return m ? { h1: m[1]!.trim(), rest: body.slice(m[0].length).trim() } : { rest: body.trim() };
+  return m
+    ? { h1: m[1]!.trim(), rest: body.slice(m[0].length).trim() }
+    : { rest: body.trim() };
 }
 
-function uniqueSlugs<T extends { title: string }>(parts: T[]): (T & { slug: string })[] {
+function uniqueSlugs<T extends { title: string }>(
+  parts: T[],
+): (T & { slug: string })[] {
   const seen = new Map<string, number>();
   return parts.map((p) => {
     const base = slugify(p.title);
@@ -165,7 +178,11 @@ export function parseSkill(
     sections,
     sourcePath: skillMdPath,
     // Relative names only: moving the skills dir isn't an edit.
-    hash: sha([md, ...references.map((r) => `${basename(r.path)}\n${r.content}`)].join("\n\0")),
+    hash: sha(
+      [md, ...references.map((r) => `${basename(r.path)}\n${r.content}`)].join(
+        "\n\0",
+      ),
+    ),
     resources,
   };
 }
@@ -235,7 +252,8 @@ export async function parseSkillsDir(dir: string): Promise<ParsedSkill[]> {
     if (await isDir(refDir)) {
       for (const f of (await readdir(refDir)).sort()) {
         const p = join(refDir, f);
-        if (f.endsWith(".md")) refs.push({ path: p, content: (await readIfExists(p)) ?? "" });
+        if (f.endsWith(".md"))
+          refs.push({ path: p, content: (await readIfExists(p)) ?? "" });
         else resources.push(p);
       }
     }
@@ -245,7 +263,9 @@ export async function parseSkillsDir(dir: string): Promise<ParsedSkill[]> {
 }
 
 /** A repo's AGENTS.md (or CLAUDE.md when there is no AGENTS.md) and its .agents/skills. */
-export async function parseRepo(repo: string): Promise<{ agentsMd?: ParsedAgentsMd; skills: ParsedSkill[] }> {
+export async function parseRepo(
+  repo: string,
+): Promise<{ agentsMd?: ParsedAgentsMd; skills: ParsedSkill[] }> {
   let agentsMd: ParsedAgentsMd | undefined;
   for (const name of ["AGENTS.md", "CLAUDE.md"]) {
     const p = join(repo, name);
@@ -256,5 +276,8 @@ export async function parseRepo(repo: string): Promise<{ agentsMd?: ParsedAgents
       break;
     }
   }
-  return { ...(agentsMd ? { agentsMd } : {}), skills: await parseSkillsDir(join(repo, ".agents", "skills")) };
+  return {
+    ...(agentsMd ? { agentsMd } : {}),
+    skills: await parseSkillsDir(join(repo, ".agents", "skills")),
+  };
 }

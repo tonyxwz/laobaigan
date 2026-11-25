@@ -14,7 +14,13 @@ import type { ProposalKind } from "./tree.ts";
  * At most one drafting/open proposal per node; while active the node is
  * `proposed` (frozen against curation and re-scoring).
  */
-export const PROPOSAL_STATUSES = ["drafting", "open", "accepted", "rejected", "failed"] as const;
+export const PROPOSAL_STATUSES = [
+  "drafting",
+  "open",
+  "accepted",
+  "rejected",
+  "failed",
+] as const;
 export type ProposalStatus = (typeof PROPOSAL_STATUSES)[number];
 
 /** One file of a draft. Paths are relative to the proposal's `targetRoot`. */
@@ -72,7 +78,16 @@ export interface Exclusion {
   at?: number;
 }
 
-export type NewProposal = Pick<ProposalRow, "nodeId" | "kind" | "scope" | "targetRoot" | "writable" | "nuggetIds" | "sessions"> &
+export type NewProposal = Pick<
+  ProposalRow,
+  | "nodeId"
+  | "kind"
+  | "scope"
+  | "targetRoot"
+  | "writable"
+  | "nuggetIds"
+  | "sessions"
+> &
   Partial<Pick<ProposalRow, "repo" | "skillName">>;
 
 type Row = Record<string, unknown>;
@@ -113,7 +128,9 @@ export class Proposals {
   }
 
   get(id: number): ProposalRow | undefined {
-    const r = this.sql.prepare("SELECT * FROM proposal WHERE id = ?").get(id) as Row | undefined;
+    const r = this.sql.prepare("SELECT * FROM proposal WHERE id = ?").get(id) as
+      | Row
+      | undefined;
     return r ? toProposal(r) : undefined;
   }
 
@@ -126,28 +143,48 @@ export class Proposals {
   list(status?: ProposalStatus[]): ProposalRow[] {
     const rows = (
       status?.length
-        ? this.sql.prepare(`SELECT * FROM proposal WHERE status IN (${status.map(() => "?").join(",")}) ORDER BY id`).all(...status)
+        ? this.sql
+            .prepare(
+              `SELECT * FROM proposal WHERE status IN (${status.map(() => "?").join(",")}) ORDER BY id`,
+            )
+            .all(...status)
         : this.sql.prepare("SELECT * FROM proposal ORDER BY id").all()
     ) as Row[];
     return rows.map(toProposal);
   }
 
   active(nodeId: number): ProposalRow | undefined {
-    const r = this.sql.prepare("SELECT * FROM proposal WHERE node_id = ? AND status IN ('drafting', 'open')").get(nodeId) as Row | undefined;
+    const r = this.sql
+      .prepare(
+        "SELECT * FROM proposal WHERE node_id = ? AND status IN ('drafting', 'open')",
+      )
+      .get(nodeId) as Row | undefined;
     return r ? toProposal(r) : undefined;
   }
 
   forNode(nodeId: number): ProposalRow[] {
-    return (this.sql.prepare("SELECT * FROM proposal WHERE node_id = ? ORDER BY id").all(nodeId) as Row[]).map(toProposal);
+    return (
+      this.sql
+        .prepare("SELECT * FROM proposal WHERE node_id = ? ORDER BY id")
+        .all(nodeId) as Row[]
+    ).map(toProposal);
   }
 
   /** Start a proposal (drafting) and mark the node `proposed`. */
   create(p: NewProposal): number {
-    const node = this.sql.prepare("SELECT depth FROM node WHERE id = ?").get(p.nodeId) as Row | undefined;
+    const node = this.sql
+      .prepare("SELECT depth FROM node WHERE id = ?")
+      .get(p.nodeId) as Row | undefined;
     if (!node) throw new Error(`No node ${p.nodeId}`);
-    if (Number(node.depth) !== 1) throw new Error(`Proposals are for skills (depth 1); node ${p.nodeId} is depth ${node.depth}`);
+    if (Number(node.depth) !== 1)
+      throw new Error(
+        `Proposals are for skills (depth 1); node ${p.nodeId} is depth ${node.depth}`,
+      );
     const existing = this.active(p.nodeId);
-    if (existing) throw new Error(`Node ${p.nodeId} already has ${existing.status} proposal #${existing.id}`);
+    if (existing)
+      throw new Error(
+        `Node ${p.nodeId} already has ${existing.status} proposal #${existing.id}`,
+      );
     const now = Date.now();
     return this.db.tx(() => {
       const id = Number(
@@ -156,22 +193,49 @@ export class Proposals {
             `INSERT INTO proposal (node_id, kind, status, scope, repo, skill_name, target_root, writable, nugget_ids, sessions, drafted_at, worker_pid, created_at, updated_at)
              VALUES (?, ?, 'drafting', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           )
-          .run(p.nodeId, p.kind, p.scope, p.repo ?? null, p.skillName ?? null, p.targetRoot, JSON.stringify(p.writable), JSON.stringify(p.nuggetIds), p.sessions, now, process.pid, now, now)
-          .lastInsertRowid,
+          .run(
+            p.nodeId,
+            p.kind,
+            p.scope,
+            p.repo ?? null,
+            p.skillName ?? null,
+            p.targetRoot,
+            JSON.stringify(p.writable),
+            JSON.stringify(p.nuggetIds),
+            p.sessions,
+            now,
+            process.pid,
+            now,
+            now,
+          ).lastInsertRowid,
       );
       this.setNodeStatus(p.nodeId, "proposed");
       return id;
     });
   }
 
-  private setNodeStatus(nodeId: number, status: string, extra: Record<string, number | null> = {}): void {
-    const sets = ["status = ?", "updated_at = ?", ...Object.keys(extra).map((k) => `${k} = ?`)];
-    this.sql.prepare(`UPDATE node SET ${sets.join(", ")} WHERE id = ?`).run(status, Date.now(), ...Object.values(extra), nodeId);
+  private setNodeStatus(
+    nodeId: number,
+    status: string,
+    extra: Record<string, number | null> = {},
+  ): void {
+    const sets = [
+      "status = ?",
+      "updated_at = ?",
+      ...Object.keys(extra).map((k) => `${k} = ?`),
+    ];
+    this.sql
+      .prepare(`UPDATE node SET ${sets.join(", ")} WHERE id = ?`)
+      .run(status, Date.now(), ...Object.values(extra), nodeId);
   }
 
   /** Another live lbg process is drafting or revising this proposal. */
   heldByOther(p: ProposalRow): boolean {
-    return p.workerPid !== undefined && p.workerPid !== process.pid && pidAlive(p.workerPid);
+    return (
+      p.workerPid !== undefined &&
+      p.workerPid !== process.pid &&
+      pidAlive(p.workerPid)
+    );
   }
 
   /** Refuse to touch a proposal another live lbg process is working on. */
@@ -189,39 +253,76 @@ export class Proposals {
   /** This process starts working on the proposal (revise / edit). */
   claim(id: number): void {
     this.assertFree(id);
-    this.sql.prepare("UPDATE proposal SET worker_pid = ? WHERE id = ?").run(process.pid, id);
+    this.sql
+      .prepare("UPDATE proposal SET worker_pid = ? WHERE id = ?")
+      .run(process.pid, id);
   }
 
   /** This process is done with the proposal. */
   release(id: number): void {
-    this.sql.prepare("UPDATE proposal SET worker_pid = NULL WHERE id = ? AND worker_pid = ?").run(id, process.pid);
+    this.sql
+      .prepare(
+        "UPDATE proposal SET worker_pid = NULL WHERE id = ? AND worker_pid = ?",
+      )
+      .run(id, process.pid);
   }
 
-  private transition(id: number, from: ProposalStatus[], to: ProposalStatus, fields: Record<string, string | number | null> = {}): ProposalRow {
+  private transition(
+    id: number,
+    from: ProposalStatus[],
+    to: ProposalStatus,
+    fields: Record<string, string | number | null> = {},
+  ): ProposalRow {
     const p = this.assertFree(id);
-    if (!from.includes(p.status)) throw new Error(`Proposal #${id} is ${p.status}; can't mark it ${to}`);
+    if (!from.includes(p.status))
+      throw new Error(`Proposal #${id} is ${p.status}; can't mark it ${to}`);
     const now = Date.now();
     const closing = to !== "drafting" && to !== "open";
     // Finishing a draft, or closing the proposal, ends any work on it.
     const releasing = closing || p.status === "drafting";
-    const cols = { status: to, updated_at: now, ...(closing ? { closed_at: now } : {}), ...(releasing ? { worker_pid: null } : {}), ...fields };
-    this.sql.prepare(`UPDATE proposal SET ${Object.keys(cols).map((k) => `${k} = ?`).join(", ")} WHERE id = ?`).run(...Object.values(cols), id);
+    const cols = {
+      status: to,
+      updated_at: now,
+      ...(closing ? { closed_at: now } : {}),
+      ...(releasing ? { worker_pid: null } : {}),
+      ...fields,
+    };
+    this.sql
+      .prepare(
+        `UPDATE proposal SET ${Object.keys(cols)
+          .map((k) => `${k} = ?`)
+          .join(", ")} WHERE id = ?`,
+      )
+      .run(...Object.values(cols), id);
     return p;
   }
 
   /** Drafting finished and verified: store the files for review. Also used to replace an open draft (revise / edit). */
-  markOpen(id: number, files: DraftFile[], summary: string, usage?: unknown, evidence?: { draftedAt: Date; nuggetIds: number[] }): void {
+  markOpen(
+    id: number,
+    files: DraftFile[],
+    summary: string,
+    usage?: unknown,
+    evidence?: { draftedAt: Date; nuggetIds: number[] },
+  ): void {
     this.transition(id, ["drafting", "open"], "open", {
       files: JSON.stringify(files),
       summary,
       ...(usage !== undefined ? { usage: JSON.stringify(usage) } : {}),
-      ...(evidence ? { drafted_at: evidence.draftedAt.getTime(), nugget_ids: JSON.stringify(evidence.nuggetIds) } : {}),
+      ...(evidence
+        ? {
+            drafted_at: evidence.draftedAt.getTime(),
+            nugget_ids: JSON.stringify(evidence.nuggetIds),
+          }
+        : {}),
     });
   }
 
   /** Evidence I dropped in review after the current draft was written: its content may still be in the files. */
   droppedSinceDraft(p: ProposalRow): Exclusion[] {
-    return p.excluded.filter((e) => e.by === "reviewer" && (e.at ?? 0) > p.draftedAt.getTime());
+    return p.excluded.filter(
+      (e) => e.by === "reviewer" && (e.at ?? 0) > p.draftedAt.getTime(),
+    );
   }
 
   /** Record evidence left out of the proposal (appended; one entry per nugget). */
@@ -231,8 +332,15 @@ export class Proposals {
     for (const e of items) byId.set(e.nuggetId, e);
     const nuggetIds = p.nuggetIds.filter((n) => !byId.has(n));
     this.sql
-      .prepare("UPDATE proposal SET excluded = ?, nugget_ids = ?, updated_at = ? WHERE id = ?")
-      .run(JSON.stringify([...byId.values()]), JSON.stringify(nuggetIds), Date.now(), id);
+      .prepare(
+        "UPDATE proposal SET excluded = ?, nugget_ids = ?, updated_at = ? WHERE id = ?",
+      )
+      .run(
+        JSON.stringify([...byId.values()]),
+        JSON.stringify(nuggetIds),
+        Date.now(),
+        id,
+      );
   }
 
   /**
@@ -244,9 +352,15 @@ export class Proposals {
   recoverInterrupted(legacyMaxAgeMs = 3600e3, now = Date.now()): number[] {
     const failed: number[] = [];
     for (const p of this.list(["drafting", "open"])) {
-      const dead = p.workerPid !== undefined ? !pidAlive(p.workerPid) : p.status === "drafting" && now - p.createdAt.getTime() > legacyMaxAgeMs;
+      const dead =
+        p.workerPid !== undefined
+          ? !pidAlive(p.workerPid)
+          : p.status === "drafting" &&
+            now - p.createdAt.getTime() > legacyMaxAgeMs;
       if (!dead) continue;
-      this.sql.prepare("UPDATE proposal SET worker_pid = NULL WHERE id = ?").run(p.id);
+      this.sql
+        .prepare("UPDATE proposal SET worker_pid = NULL WHERE id = ?")
+        .run(p.id);
       if (p.status === "drafting") {
         this.markFailed(p.id, "interrupted: lbg exited while drafting");
         failed.push(p.id);
@@ -258,7 +372,10 @@ export class Proposals {
   /** Drafting failed: the node is a candidate again. */
   markFailed(id: number, detail: string, usage?: unknown): void {
     this.db.tx(() => {
-      const p = this.transition(id, ["drafting", "open"], "failed", { detail, ...(usage !== undefined ? { usage: JSON.stringify(usage) } : {}) });
+      const p = this.transition(id, ["drafting", "open"], "failed", {
+        detail,
+        ...(usage !== undefined ? { usage: JSON.stringify(usage) } : {}),
+      });
       this.setNodeStatus(p.nodeId, "candidate");
     });
   }
@@ -274,8 +391,15 @@ export class Proposals {
   /** I said no. The node returns only after the topic comes up in new sessions. */
   markRejected(id: number, reason?: string): void {
     this.db.tx(() => {
-      const p = this.transition(id, ["drafting", "open"], "rejected", reason ? { detail: reason } : {});
-      this.setNodeStatus(p.nodeId, "rejected", { rejected_sessions: p.sessions });
+      const p = this.transition(
+        id,
+        ["drafting", "open"],
+        "rejected",
+        reason ? { detail: reason } : {},
+      );
+      this.setNodeStatus(p.nodeId, "rejected", {
+        rejected_sessions: p.sessions,
+      });
     });
   }
 }

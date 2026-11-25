@@ -15,7 +15,13 @@ import type { Config } from "../config.ts";
  * `~` in the template means the home directory (sh wouldn't expand it after `=`).
  */
 
-export const COMMIT_PLACEHOLDERS = ["updated_files", "draft_note", "target_root", "skill", "proposal_id"] as const;
+export const COMMIT_PLACEHOLDERS = [
+  "updated_files",
+  "draft_note",
+  "target_root",
+  "skill",
+  "proposal_id",
+] as const;
 
 export interface CommitVars {
   updatedFiles: string[];
@@ -31,17 +37,27 @@ export function shQuote(s: string): string {
 }
 
 /** The configured command for a proposal's scope, if any. */
-export function commitTemplate(cfg: Pick<Config, "commitCommand">, scope: "global" | "repo"): string | undefined {
+export function commitTemplate(
+  cfg: Pick<Config, "commitCommand">,
+  scope: "global" | "repo",
+): string | undefined {
   const c = cfg.commitCommand;
   return typeof c === "string" ? c : c?.[scope];
 }
 
 /** Expand `~` at the start of a word or right after `=` / `:` (template text only, never values). */
 export function expandTilde(template: string, home = homedir()): string {
-  return template.replace(/(^|[\s=:])~(?=\/|\s|$)/g, (_, pre: string) => `${pre}${home}`);
+  return template.replace(
+    /(^|[\s=:])~(?=\/|\s|$)/g,
+    (_, pre: string) => `${pre}${home}`,
+  );
 }
 
-export function renderCommit(template: string, v: CommitVars, home = homedir()): string {
+export function renderCommit(
+  template: string,
+  v: CommitVars,
+  home = homedir(),
+): string {
   const values: Record<(typeof COMMIT_PLACEHOLDERS)[number], string> = {
     updated_files: v.updatedFiles.map(shQuote).join(" "),
     draft_note: shQuote(v.draftNote),
@@ -49,15 +65,34 @@ export function renderCommit(template: string, v: CommitVars, home = homedir()):
     skill: shQuote(v.skill),
     proposal_id: String(v.proposalId),
   };
-  const unknown = [...template.matchAll(/\$\{(\w+)\}/g)].map((m) => m[1]!).filter((k) => !(COMMIT_PLACEHOLDERS as readonly string[]).includes(k));
-  if (unknown.length) throw new Error(`commitCommand: unknown placeholder(s) ${unknown.map((k) => `\${${k}}`).join(", ")}; use ${COMMIT_PLACEHOLDERS.map((k) => `\${${k}}`).join(", ")}`);
+  const unknown = [...template.matchAll(/\$\{(\w+)\}/g)]
+    .map((m) => m[1]!)
+    .filter((k) => !(COMMIT_PLACEHOLDERS as readonly string[]).includes(k));
+  if (unknown.length)
+    throw new Error(
+      `commitCommand: unknown placeholder(s) ${unknown.map((k) => `\${${k}}`).join(", ")}; use ${COMMIT_PLACEHOLDERS.map((k) => `\${${k}}`).join(", ")}`,
+    );
   // Expand ~ first, so a ~ inside a substituted value (e.g. the note) stays literal.
-  return expandTilde(template, home).replace(/\$\{(\w+)\}/g, (_, k: keyof typeof values) => values[k]);
+  return expandTilde(template, home).replace(
+    /\$\{(\w+)\}/g,
+    (_, k: keyof typeof values) => values[k],
+  );
 }
 
 /** Run with /bin/sh in `cwd`; output goes straight to the terminal. Returns the exit code. */
-export function runCommit(command: string, cwd: string, opts: { stdio?: "inherit" | "pipe" } = {}): { status: number; output: string } {
-  const r = spawnSync("/bin/sh", ["-c", command], { cwd, stdio: opts.stdio ?? "inherit", encoding: "utf8" });
+export function runCommit(
+  command: string,
+  cwd: string,
+  opts: { stdio?: "inherit" | "pipe" } = {},
+): { status: number; output: string } {
+  const r = spawnSync("/bin/sh", ["-c", command], {
+    cwd,
+    stdio: opts.stdio ?? "inherit",
+    encoding: "utf8",
+  });
   if (r.error) throw r.error;
-  return { status: r.status ?? 1, output: `${r.stdout ?? ""}${r.stderr ?? ""}` };
+  return {
+    status: r.status ?? 1,
+    output: `${r.stdout ?? ""}${r.stderr ?? ""}`,
+  };
 }

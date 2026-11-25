@@ -9,8 +9,13 @@ import type { SourceAdapter } from "../src/sources/types.ts";
 
 /** A fake filesystem: path → "dir" | "symlink:<target>" (realpath follows it). */
 function fsOf(entries: Record<string, string>): FsProbe {
-  const real = (p: string): string => (entries[p]?.startsWith("symlink:") ? real(entries[p]!.slice(8)) : p);
-  return { exists: (p) => p in entries, isSymlink: (p) => !!entries[p]?.startsWith("symlink:"), realpath: (p) => real(p) };
+  const real = (p: string): string =>
+    entries[p]?.startsWith("symlink:") ? real(entries[p]!.slice(8)) : p;
+  return {
+    exists: (p) => p in entries,
+    isSymlink: (p) => !!entries[p]?.startsWith("symlink:"),
+    realpath: (p) => real(p),
+  };
 }
 
 const H = "/home/u";
@@ -28,31 +33,58 @@ describe("detectSkillsDir", () => {
 
   it("uses the real directory of a shared, symlinked setup, as written", () => {
     // this host: pi and claude link to opencode's dir
-    const shared = fsOf({ [PI]: `symlink:${OC}`, [CLAUDE]: `symlink:${OC}`, [OC]: "dir" });
+    const shared = fsOf({
+      [PI]: `symlink:${OC}`,
+      [CLAUDE]: `symlink:${OC}`,
+      [OC]: "dir",
+    });
     expect(detectSkillsDir(H, shared)).toBe(OC);
     // a symlink to somewhere that isn't a candidate: follow it
-    expect(detectSkillsDir(H, fsOf({ [PI]: "symlink:/data/skills", "/data/skills": "dir" }))).toBe("/data/skills");
+    expect(
+      detectSkillsDir(
+        H,
+        fsOf({ [PI]: "symlink:/data/skills", "/data/skills": "dir" }),
+      ),
+    ).toBe("/data/skills");
   });
 });
 
 describe("lbg init", () => {
   const adapters = (available: Record<string, boolean>): SourceAdapter[] =>
-    Object.entries(available).map(([agent, ok]) => ({ agent, available: async () => ok }) as unknown as SourceAdapter);
+    Object.entries(available).map(
+      ([agent, ok]) =>
+        ({ agent, available: async () => ok }) as unknown as SourceAdapter,
+    );
 
   it("writes a starter config once, with the detected skills dir", async () => {
     const h = await mkdtemp(join(tmpdir(), "lbg-home-"));
     await mkdir(join(h, ".claude", "skills"), { recursive: true });
     const configPath = join(h, ".config", "laobaigan", "config.json");
-    const r = await init({ adapters: adapters({ claude: true, pi: false }), piDefaults: () => ({}), configPath, home: h });
-    expect(r).toMatchObject({ config: "created", skillsDir: join(h, ".claude", "skills") });
-    expect(JSON.parse(readFileSync(configPath, "utf8"))).toEqual({ skillsDir: "~/.claude/skills" });
+    const r = await init({
+      adapters: adapters({ claude: true, pi: false }),
+      piDefaults: () => ({}),
+      configPath,
+      home: h,
+    });
+    expect(r).toMatchObject({
+      config: "created",
+      skillsDir: join(h, ".claude", "skills"),
+    });
+    expect(JSON.parse(readFileSync(configPath, "utf8"))).toEqual({
+      skillsDir: "~/.claude/skills",
+    });
     const text = renderInit(r, h);
     expect(text).toContain("✓ claude");
     expect(text).toContain("· pi");
     expect(text).toMatch(/pi has no default model yet/);
 
     await writeFile(configPath, '{"skillsDir": "~/mine"}\n');
-    const again = await init({ adapters: adapters({}), piDefaults: () => ({ provider: "p", model: "m" }), configPath, home: h });
+    const again = await init({
+      adapters: adapters({}),
+      piDefaults: () => ({ provider: "p", model: "m" }),
+      configPath,
+      home: h,
+    });
     expect(again.config).toBe("kept");
     expect(readFileSync(configPath, "utf8")).toBe('{"skillsDir": "~/mine"}\n');
     expect(renderInit(again, h)).toContain("model: p/m");

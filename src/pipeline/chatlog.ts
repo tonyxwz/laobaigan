@@ -4,9 +4,9 @@ import { DEFAULT_LIMITS } from "../config.ts";
 import { parseClaude } from "../sources/claude.ts";
 import { parsePi } from "../sources/pi.ts";
 import type { Transcript } from "../sources/types.ts";
+import type { Turn } from "../state/feedback.ts";
 import { readJsonl } from "../util/fs.ts";
 import { isRecord, truncate } from "../util/text.ts";
-import type { Turn } from "../state/feedback.ts";
 
 async function jsonlFiles(dir: string): Promise<string[]> {
   let entries;
@@ -29,19 +29,53 @@ async function jsonlFiles(dir: string): Promise<string[]> {
  * my prompts in full, the assistant's replies shortened for context. lbg's own opening
  * message isn't mine and is left out. Tool calls and results are dropped.
  */
-export async function readChatTurns(sessionDir: string, opening?: string): Promise<Turn[]> {
+export async function readChatTurns(
+  sessionDir: string,
+  opening?: string,
+): Promise<Turn[]> {
   const turns: Turn[] = [];
   for (const file of await jsonlFiles(sessionDir)) {
     const lines = (await readJsonl(file)).filter(isRecord);
-    turns.push(...chatTurns(parsePi(lines, { agent: "pi", sessionId: file, location: file, updatedAt: new Date(), version: "" }, DEFAULT_LIMITS), opening));
+    turns.push(
+      ...chatTurns(
+        parsePi(
+          lines,
+          {
+            agent: "pi",
+            sessionId: file,
+            location: file,
+            updatedAt: new Date(),
+            version: "",
+          },
+          DEFAULT_LIMITS,
+        ),
+        opening,
+      ),
+    );
   }
   return turns;
 }
 
 /** The same, from one Claude Code session file. */
-export async function readClaudeChatTurns(file: string, opening?: string): Promise<Turn[]> {
+export async function readClaudeChatTurns(
+  file: string,
+  opening?: string,
+): Promise<Turn[]> {
   const lines = (await readJsonl(file)).filter(isRecord);
-  return chatTurns(parseClaude(lines, { agent: "claude", sessionId: file, location: file, updatedAt: new Date(), version: "" }, DEFAULT_LIMITS), opening);
+  return chatTurns(
+    parseClaude(
+      lines,
+      {
+        agent: "claude",
+        sessionId: file,
+        location: file,
+        updatedAt: new Date(),
+        version: "",
+      },
+      DEFAULT_LIMITS,
+    ),
+    opening,
+  );
 }
 
 function chatTurns(t: Transcript, opening: string | undefined): Turn[] {

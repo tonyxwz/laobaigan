@@ -2,10 +2,19 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
 import { createTwoFilesPatch } from "diff";
 import type { Config } from "../config.ts";
-import { Feedback } from "../state/feedback.ts";
-import { Rejections, type RejectedTopic, type RejectionKind } from "../state/rejections.ts";
-import { hashContent, Proposals, type DraftFile, type ProposalRow } from "../state/proposals.ts";
 import type { NuggetRow } from "../state/db.ts";
+import { Feedback } from "../state/feedback.ts";
+import {
+  type DraftFile,
+  hashContent,
+  type ProposalRow,
+  Proposals,
+} from "../state/proposals.ts";
+import {
+  type RejectedTopic,
+  type RejectionKind,
+  Rejections,
+} from "../state/rejections.ts";
 import { subtreeNuggets, type Tree } from "../state/tree.ts";
 import { isAllowed } from "./render.ts";
 import { syncTree } from "./sync.ts";
@@ -35,15 +44,29 @@ export async function conflicts(p: ProposalRow): Promise<Conflict[]> {
     const now = await current(p.targetRoot, f.path);
     const nowHash = now === null ? null : hashContent(now);
     if (nowHash !== f.baseHash) {
-      out.push({ path: f.path, reason: f.baseHash === null ? "now exists (it didn't when drafted)" : now === null ? "was deleted since the draft" : "changed since the draft" });
+      out.push({
+        path: f.path,
+        reason:
+          f.baseHash === null
+            ? "now exists (it didn't when drafted)"
+            : now === null
+              ? "was deleted since the draft"
+              : "changed since the draft",
+      });
     }
   }
   return out;
 }
 
 function checkPath(p: ProposalRow, f: DraftFile): void {
-  if (isAbsolute(f.path) || f.path.split(/[\\/]/).includes("..") || !isAllowed(f.path, p.writable)) {
-    throw new Error(`Proposal #${p.id}: refusing to write ${f.path} (outside ${p.writable.join(", ")})`);
+  if (
+    isAbsolute(f.path) ||
+    f.path.split(/[\\/]/).includes("..") ||
+    !isAllowed(f.path, p.writable)
+  ) {
+    throw new Error(
+      `Proposal #${p.id}: refusing to write ${f.path} (outside ${p.writable.join(", ")})`,
+    );
   }
 }
 
@@ -59,10 +82,18 @@ export interface AcceptResult {
  * Write the proposal's files into the target, mark it accepted, and sync the tree so
  * the skill is live right away (its evidence counts as absorbed).
  */
-export async function acceptProposal(tree: Tree, cfg: Config, id: number, opts: { force?: boolean } = {}): Promise<AcceptResult> {
+export async function acceptProposal(
+  tree: Tree,
+  cfg: Config,
+  id: number,
+  opts: { force?: boolean } = {},
+): Promise<AcceptResult> {
   const props = new Proposals(tree.db);
   const p = props.assertFree(id); // before writing anything
-  if (p.status !== "open") throw new Error(`Proposal #${id} is ${p.status}; only open proposals can be accepted`);
+  if (p.status !== "open")
+    throw new Error(
+      `Proposal #${id} is ${p.status}; only open proposals can be accepted`,
+    );
   for (const f of p.files) checkPath(p, f);
   const c = await conflicts(p);
   if (c.length && !opts.force) {
@@ -70,7 +101,12 @@ export async function acceptProposal(tree: Tree, cfg: Config, id: number, opts: 
       `Proposal #${id} is stale: ${c.map((x) => `${x.path} ${x.reason}`).join("; ")}. Redraft it with lbg proposal revise ${id}, or use --force to overwrite.`,
     );
   }
-  const res: AcceptResult = { written: [], deleted: [], paths: [], commitMessage: commitMessageFor(tree, p) };
+  const res: AcceptResult = {
+    written: [],
+    deleted: [],
+    paths: [],
+    commitMessage: commitMessageFor(tree, p),
+  };
   for (const f of p.files) {
     const abs = join(p.targetRoot, f.path);
     if (f.content === null) {
@@ -98,7 +134,12 @@ export async function acceptProposal(tree: Tree, cfg: Config, id: number, opts: 
   // as new (and can earn an update). If sync couldn't match the node to a file (e.g. a new
   // AGENTS.md section under its own heading), it's published either way.
   const node = tree.getNode(p.nodeId);
-  if (node) tree.updateNode(p.nodeId, { renderedAt: p.draftedAt, summaryDirty: false, ...(node.origin !== "file" ? { origin: "file" as const } : {}) });
+  if (node)
+    tree.updateNode(p.nodeId, {
+      renderedAt: p.draftedAt,
+      summaryDirty: false,
+      ...(node.origin !== "file" ? { origin: "file" as const } : {}),
+    });
   return res;
 }
 
@@ -108,7 +149,9 @@ export function newSinceDraft(tree: Tree, p: ProposalRow): NuggetRow[] {
   if (!skill) return [];
   const t = p.draftedAt.getTime();
   const used = new Set(p.nuggetIds);
-  return subtreeNuggets(skill).filter((n) => !used.has(n.id) && (n.attachedAt?.getTime() ?? 0) > t);
+  return subtreeNuggets(skill).filter(
+    (n) => !used.has(n.id) && (n.attachedAt?.getTime() ?? 0) > t,
+  );
 }
 
 export interface CommitTarget {
@@ -122,14 +165,24 @@ export interface CommitTarget {
  * What to commit for an already-accepted proposal (e.g. accepted without --commit): its
  * files as absolute paths, the suggested message, and which files changed since.
  */
-export async function commitTargetFor(tree: Tree, p: ProposalRow): Promise<CommitTarget> {
-  if (p.status !== "accepted") throw new Error(`Proposal #${p.id} is ${p.status}; only accepted proposals have files to commit`);
+export async function commitTargetFor(
+  tree: Tree,
+  p: ProposalRow,
+): Promise<CommitTarget> {
+  if (p.status !== "accepted")
+    throw new Error(
+      `Proposal #${p.id} is ${p.status}; only accepted proposals have files to commit`,
+    );
   const changedSince: string[] = [];
   for (const f of p.files) {
     const now = await current(p.targetRoot, f.path);
     if (now !== f.content) changedSince.push(f.path);
   }
-  return { paths: p.files.map((f) => join(p.targetRoot, f.path)), commitMessage: commitMessageFor(tree, p), changedSince };
+  return {
+    paths: p.files.map((f) => join(p.targetRoot, f.path)),
+    commitMessage: commitMessageFor(tree, p),
+    changedSince,
+  };
 }
 
 export interface RejectResult {
@@ -150,22 +203,38 @@ export function rejectProposal(
   tree: Tree,
   id: number,
   reason?: string,
-  opts: { kind?: RejectionKind; targetNodeId?: number; forget?: boolean; expireDays?: number } = {},
+  opts: {
+    kind?: RejectionKind;
+    targetNodeId?: number;
+    forget?: boolean;
+    expireDays?: number;
+  } = {},
 ): RejectResult {
   const props = new Proposals(tree.db);
   const p = props.mustGet(id);
   const text = reason?.trim() ?? "";
   const node = tree.getNode(p.nodeId);
-  const scope = node ? { scope: node.scope, ...(node.repo ? { repo: node.repo } : {}) } : { scope: p.scope, ...(p.repo ? { repo: p.repo } : {}) };
+  const scope = node
+    ? { scope: node.scope, ...(node.repo ? { repo: node.repo } : {}) }
+    : { scope: p.scope, ...(p.repo ? { repo: p.repo } : {}) };
   if (opts.targetNodeId !== undefined) {
-    if (opts.kind !== "wrong-place") throw new Error("--to only goes with --kind wrong-place");
+    if (opts.kind !== "wrong-place")
+      throw new Error("--to only goes with --kind wrong-place");
     const t = tree.getNode(opts.targetNodeId);
-    if (!t || t.depth !== 1) throw new Error(`--to ${opts.targetNodeId}: not a skill`);
-    if (t.id === p.nodeId) throw new Error("--to: that's the rejected skill itself");
-    if (t.scope !== scope.scope || (t.repo ?? undefined) !== (scope.repo ?? undefined)) throw new Error(`--to ${t.id}: a skill of another scope`);
+    if (!t || t.depth !== 1)
+      throw new Error(`--to ${opts.targetNodeId}: not a skill`);
+    if (t.id === p.nodeId)
+      throw new Error("--to: that's the rejected skill itself");
+    if (
+      t.scope !== scope.scope ||
+      (t.repo ?? undefined) !== (scope.repo ?? undefined)
+    )
+      throw new Error(`--to ${t.id}: a skill of another scope`);
   }
   const topic: RejectedTopic = {
-    ...(p.skillName ?? node?.name ? { name: p.skillName ?? node!.name! } : {}),
+    ...((p.skillName ?? node?.name)
+      ? { name: p.skillName ?? node!.name! }
+      : {}),
     title: node?.title ?? p.skillName ?? `skill #${p.nodeId}`,
     ...(node?.description ? { description: node.description } : {}),
     proposalKind: p.kind,
@@ -177,24 +246,61 @@ export function rejectProposal(
   };
   const done = (r: RejectResult): RejectResult => {
     // --forget: its evidence stops counting whatever the kind (given back if the memory is forgotten).
-    if (opts.forget) r.forgotten = tree.forgetNuggets(new Rejections(tree.db).proposalNuggets(id), `forgotten on reject (rejection #${r.memoryId})`, r.memoryId);
-    else r.forgotten = tree.db.nuggets().filter((n) => n.forgottenMemory === r.memoryId).length;
+    if (opts.forget)
+      r.forgotten = tree.forgetNuggets(
+        new Rejections(tree.db).proposalNuggets(id),
+        `forgotten on reject (rejection #${r.memoryId})`,
+        r.memoryId,
+      );
+    else
+      r.forgotten = tree.db
+        .nuggets()
+        .filter((n) => n.forgottenMemory === r.memoryId).length;
     return r;
   };
   return tree.db.tx(() => {
     props.markRejected(id, text || undefined);
     // The reason is review feedback: the next draft of this skill (or a nearby one) sees it.
-    const feedbackId = new Feedback(tree.db).add({ proposalId: id, kind: "reject", text });
-    const mem = new Rejections(tree.db, opts.expireDays !== undefined ? { expireDays: opts.expireDays } : {});
-    const base = { proposalId: id, feedbackId, nodeId: p.nodeId, ...scope, topic };
+    const feedbackId = new Feedback(tree.db).add({
+      proposalId: id,
+      kind: "reject",
+      text,
+    });
+    const mem = new Rejections(
+      tree.db,
+      opts.expireDays !== undefined ? { expireDays: opts.expireDays } : {},
+    );
+    const base = {
+      proposalId: id,
+      feedbackId,
+      nodeId: p.nodeId,
+      ...scope,
+      topic,
+    };
     if (opts.kind) {
-      const memoryId = mem.add({ ...base, kind: opts.kind, rule: text || `rejected as ${opts.kind}`, ...(opts.targetNodeId !== undefined ? { targetNodeId: opts.targetNodeId } : {}) });
+      const memoryId = mem.add({
+        ...base,
+        kind: opts.kind,
+        rule: text || `rejected as ${opts.kind}`,
+        ...(opts.targetNodeId !== undefined
+          ? { targetNodeId: opts.targetNodeId }
+          : {}),
+      });
       return done({ memoryId, status: "active" as const, kind: opts.kind });
     }
     if (!text) {
       // Nothing to classify: "not now". Unlocked, so I can still edit it.
-      const memoryId = mem.add({ ...base, kind: "later", rule: "rejected without a reason", locked: false });
-      return done({ memoryId, status: "active" as const, kind: "later" as const });
+      const memoryId = mem.add({
+        ...base,
+        kind: "later",
+        rule: "rejected without a reason",
+        locked: false,
+      });
+      return done({
+        memoryId,
+        status: "active" as const,
+        kind: "later" as const,
+      });
     }
     return done({ memoryId: mem.add(base), status: "pending" as const });
   });
@@ -206,20 +312,48 @@ export function editDiff(before: DraftFile[], after: DraftFile[]): string {
   const now = new Map(after.map((f) => [f.path, f.content]));
   const paths = [...new Set([...old.keys(), ...now.keys()])].sort();
   return paths
-    .map((p) => fileDiff(p, old.has(p) ? (old.get(p) ?? null) : (after.find((f) => f.path === p)?.baseContent ?? null), now.has(p) ? (now.get(p) ?? null) : (before.find((f) => f.path === p)?.baseContent ?? null)))
+    .map((p) =>
+      fileDiff(
+        p,
+        old.has(p)
+          ? (old.get(p) ?? null)
+          : (after.find((f) => f.path === p)?.baseContent ?? null),
+        now.has(p)
+          ? (now.get(p) ?? null)
+          : (before.find((f) => f.path === p)?.baseContent ?? null),
+      ),
+    )
     .filter(Boolean)
     .join("\n");
 }
 
 /** One file as a git-style diff (null = absent). Empty when there's no change. */
-function fileDiff(path: string, oldText: string | null, newText: string | null): string {
+function fileDiff(
+  path: string,
+  oldText: string | null,
+  newText: string | null,
+): string {
   if (oldText === null && newText === null) return "";
-  if ((oldText ?? "") === (newText ?? "") && (oldText === null) === (newText === null)) return "";
+  if (
+    (oldText ?? "") === (newText ?? "") &&
+    (oldText === null) === (newText === null)
+  )
+    return "";
   const header = [`diff --git a/${path} b/${path}`];
-  if (oldText === null) header.push("new file mode 100644", "--- /dev/null", `+++ b/${path}`);
-  else if (newText === null) header.push("deleted file mode 100644", `--- a/${path}`, "+++ /dev/null");
+  if (oldText === null)
+    header.push("new file mode 100644", "--- /dev/null", `+++ b/${path}`);
+  else if (newText === null)
+    header.push("deleted file mode 100644", `--- a/${path}`, "+++ /dev/null");
   else header.push(`--- a/${path}`, `+++ b/${path}`);
-  const body = createTwoFilesPatch("a", "b", oldText ?? "", newText ?? "", "", "", { context: 3 });
+  const body = createTwoFilesPatch(
+    "a",
+    "b",
+    oldText ?? "",
+    newText ?? "",
+    "",
+    "",
+    { context: 3 },
+  );
   const at = body.indexOf("\n@@");
   return at < 0 ? "" : `${header.join("\n")}\n${body.slice(at + 1)}`;
 }
@@ -240,7 +374,9 @@ export interface FileView {
  * look like the draft reverts newer edits; `revise` rebases it onto the current file. Drafts
  * stored before lbg kept originals fall back to the current file.
  */
-export async function proposalView(p: ProposalRow): Promise<{ diff: string; files: FileView[] }> {
+export async function proposalView(
+  p: ProposalRow,
+): Promise<{ diff: string; files: FileView[] }> {
   const parts: string[] = [];
   const files: FileView[] = [];
   for (const f of p.files) {
@@ -249,7 +385,12 @@ export async function proposalView(p: ProposalRow): Promise<{ diff: string; file
     const haveBase = f.baseContent !== undefined;
     const from = stale && haveBase ? f.baseContent! : now;
     parts.push(fileDiff(f.path, from, f.content));
-    files.push({ path: f.path, stale, against: stale && haveBase ? "draft-base" : "current", onDisk: stale && haveBase ? fileDiff(f.path, f.baseContent!, now) : "" });
+    files.push({
+      path: f.path,
+      stale,
+      against: stale && haveBase ? "draft-base" : "current",
+      onDisk: stale && haveBase ? fileDiff(f.path, f.baseContent!, now) : "",
+    });
   }
   return { diff: parts.join(""), files };
 }
@@ -260,7 +401,12 @@ export async function proposalDiff(p: ProposalRow): Promise<string> {
 
 /** A commit message you can use; lbg itself never commits. */
 export function commitMessageFor(tree: Tree, p: ProposalRow): string {
-  const verb = p.kind === "new" ? "add" : p.kind === "update" ? "update" : "fix description of";
+  const verb =
+    p.kind === "new"
+      ? "add"
+      : p.kind === "update"
+        ? "update"
+        : "fix description of";
   const nuggets = tree.db.nuggets().filter((n) => p.nuggetIds.includes(n.id));
   const agents = [...new Set(nuggets.map((n) => n.agent))].sort();
   return [

@@ -1,5 +1,11 @@
 import { isAbsolute } from "node:path";
-import { GuardError, resolveGuard, type FileGuard, type GuardedToolName, type ResolvedGuard } from "./guard.ts";
+import {
+  type FileGuard,
+  GuardError,
+  type GuardedToolName,
+  type ResolvedGuard,
+  resolveGuard,
+} from "./guard.ts";
 
 /**
  * The FileGuard for Claude Code's built-in file tools. Claude Code runs the tools itself;
@@ -13,12 +19,20 @@ import { GuardError, resolveGuard, type FileGuard, type GuardedToolName, type Re
  */
 
 /** pi tool names (what pipeline stages ask for) → Claude Code built-ins. */
-const CLAUDE_TOOLS: Record<GuardedToolName, string> = { read: "Read", ls: "Glob", find: "Glob", grep: "Grep", write: "Write", edit: "Edit" };
+const CLAUDE_TOOLS: Record<GuardedToolName, string> = {
+  read: "Read",
+  ls: "Glob",
+  find: "Glob",
+  grep: "Grep",
+  write: "Write",
+  edit: "Edit",
+};
 
 /** Claude Code built-ins for the requested pi tools. */
 export function claudeToolsFor(tools: readonly string[]): string[] {
   const bad = tools.filter((t) => !(t in CLAUDE_TOOLS));
-  if (bad.length) throw new Error(`Tools not allowed with a file guard: ${bad.join(", ")}`);
+  if (bad.length)
+    throw new Error(`Tools not allowed with a file guard: ${bad.join(", ")}`);
   return [...new Set(tools.map((t) => CLAUDE_TOOLS[t as GuardedToolName]))];
 }
 
@@ -37,7 +51,9 @@ function relativeGlob(field: string, v: unknown): void {
   if (v === undefined) return;
   if (typeof v !== "string") throw new GuardError(`${field} must be a string`);
   if (isAbsolute(v) || v.startsWith("~") || v.split(/[\\/]/).includes("..")) {
-    throw new GuardError(`${field} ${v}: use a pattern relative to the worktree (no absolute paths, ~ or ..)`);
+    throw new GuardError(
+      `${field} ${v}: use a pattern relative to the worktree (no absolute paths, ~ or ..)`,
+    );
   }
 }
 
@@ -47,16 +63,27 @@ function str(input: Record<string, unknown>, key: string): string {
   return v;
 }
 
-export async function claudeGuard(fileGuard: FileGuard, allowed: readonly string[]): Promise<ClaudeGuard> {
+export async function claudeGuard(
+  fileGuard: FileGuard,
+  allowed: readonly string[],
+): Promise<ClaudeGuard> {
   const g: ResolvedGuard = await resolveGuard(fileGuard);
   const tools = new Set(allowed);
-  const searchPath = (input: Record<string, unknown>) => (typeof input.path === "string" && input.path ? input.path : ".");
+  const searchPath = (input: Record<string, unknown>) =>
+    typeof input.path === "string" && input.path ? input.path : ".";
   return {
     root: g.root,
     async decide(toolName, raw) {
       if (toolName === STRUCTURED_OUTPUT_TOOL) return { allow: true };
-      if (!tools.has(toolName)) return { allow: false, reason: `${toolName} is not available in this session.` };
-      const input = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+      if (!tools.has(toolName))
+        return {
+          allow: false,
+          reason: `${toolName} is not available in this session.`,
+        };
+      const input = (raw && typeof raw === "object" ? raw : {}) as Record<
+        string,
+        unknown
+      >;
       try {
         switch (toolName) {
           case "Read":
@@ -75,11 +102,15 @@ export async function claudeGuard(fileGuard: FileGuard, allowed: readonly string
             await g.check(searchPath(input), "read");
             break;
           default:
-            return { allow: false, reason: `${toolName} is not available in this session.` };
+            return {
+              allow: false,
+              reason: `${toolName} is not available in this session.`,
+            };
         }
         return { allow: true };
       } catch (err) {
-        if (err instanceof GuardError) return { allow: false, reason: err.message };
+        if (err instanceof GuardError)
+          return { allow: false, reason: err.message };
         throw err;
       }
     },

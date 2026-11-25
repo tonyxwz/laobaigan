@@ -1,8 +1,13 @@
-import { Type, type Static } from "typebox";
+import { type Static, Type } from "typebox";
 import { agentModel, type Config } from "../config.ts";
 import type { PiRunner, Usage } from "../pi/run-pi.ts";
 import { addUsage, ZERO_USAGE } from "../pi/run-pi.ts";
-import { REJECTION_KINDS, Rejections, type MemoryRow, type RejectionKind } from "../state/rejections.ts";
+import {
+  type MemoryRow,
+  REJECTION_KINDS,
+  type RejectionKind,
+  Rejections,
+} from "../state/rejections.ts";
 import type { Tree } from "../state/tree.ts";
 import { truncate } from "../util/text.ts";
 
@@ -14,8 +19,16 @@ import { truncate } from "../util/text.ts";
 
 export const ClassifySchema = Type.Object({
   kind: Type.Union(REJECTION_KINDS.map((k) => Type.Literal(k))),
-  rule: Type.String({ description: "One line, imperative: what lbg should do differently next time." }),
-  targetSkillId: Type.Optional(Type.Integer({ description: "wrong-place only: the id of the listed skill this knowledge belongs in." })),
+  rule: Type.String({
+    description:
+      "One line, imperative: what lbg should do differently next time.",
+  }),
+  targetSkillId: Type.Optional(
+    Type.Integer({
+      description:
+        "wrong-place only: the id of the listed skill this knowledge belongs in.",
+    }),
+  ),
 });
 export type Classification = Static<typeof ClassifySchema>;
 
@@ -30,7 +43,10 @@ Kinds:
 The rule is one line, written as an instruction to the generator, specific to this topic, e.g. "Don't propose a skill about tmux key bindings; they're personal and trivial." or "File vault login steps under cloud-credentials, not under dotfiles."
 Report ONLY by calling classify_rejection once.`;
 
-export function buildClassifyPrompt(m: MemoryRow, skills: { id: number; name?: string; title: string; description?: string }[]): string {
+export function buildClassifyPrompt(
+  m: MemoryRow,
+  skills: { id: number; name?: string; title: string; description?: string }[],
+): string {
   const t = m.topic;
   const lines = [
     `Rejected proposal: ${t.proposalKind === "new" ? "a new skill" : t.proposalKind === "update" ? "an update to an existing skill" : "a description fix"}`,
@@ -41,10 +57,17 @@ export function buildClassifyPrompt(m: MemoryRow, skills: { id: number; name?: s
     m.reason || "(none)",
     "",
     "Evidence it was built from:",
-    ...(t.evidence.length ? t.evidence.map((e) => `- ${e.title}`) : ["- (none recorded)"]),
+    ...(t.evidence.length
+      ? t.evidence.map((e) => `- ${e.title}`)
+      : ["- (none recorded)"]),
     "",
     "Other skills in this scope (for wrong-place):",
-    ...(skills.length ? skills.map((s) => `- id ${s.id}: ${s.name ?? s.title}${s.description ? ` — ${truncate(s.description, 160)}` : ""}`) : ["- (none)"]),
+    ...(skills.length
+      ? skills.map(
+          (s) =>
+            `- id ${s.id}: ${s.name ?? s.title}${s.description ? ` — ${truncate(s.description, 160)}` : ""}`,
+        )
+      : ["- (none)"]),
     "",
     "Call classify_rejection now.",
   ];
@@ -52,7 +75,13 @@ export function buildClassifyPrompt(m: MemoryRow, skills: { id: number; name?: s
 }
 
 export interface ClassifyResult {
-  classified: { id: number; kind: RejectionKind; rule: string; targetNodeId?: number; target?: string }[];
+  classified: {
+    id: number;
+    kind: RejectionKind;
+    rule: string;
+    targetNodeId?: number;
+    target?: string;
+  }[];
   failed: { id: number; error: string }[];
   /** Pending memories left for a later run (budget or repeated errors). */
   deferred: number;
@@ -68,36 +97,77 @@ export async function classifyRejections(
 ): Promise<ClassifyResult> {
   const log = opts.log ?? (() => {});
   const max = opts.maxCalls ?? cfg.rejections.maxCallsPerRun;
-  const mem = new Rejections(tree.db, { expireDays: cfg.rejections.expireDays });
-  const res: ClassifyResult = { classified: [], failed: [], deferred: 0, calls: 0, usage: ZERO_USAGE };
+  const mem = new Rejections(tree.db, {
+    expireDays: cfg.rejections.expireDays,
+  });
+  const res: ClassifyResult = {
+    classified: [],
+    failed: [],
+    deferred: 0,
+    calls: 0,
+    usage: ZERO_USAGE,
+  };
   const pending = mem.pending().filter((m) => !m.locked);
   let consecutive = 0;
   for (const [i, m] of pending.entries()) {
     if (res.calls >= max || consecutive >= 2) {
       res.deferred = pending.length - i;
-      log(`rejections: ${res.deferred} left for the next run (${consecutive >= 2 ? "model errors" : "budget"})`);
+      log(
+        `rejections: ${res.deferred} left for the next run (${consecutive >= 2 ? "model errors" : "budget"})`,
+      );
       break;
     }
-    const root = tree.trees({ scope: m.scope, ...(m.repo ? { repo: m.repo } : {}) })[0];
+    const root = tree.trees({
+      scope: m.scope,
+      ...(m.repo ? { repo: m.repo } : {}),
+    })[0];
     const skills = (root?.children ?? [])
       .filter((s) => s.id !== m.nodeId)
-      .map((s) => ({ id: s.id, ...(s.name ? { name: s.name } : {}), title: s.title, ...(s.description ? { description: s.description } : {}) }));
+      .map((s) => ({
+        id: s.id,
+        ...(s.name ? { name: s.name } : {}),
+        title: s.title,
+        ...(s.description ? { description: s.description } : {}),
+      }));
     try {
       res.calls++;
       const r = await runner.run({
         ...agentModel(cfg),
         systemPrompt: CLASSIFY_SYSTEM_PROMPT,
         prompt: buildClassifyPrompt(m, skills),
-        resultTool: { name: "classify_rejection", description: "Classify this rejection.", parameters: ClassifySchema },
+        resultTool: {
+          name: "classify_rejection",
+          description: "Classify this rejection.",
+          parameters: ClassifySchema,
+        },
       });
       res.usage = addUsage(res.usage, r.usage);
       consecutive = 0;
       const c = r.value;
-      const target = c.kind === "wrong-place" && c.targetSkillId !== undefined ? skills.find((s) => s.id === c.targetSkillId) : undefined;
-      if (c.kind === "wrong-place" && c.targetSkillId !== undefined && !target) log(`rejections: #${m.id}: skill ${c.targetSkillId} isn't in this scope; no target`);
-      if (mem.classify(m.id, { kind: c.kind, rule: c.rule, ...(target ? { targetNodeId: target.id } : {}) })) {
+      const target =
+        c.kind === "wrong-place" && c.targetSkillId !== undefined
+          ? skills.find((s) => s.id === c.targetSkillId)
+          : undefined;
+      if (c.kind === "wrong-place" && c.targetSkillId !== undefined && !target)
+        log(
+          `rejections: #${m.id}: skill ${c.targetSkillId} isn't in this scope; no target`,
+        );
+      if (
+        mem.classify(m.id, {
+          kind: c.kind,
+          rule: c.rule,
+          ...(target ? { targetNodeId: target.id } : {}),
+        })
+      ) {
         const row = mem.mustGet(m.id);
-        res.classified.push({ id: m.id, kind: c.kind, rule: row.rule ?? c.rule, ...(target ? { targetNodeId: target.id, target: target.name ?? target.title } : {}) });
+        res.classified.push({
+          id: m.id,
+          kind: c.kind,
+          rule: row.rule ?? c.rule,
+          ...(target
+            ? { targetNodeId: target.id, target: target.name ?? target.title }
+            : {}),
+        });
         log(`rejections: #${m.id} → ${c.kind}: ${row.rule}`);
       }
     } catch (e) {

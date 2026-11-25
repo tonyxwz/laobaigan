@@ -55,6 +55,7 @@ LBG_STATE_DIR=$T lbg ...
 ```
 
 Environment overrides:
+
 - `LBG_CONFIG`: the config file
 - `LBG_STATE_DIR`: the state dir
 - `LBG_SKILLS_DIR`: the skills dir
@@ -63,6 +64,7 @@ Environment overrides:
 ## Tests
 
 `npm test` runs vitest. Tests never call a real model:
+
 - Pipeline stages take a `PiRunner`; tests pass scripted runners.
 - End-to-end drafting tests run real pi sessions on pi's faux provider (`test/helpers/faux.ts`).
 - File system effects use temp dirs; the editor and the interactive pi chat use injectable launchers.

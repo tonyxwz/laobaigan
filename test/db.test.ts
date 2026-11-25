@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
-import { MIGRATIONS, StateDb, type NuggetInsert } from "../src/state/db.ts";
+import { MIGRATIONS, type NuggetInsert, StateDb } from "../src/state/db.ts";
 import { Tree } from "../src/state/tree.ts";
 
 const nugget = (over: Partial<NuggetInsert> = {}): NuggetInsert => ({
@@ -17,13 +17,25 @@ const nugget = (over: Partial<NuggetInsert> = {}): NuggetInsert => ({
   triggers: ["debugging"],
   scope: "global",
   confidence: 0.9,
-  evidence: [{ label: "U1", quote: "logs are in", ts: "2026-01-01T00:00:00.000Z" }],
+  evidence: [
+    { label: "U1", quote: "logs are in", ts: "2026-01-01T00:00:00.000Z" },
+  ],
   ...over,
 });
 
-const version = (db: StateDb) => Number((db.db.prepare("PRAGMA user_version").get() as { user_version: number }).user_version);
+const version = (db: StateDb) =>
+  Number(
+    (db.db.prepare("PRAGMA user_version").get() as { user_version: number })
+      .user_version,
+  );
 const tables = (db: StateDb) =>
-  (db.db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all() as { name: string }[]).map((r) => r.name);
+  (
+    db.db
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name",
+      )
+      .all() as { name: string }[]
+  ).map((r) => r.name);
 
 describe("StateDb", () => {
   it("upgrades a v1 database in place, keeping nuggets", async () => {
@@ -61,9 +73,18 @@ describe("StateDb", () => {
     expect(tables(db)).not.toContain("topic");
     expect(tables(db)).not.toContain("cluster");
     const skill = new Tree(db).getNode(4)!;
-    expect(skill).toMatchObject({ title: "Pi config", depth: 1, status: "candidate", summary: "sum" });
+    expect(skill).toMatchObject({
+      title: "Pi config",
+      depth: 1,
+      status: "candidate",
+      summary: "sum",
+    });
     expect(db.nuggets()[0]!.nodeId).toBe(4);
-    expect(db.counts()).toMatchObject({ skills: 1, candidates: 1, unplaced: 0 });
+    expect(db.counts()).toMatchObject({
+      skills: 1,
+      candidates: 1,
+      unplaced: 0,
+    });
   });
 
   it("round-trips nuggets and takes consistent snapshots", async () => {
@@ -73,7 +94,9 @@ describe("StateDb", () => {
     expect(db.getNugget(id)).toMatchObject({
       title: "Logs live in /var/output",
       triggers: ["debugging"],
-      evidence: [{ label: "U1", quote: "logs are in", ts: "2026-01-01T00:00:00.000Z" }],
+      evidence: [
+        { label: "U1", quote: "logs are in", ts: "2026-01-01T00:00:00.000Z" },
+      ],
       assignmentLocked: false,
     });
     expect(db.getNugget(id)!.nodeId).toBeUndefined();

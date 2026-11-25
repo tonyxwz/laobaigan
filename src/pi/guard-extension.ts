@@ -9,16 +9,19 @@
  *  - The model is whatever pi is configured to use.
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { guardedToolDefinitions, type FileGuard } from "./guard.ts";
-
+import { type FileGuard, guardedToolDefinitions } from "./guard.ts";
 
 export default async function lbgGuard(pi: ExtensionAPI): Promise<void> {
   const raw = process.env.LBG_GUARD;
   if (!raw) throw new Error("lbg guard extension: LBG_GUARD is not set");
   const guard = JSON.parse(raw) as FileGuard;
-  for (const def of await guardedToolDefinitions(guard)) pi.registerTool(def as never);
+  for (const def of await guardedToolDefinitions(guard))
+    pi.registerTool(def as never);
 
   pi.on("session_start", async (_event, ctx) => {
-    ctx.ui.notify(`lbg: you can write only ${guard.writable.join(", ")}. Exit pi (Ctrl+D) when done; lbg checks and stores the draft.`, "info");
+    ctx.ui.notify(
+      `lbg: you can write only ${guard.writable.join(", ")}. Exit pi (Ctrl+D) when done; lbg checks and stores the draft.`,
+      "info",
+    );
   });
 }

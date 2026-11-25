@@ -39,7 +39,8 @@ function stem(w: string): string {
   if (w.length > 4 && w.endsWith("ed")) return w.slice(0, -2); // linked → link
   if (w.length > 4 && w.endsWith("ies")) return `${w.slice(0, -3)}y`; // directories → directory
   if (w.length > 4 && /(ss|x|z|ch|sh)es$/.test(w)) return w.slice(0, -2); // boxes → box
-  if (w.length >= 3 && w.endsWith("s") && !w.endsWith("ss")) return w.slice(0, -1); // images → image, prs → pr
+  if (w.length >= 3 && w.endsWith("s") && !w.endsWith("ss"))
+    return w.slice(0, -1); // images → image, prs → pr
   return w;
 }
 
@@ -62,20 +63,40 @@ export interface ScopeCheck {
  * Compare the skill's description before and after the draft. Only applies to an `update` of a
  * live skill folder; returns undefined when the check doesn't apply.
  */
-export function checkScope(files: DraftFile[], base: Map<string, string>, target: RenderTarget, kind: ProposalKind, live: boolean): ScopeCheck | undefined {
+export function checkScope(
+  files: DraftFile[],
+  base: Map<string, string>,
+  target: RenderTarget,
+  kind: ProposalKind,
+  live: boolean,
+): ScopeCheck | undefined {
   if (kind !== "update" || !live || !target.skillDir) return undefined;
   const path = `${target.skillDir}/SKILL.md`;
   const before = base.get(path);
   const after = files.find((f) => f.path === path)?.content;
-  if (before === undefined || after === undefined || after === null) return undefined;
+  if (before === undefined || after === undefined || after === null)
+    return undefined;
   const oldDesc = parseFrontmatter(before).description ?? "";
   const newDesc = parseFrontmatter(after).description ?? "";
-  if (newDesc === oldDesc) return { added: [], widened: false, oldDescription: oldDesc, newDescription: newDesc };
+  if (newDesc === oldDesc)
+    return {
+      added: [],
+      widened: false,
+      oldDescription: oldDesc,
+      newDescription: newDesc,
+    };
   // Everything the skill said before: the old SKILL.md (incl. its description) and its references.
   const known = new Set<string>();
-  for (const [p, text] of base) if (p.startsWith(`${target.skillDir}/`)) for (const t of terms(text)) known.add(t);
+  for (const [p, text] of base)
+    if (p.startsWith(`${target.skillDir}/`))
+      for (const t of terms(text)) known.add(t);
   const added = [...terms(newDesc)].filter((t) => !known.has(t)).sort();
-  return { added, widened: added.length > MAX_NEW_TERMS, oldDescription: oldDesc, newDescription: newDesc };
+  return {
+    added,
+    widened: added.length > MAX_NEW_TERMS,
+    oldDescription: oldDesc,
+    newDescription: newDesc,
+  };
 }
 
 /** One readable line for a scope violation. */

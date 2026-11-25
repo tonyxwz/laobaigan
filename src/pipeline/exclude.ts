@@ -1,6 +1,6 @@
 import type { Config } from "../config.ts";
 import type { PiRunner, Usage } from "../pi/run-pi.ts";
-import { Proposals, type Exclusion } from "../state/proposals.ts";
+import { type Exclusion, Proposals } from "../state/proposals.ts";
 import { subtreeNuggets, type Tree, type TreeNode } from "../state/tree.ts";
 import { insertNuggets } from "./insert.ts";
 
@@ -50,26 +50,60 @@ export async function applyExclusions(
 
   tree.db.tx(() => {
     const at = Date.now();
-    new Proposals(tree.db).addExcluded(proposalId, valid.map((e) => ({ nuggetId: e.nuggetId, reason: e.reason.trim(), by, at })));
+    new Proposals(tree.db).addExcluded(
+      proposalId,
+      valid.map((e) => ({
+        nuggetId: e.nuggetId,
+        reason: e.reason.trim(),
+        by,
+        at,
+      })),
+    );
     for (const e of valid) tree.excludeNugget(e.nuggetId, skill.id);
     tree.pruneEmpty();
   });
 
   let usage: Usage | undefined;
-  if (opts.refile === false) return { items: valid.map((e) => ({ nuggetId: e.nuggetId, title: inSkill.get(e.nuggetId)!.title, reason: e.reason.trim() })) };
+  if (opts.refile === false)
+    return {
+      items: valid.map((e) => ({
+        nuggetId: e.nuggetId,
+        title: inSkill.get(e.nuggetId)!.title,
+        reason: e.reason.trim(),
+      })),
+    };
   try {
     const nuggets = valid.map((e) => tree.db.getNugget(e.nuggetId)!);
     const r = await insertNuggets(tree, runner, cfg, { nuggets, log });
     usage = r.usage;
   } catch (e) {
     // They stay unplaced (still marked "not this skill"); the next run's insert files them.
-    log(`  re-filing off-topic evidence failed: ${e instanceof Error ? e.message : String(e)}; the next run retries`);
+    log(
+      `  re-filing off-topic evidence failed: ${e instanceof Error ? e.message : String(e)}; the next run retries`,
+    );
   }
   const items = valid.map((e): Rehomed => {
     const n = tree.db.getNugget(e.nuggetId)!;
-    const path = n.nodeId !== undefined ? tree.path(n.nodeId).slice(1).map((x) => x.name ?? x.title).join(" › ") : undefined;
-    return { nuggetId: n.id, title: n.title, reason: e.reason.trim(), ...(n.nodeId !== undefined ? { now: { nodeId: n.nodeId, path: path! } } : {}) };
+    const path =
+      n.nodeId !== undefined
+        ? tree
+            .path(n.nodeId)
+            .slice(1)
+            .map((x) => x.name ?? x.title)
+            .join(" › ")
+        : undefined;
+    return {
+      nuggetId: n.id,
+      title: n.title,
+      reason: e.reason.trim(),
+      ...(n.nodeId !== undefined
+        ? { now: { nodeId: n.nodeId, path: path! } }
+        : {}),
+    };
   });
-  for (const i of items) log(`  off-topic #${i.nuggetId} ${i.title} → ${i.now ? i.now.path : "unplaced (next run files it)"}`);
+  for (const i of items)
+    log(
+      `  off-topic #${i.nuggetId} ${i.title} → ${i.now ? i.now.path : "unplaced (next run files it)"}`,
+    );
   return { items, ...(usage ? { usage } : {}) };
 }

@@ -6,4 +6,6 @@
 import { existsSync } from "node:fs";
 
 const src = new URL("../src/cli.ts", import.meta.url);
-await import(existsSync(src) ? src.href : new URL("../dist/cli.js", import.meta.url).href);
+await import(
+  existsSync(src) ? src.href : new URL("../dist/cli.js", import.meta.url).href
+);

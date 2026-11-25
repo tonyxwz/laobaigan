@@ -12,7 +12,12 @@ import { Tree } from "./tree.ts";
  *   wrong-place  right knowledge, wrong skill: it belongs in `target`
  *   later        not now; only the status matters
  */
-export const REJECTION_KINDS = ["outdated", "not-useful", "wrong-place", "later"] as const;
+export const REJECTION_KINDS = [
+  "outdated",
+  "not-useful",
+  "wrong-place",
+  "later",
+] as const;
 export type RejectionKind = (typeof REJECTION_KINDS)[number];
 export const MEMORY_STATUSES = ["pending", "active", "removed"] as const;
 export type MemoryStatus = (typeof MEMORY_STATUSES)[number];
@@ -27,7 +32,10 @@ export interface RejectedTopic {
   evidence: { id: number; title: string }[];
 }
 
-export function isExpired(m: Pick<MemoryRow, "expiresAt">, now = Date.now()): boolean {
+export function isExpired(
+  m: Pick<MemoryRow, "expiresAt">,
+  now = Date.now(),
+): boolean {
   return !!m.expiresAt && m.expiresAt.getTime() <= now;
 }
 
@@ -70,20 +78,29 @@ function toRow(r: Row): MemoryRow {
     ...(r.kind ? { kind: r.kind as RejectionKind } : {}),
     ...(r.rule ? { rule: String(r.rule) } : {}),
     topic: JSON.parse(String(r.topic)) as RejectedTopic,
-    ...(r.target_node_id != null ? { targetNodeId: Number(r.target_node_id) } : {}),
+    ...(r.target_node_id != null
+      ? { targetNodeId: Number(r.target_node_id) }
+      : {}),
     status: r.status as MemoryStatus,
     locked: Number(r.locked) === 1,
     ...(r.error ? { error: String(r.error) } : {}),
-    ...(r.expires_at != null ? { expiresAt: new Date(Number(r.expires_at)) } : {}),
+    ...(r.expires_at != null
+      ? { expiresAt: new Date(Number(r.expires_at)) }
+      : {}),
     caught: Number(r.caught ?? 0),
     extractUses: Number(r.extract_uses ?? 0),
     createdAt: new Date(Number(r.created_at)),
-    ...(r.classified_at != null ? { classifiedAt: new Date(Number(r.classified_at)) } : {}),
+    ...(r.classified_at != null
+      ? { classifiedAt: new Date(Number(r.classified_at)) }
+      : {}),
   };
 }
 
 export function assertKind(k: string): RejectionKind {
-  if (!REJECTION_KINDS.includes(k as RejectionKind)) throw new Error(`Bad rejection kind "${k}" (expected ${REJECTION_KINDS.join(", ")})`);
+  if (!REJECTION_KINDS.includes(k as RejectionKind))
+    throw new Error(
+      `Bad rejection kind "${k}" (expected ${REJECTION_KINDS.join(", ")})`,
+    );
   return k as RejectionKind;
 }
 
@@ -105,16 +122,29 @@ export class Rejections {
   }
 
   /** Expiry for a memory that is (now) of `kind`: only not-useful expires. */
-  private expiryFor(kind: RejectionKind | undefined, from = Date.now()): number | null {
-    return kind === "not-useful" && this.expireDays > 0 ? from + this.expireDays * 86400e3 : null;
+  private expiryFor(
+    kind: RejectionKind | undefined,
+    from = Date.now(),
+  ): number | null {
+    return kind === "not-useful" && this.expireDays > 0
+      ? from + this.expireDays * 86400e3
+      : null;
   }
 
   /** Renew a not-useful memory for another `expireDays` (it expired, or will soon). */
   keep(id: number): MemoryRow {
     const m = this.mustGet(id);
-    if (m.status !== "active") throw new Error(`Rejection memory ${id} is ${m.status}; only active memories can be kept`);
-    if (m.kind !== "not-useful") throw new Error(`Rejection memory ${id} is ${m.kind}; only not-useful memories expire`);
-    this.sql.prepare("UPDATE rejection_memory SET expires_at = ? WHERE id = ?").run(this.expiryFor(m.kind), id);
+    if (m.status !== "active")
+      throw new Error(
+        `Rejection memory ${id} is ${m.status}; only active memories can be kept`,
+      );
+    if (m.kind !== "not-useful")
+      throw new Error(
+        `Rejection memory ${id} is ${m.kind}; only not-useful memories expire`,
+      );
+    this.sql
+      .prepare("UPDATE rejection_memory SET expires_at = ? WHERE id = ?")
+      .run(this.expiryFor(m.kind), id);
     return this.mustGet(id);
   }
   private get sql() {
@@ -129,7 +159,11 @@ export class Rejections {
     const m = this.mustGet(id);
     const tree = new Tree(this.db);
     if (m.status === "active" && m.kind === "outdated") {
-      tree.forgetNuggets(this.proposalNuggets(m.proposalId), `outdated (rejection #${m.id})`, m.id);
+      tree.forgetNuggets(
+        this.proposalNuggets(m.proposalId),
+        `outdated (rejection #${m.id})`,
+        m.id,
+      );
     } else {
       tree.unforgetNuggets({ memoryId: m.id });
     }
@@ -137,15 +171,21 @@ export class Rejections {
 
   /** Evidence ids of a proposal that still exist. */
   proposalNuggets(proposalId: number): number[] {
-    const r = this.sql.prepare("SELECT nugget_ids FROM proposal WHERE id = ?").get(proposalId) as Row | undefined;
+    const r = this.sql
+      .prepare("SELECT nugget_ids FROM proposal WHERE id = ?")
+      .get(proposalId) as Row | undefined;
     const ids = r ? (JSON.parse(String(r.nugget_ids)) as number[]) : [];
-    return ids.filter((n) => this.sql.prepare("SELECT 1 FROM nugget WHERE id = ?").get(n));
+    return ids.filter((n) =>
+      this.sql.prepare("SELECT 1 FROM nugget WHERE id = ?").get(n),
+    );
   }
 
   private select(where: string, ...args: (string | number)[]): MemoryRow[] {
     return (
       this.sql
-        .prepare(`SELECT m.*, f.text AS reason FROM rejection_memory m LEFT JOIN feedback f ON f.id = m.feedback_id WHERE ${where} ORDER BY m.id`)
+        .prepare(
+          `SELECT m.*, f.text AS reason FROM rejection_memory m LEFT JOIN feedback f ON f.id = m.feedback_id WHERE ${where} ORDER BY m.id`,
+        )
         .all(...args) as Row[]
     ).map(toRow);
   }
@@ -161,29 +201,46 @@ export class Rejections {
   }
 
   list(status?: MemoryStatus[]): MemoryRow[] {
-    return status?.length ? this.select(`m.status IN (${status.map(() => "?").join(",")})`, ...status) : this.select("1");
+    return status?.length
+      ? this.select(
+          `m.status IN (${status.map(() => "?").join(",")})`,
+          ...status,
+        )
+      : this.select("1");
   }
 
   /** Memories in effect: active and not expired. */
   inEffect(): MemoryRow[] {
-    return this.list(["active"]).filter((m) => !m.expiresAt || m.expiresAt.getTime() > Date.now());
+    return this.list(["active"]).filter(
+      (m) => !m.expiresAt || m.expiresAt.getTime() > Date.now(),
+    );
   }
 
   /** The newest memory in effect for each node. */
   byNode(): Map<number, MemoryRow> {
     const out = new Map<number, MemoryRow>();
-    for (const m of this.inEffect()) if (m.nodeId !== undefined) out.set(m.nodeId, m); // ordered by id: newest wins
+    for (const m of this.inEffect())
+      if (m.nodeId !== undefined) out.set(m.nodeId, m); // ordered by id: newest wins
     return out;
   }
 
   /** Insert routed `n` nuggets to this memory's skill. */
   addCaught(id: number, n: number): void {
-    if (n > 0) this.sql.prepare("UPDATE rejection_memory SET caught = caught + ? WHERE id = ?").run(n, id);
+    if (n > 0)
+      this.sql
+        .prepare("UPDATE rejection_memory SET caught = caught + ? WHERE id = ?")
+        .run(n, id);
   }
 
   /** These memories were part of `calls` extraction calls. */
   addExtractUses(ids: number[], calls: number): void {
-    if (calls > 0) for (const id of ids) this.sql.prepare("UPDATE rejection_memory SET extract_uses = extract_uses + ? WHERE id = ?").run(calls, id);
+    if (calls > 0)
+      for (const id of ids)
+        this.sql
+          .prepare(
+            "UPDATE rejection_memory SET extract_uses = extract_uses + ? WHERE id = ?",
+          )
+          .run(calls, id);
   }
 
   /** Pending memories, oldest first (what the next run classifies). */
@@ -243,13 +300,23 @@ export class Rejections {
   }
 
   /** The classifier's answer. Skips memories I've locked meanwhile. */
-  classify(id: number, c: { kind: RejectionKind; rule: string; targetNodeId?: number }): boolean {
+  classify(
+    id: number,
+    c: { kind: RejectionKind; rule: string; targetNodeId?: number },
+  ): boolean {
     const r = this.sql
       .prepare(
         `UPDATE rejection_memory SET kind = ?, rule = ?, target_node_id = ?, status = 'active', error = NULL, classified_at = ?, expires_at = ?
          WHERE id = ? AND status = 'pending' AND locked = 0`,
       )
-      .run(c.kind, cleanRule(c.rule), c.targetNodeId ?? null, Date.now(), this.expiryFor(c.kind), id);
+      .run(
+        c.kind,
+        cleanRule(c.rule),
+        c.targetNodeId ?? null,
+        Date.now(),
+        this.expiryFor(c.kind),
+        id,
+      );
     if (Number(r.changes) !== 1) return false;
     this.syncEvidence(id);
     return true;
@@ -257,24 +324,52 @@ export class Rejections {
 
   /** Classification failed: stays pending for the next run. */
   failed(id: number, error: string): void {
-    this.sql.prepare("UPDATE rejection_memory SET error = ? WHERE id = ?").run(cleanRule(error), id);
+    this.sql
+      .prepare("UPDATE rejection_memory SET error = ? WHERE id = ?")
+      .run(cleanRule(error), id);
   }
 
   /** My correction. Locks it (never reclassified) and makes it active. */
-  edit(id: number, patch: { kind?: RejectionKind; rule?: string; targetNodeId?: number | null }): MemoryRow {
+  edit(
+    id: number,
+    patch: {
+      kind?: RejectionKind;
+      rule?: string;
+      targetNodeId?: number | null;
+    },
+  ): MemoryRow {
     const m = this.mustGet(id);
-    if (m.status === "removed") throw new Error(`Rejection memory ${id} was forgotten; nothing to edit`);
+    if (m.status === "removed")
+      throw new Error(`Rejection memory ${id} was forgotten; nothing to edit`);
     const kind = patch.kind ?? m.kind;
-    if (!kind) throw new Error(`Rejection memory ${id} isn't classified yet; give --kind`);
-    const rule = patch.rule !== undefined ? cleanRule(patch.rule) : (m.rule ?? cleanRule(m.reason || "rejected"));
-    const target = patch.targetNodeId === undefined ? (m.targetNodeId ?? null) : patch.targetNodeId;
+    if (!kind)
+      throw new Error(
+        `Rejection memory ${id} isn't classified yet; give --kind`,
+      );
+    const rule =
+      patch.rule !== undefined
+        ? cleanRule(patch.rule)
+        : (m.rule ?? cleanRule(m.reason || "rejected"));
+    const target =
+      patch.targetNodeId === undefined
+        ? (m.targetNodeId ?? null)
+        : patch.targetNodeId;
     this.sql
       .prepare(
         `UPDATE rejection_memory SET kind = ?, rule = ?, target_node_id = ?, status = 'active', locked = 1, error = NULL,
            classified_at = COALESCE(classified_at, ?), expires_at = ? WHERE id = ?`,
       )
       // Keeps the expiry when the kind stays not-useful; starts it when it becomes not-useful.
-      .run(kind, rule, kind === "wrong-place" ? target : null, Date.now(), kind === m.kind && m.kind === "not-useful" ? (m.expiresAt?.getTime() ?? this.expiryFor(kind)) : this.expiryFor(kind), id);
+      .run(
+        kind,
+        rule,
+        kind === "wrong-place" ? target : null,
+        Date.now(),
+        kind === m.kind && m.kind === "not-useful"
+          ? (m.expiresAt?.getTime() ?? this.expiryFor(kind))
+          : this.expiryFor(kind),
+        id,
+      );
     this.syncEvidence(id);
     return this.mustGet(id);
   }
@@ -282,7 +377,9 @@ export class Rejections {
   /** Stop using it (kept for history). */
   forget(id: number): void {
     this.mustGet(id);
-    this.sql.prepare("UPDATE rejection_memory SET status = 'removed' WHERE id = ?").run(id);
+    this.sql
+      .prepare("UPDATE rejection_memory SET status = 'removed' WHERE id = ?")
+      .run(id);
     this.syncEvidence(id); // gives back what it forgot
   }
 }

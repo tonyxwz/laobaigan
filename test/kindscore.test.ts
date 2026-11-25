@@ -9,23 +9,57 @@ import { setup as proposalSetup } from "./proposals.test.ts";
 const S = DEFAULT_CONFIG.score;
 
 /** A latent skill with 3 sessions, proposed, rejected with `kind`; the memory dated 1s ago. */
-function rejected(kind: RejectionKind | "pending", opts: { target?: boolean } = {}) {
+function rejected(
+  kind: RejectionKind | "pending",
+  opts: { target?: boolean } = {},
+) {
   const s = proposalSetup();
-  const other = s.tree.createNode(s.root, { title: "Cloud credentials", name: "cloud-credentials" });
+  const other = s.tree.createNode(s.root, {
+    title: "Cloud credentials",
+    name: "cloud-credentials",
+  });
   const add = (session: string, node = s.skill) => {
-    const id = s.db.insertNugget({ runId: 1, agent: "pi", sessionId: session, cwd: "/", kind: "fact", title: session, knowledge: "k", triggers: [], scope: "global", confidence: 0.9, evidence: [] });
+    const id = s.db.insertNugget({
+      runId: 1,
+      agent: "pi",
+      sessionId: session,
+      cwd: "/",
+      kind: "fact",
+      title: session,
+      knowledge: "k",
+      triggers: [],
+      scope: "global",
+      confidence: 0.9,
+      evidence: [],
+    });
     s.tree.attachNugget(id, node);
     return id;
   };
   add("o", other);
   const p = s.props.create(s.draft());
-  s.props.markOpen(p, [{ path: "dotfiles-management/SKILL.md", baseHash: null, content: "x" }], "draft");
-  const r = rejectProposal(s.tree, p, "reason", kind === "pending" ? {} : { kind, ...(opts.target ? { targetNodeId: other } : {}) });
-  s.db.db.prepare("UPDATE rejection_memory SET created_at = created_at - 1000 WHERE id = ?").run(r.memoryId);
+  s.props.markOpen(
+    p,
+    [{ path: "dotfiles-management/SKILL.md", baseHash: null, content: "x" }],
+    "draft",
+  );
+  const r = rejectProposal(
+    s.tree,
+    p,
+    "reason",
+    kind === "pending"
+      ? {}
+      : { kind, ...(opts.target ? { targetNodeId: other } : {}) },
+  );
+  s.db.db
+    .prepare(
+      "UPDATE rejection_memory SET created_at = created_at - 1000 WHERE id = ?",
+    )
+    .run(r.memoryId);
   return { ...s, other, add, memoryId: r.memoryId, mem: new Rejections(s.db) };
 }
 
-const status = (s: ReturnType<typeof rejected>) => s.tree.getNode(s.skill)!.status;
+const status = (s: ReturnType<typeof rejected>) =>
+  s.tree.getNode(s.skill)!.status;
 
 describe("kind-aware scoring of rejected skills", () => {
   it("not-useful: never proposed again while the memory is in effect", () => {
@@ -47,7 +81,14 @@ describe("kind-aware scoring of rejected skills", () => {
     expect(status(s)).toBe("rejected"); // 2 sessions, one agent: not enough
     s.add("f");
     const r = scoreTree(s.tree, S);
-    expect(r.promoted).toEqual([{ id: s.skill, title: "dotfiles-management", kind: "new", score: expect.any(Number) }]);
+    expect(r.promoted).toEqual([
+      {
+        id: s.skill,
+        title: "dotfiles-management",
+        kind: "new",
+        score: expect.any(Number),
+      },
+    ]);
     expect(s.tree.getNode(s.skill)!.stats).toMatchObject({ sessions: 3 });
   });
 
@@ -55,7 +96,9 @@ describe("kind-aware scoring of rejected skills", () => {
     const s = proposalSetup();
     const p = s.props.create(s.draft({ nuggetIds: [] })); // nothing to forget
     s.props.markOpen(p, [], "d");
-    const { memoryId } = rejectProposal(s.tree, p, "stale", { kind: "outdated" });
+    const { memoryId } = rejectProposal(s.tree, p, "stale", {
+      kind: "outdated",
+    });
     expect(new Rejections(s.db).mustGet(memoryId).kind).toBe("outdated");
     scoreTree(s.tree, S);
     expect(s.tree.getNode(s.skill)!.status).toBe("rejected"); // its 3 sessions predate the rejection

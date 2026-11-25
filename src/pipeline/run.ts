@@ -1,16 +1,16 @@
 import type { Config } from "../config.ts";
+import { writePromptStatus } from "../notify/prompt.ts";
 import type { PiRunner, Usage } from "../pi/run-pi.ts";
 import { addUsage, ZERO_USAGE } from "../pi/run-pi.ts";
 import type { AgentId, SourceAdapter } from "../sources/index.ts";
 import type { StateDb } from "../state/db.ts";
 import { Tree } from "../state/tree.ts";
-import { classifyRejections, type ClassifyResult } from "./classify.ts";
+import { type ClassifyResult, classifyRejections } from "./classify.ts";
 import { insertNuggets } from "./insert.ts";
 import { processSessions, type SessionOutcome } from "./process.ts";
 import { draftCandidates } from "./render.ts";
 import { syncTree } from "./sync.ts";
 import { scoreTree } from "./treescore.ts";
-import { writePromptStatus } from "../notify/prompt.ts";
 
 /**
  * One unattended pass (what the hourly timer runs):
@@ -96,7 +96,10 @@ export interface RunDeps {
   now?: () => Date;
 }
 
-export async function runPipeline(deps: RunDeps, opts: RunOptions = {}): Promise<RunReport> {
+export async function runPipeline(
+  deps: RunDeps,
+  opts: RunOptions = {},
+): Promise<RunReport> {
   const { adapters, db, runner, cfg } = deps;
   const log = deps.log ?? (() => {});
   const now = deps.now ?? (() => new Date());
@@ -104,12 +107,32 @@ export async function runPipeline(deps: RunDeps, opts: RunOptions = {}): Promise
   const enabled = new Set(opts.stages ?? STAGES);
   const tree = new Tree(db);
   const runId = db.startRun("run", false);
-  const rep: RunReport = { runId, stages: [], proposals: [], rejections: [], calls: 0, usage: ZERO_USAGE, extracted: [], skipped: [], ms: 0 };
+  const rep: RunReport = {
+    runId,
+    stages: [],
+    proposals: [],
+    rejections: [],
+    calls: 0,
+    usage: ZERO_USAGE,
+    extracted: [],
+    skipped: [],
+    ms: 0,
+  };
 
-  const stage = async (name: Stage, model: boolean, fn: () => Promise<Omit<StageReport, "stage" | "status">>): Promise<void> => {
+  const stage = async (
+    name: Stage,
+    model: boolean,
+    fn: () => Promise<Omit<StageReport, "stage" | "status">>,
+  ): Promise<void> => {
     if (!enabled.has(name)) return;
     if (model && rep.abortedReason) {
-      rep.stages.push({ stage: name, status: "skipped", calls: 0, usage: ZERO_USAGE, summary: "skipped: model errors earlier in this run" });
+      rep.stages.push({
+        stage: name,
+        status: "skipped",
+        calls: 0,
+        usage: ZERO_USAGE,
+        summary: "skipped: model errors earlier in this run",
+      });
       return;
     }
     try {
@@ -124,17 +147,41 @@ export async function runPipeline(deps: RunDeps, opts: RunOptions = {}): Promise
       const calls = spent.calls ?? 0;
       const usage = spent.usage ?? ZERO_USAGE;
       log(`${name}: failed: ${error}`);
-      rep.stages.push({ stage: name, status: "error", calls, usage, summary: `failed: ${error}`, error });
+      rep.stages.push({
+        stage: name,
+        status: "error",
+        calls,
+        usage,
+        summary: `failed: ${error}`,
+        error,
+      });
       rep.calls += calls;
       rep.usage = addUsage(rep.usage, usage);
     }
   };
 
   await stage("sync", false, async () => {
-    const r = await syncTree(tree, { skillsDir: cfg.skillsDir, declared: cfg.topics });
+    const r = await syncTree(tree, {
+      skillsDir: cfg.skillsDir,
+      declared: cfg.topics,
+    });
     const all = [r.global, ...Object.values(r.repos), r.declared];
-    const changed = all.reduce((a, x) => a + x.created.length + x.updated.length + x.adopted.length + x.removed.length, 0);
-    return { calls: 0, usage: ZERO_USAGE, summary: changed ? `${changed} skill change(s) picked up from files` : "skill files unchanged" };
+    const changed = all.reduce(
+      (a, x) =>
+        a +
+        x.created.length +
+        x.updated.length +
+        x.adopted.length +
+        x.removed.length,
+      0,
+    );
+    return {
+      calls: 0,
+      usage: ZERO_USAGE,
+      summary: changed
+        ? `${changed} skill change(s) picked up from files`
+        : "skill files unchanged",
+    };
   });
 
   // extract: my words → knowledge. First reject reasons → rules (so extraction can use
@@ -144,11 +191,18 @@ export async function runPipeline(deps: RunDeps, opts: RunOptions = {}): Promise
     const rj: ClassifyResult = opts.session
       ? { classified: [], failed: [], deferred: 0, calls: 0, usage: ZERO_USAGE }
       : await classifyRejections(tree, runner, cfg, { log });
-    for (const c of rj.classified) rep.rejections.push({ id: c.id, kind: c.kind, rule: c.rule, ...(c.target ? { target: c.target } : {}) });
+    for (const c of rj.classified)
+      rep.rejections.push({
+        id: c.id,
+        kind: c.kind,
+        rule: c.rule,
+        ...(c.target ? { target: c.target } : {}),
+      });
     const rjParts: string[] = [];
     if (rj.calls) {
       rjParts.push(`${rj.classified.length} rejection(s) classified`);
-      if (rj.failed.length) rjParts.push(`${rj.failed.length} failed (stay pending)`);
+      if (rj.failed.length)
+        rjParts.push(`${rj.failed.length} failed (stay pending)`);
       if (rj.deferred) rjParts.push(`${rj.deferred} left for the next run`);
     }
     const rjFailedAll = rj.failed.length > 0 && rj.classified.length === 0;
@@ -161,7 +215,9 @@ export async function runPipeline(deps: RunDeps, opts: RunOptions = {}): Promise
       parts.push("sessions skipped (model errors)");
     } else {
       const r = await processSessions(adapters, db, runner, cfg, {
-        ...(opts.maxExtractCalls !== undefined ? { maxCalls: opts.maxExtractCalls } : {}),
+        ...(opts.maxExtractCalls !== undefined
+          ? { maxCalls: opts.maxExtractCalls }
+          : {}),
         // A session asked for by name is read even if it's still active (no settle window).
         ...(opts.session ? { only: opts.session, settleMinutes: 0 } : {}),
         ...(opts.fresh ? { fresh: true } : {}),
@@ -169,30 +225,59 @@ export async function runPipeline(deps: RunDeps, opts: RunOptions = {}): Promise
         recordRun: false,
       });
       rep.extracted = r.outcomes.filter((o) => o.status !== "up-to-date");
-      if (opts.session && !r.outcomes.length) parts.push(`no session matches ${opts.session.agent}:${opts.session.idPrefix}`);
+      if (opts.session && !r.outcomes.length)
+        parts.push(
+          `no session matches ${opts.session.agent}:${opts.session.idPrefix}`,
+        );
       if (r.abortedReason) rep.abortedReason = r.abortedReason;
       calls += r.calls;
       usage = addUsage(usage, r.usage);
-      const count = (st: string) => r.outcomes.filter((o) => o.status === st).length;
-      const nuggets = r.outcomes.reduce((a, o) => a + (o.nuggets?.length ?? 0), 0);
-      parts.push(`${count("extracted")} session(s) extracted, ${nuggets} new nugget(s)`);
-      if (count("deferred")) parts.push(`${count("deferred")} deferred (budget)`);
+      const count = (st: string) =>
+        r.outcomes.filter((o) => o.status === st).length;
+      const nuggets = r.outcomes.reduce(
+        (a, o) => a + (o.nuggets?.length ?? 0),
+        0,
+      );
+      parts.push(
+        `${count("extracted")} session(s) extracted, ${nuggets} new nugget(s)`,
+      );
+      if (count("deferred"))
+        parts.push(`${count("deferred")} deferred (budget)`);
       if (count("error")) parts.push(`${count("error")} error(s)`);
       if (r.abortedReason) parts.push(`aborted: ${r.abortedReason}`);
-      for (const w of r.warnings) parts.push(`skipped ${w.agent}: ${w.message}`);
+      for (const w of r.warnings)
+        parts.push(`skipped ${w.agent}: ${w.message}`);
     }
-    const summary = [parts.join(", "), rjParts.join(", ")].filter(Boolean).join("; ");
-    if (rjFailedAll) throw Object.assign(new Error(`${summary}: ${rj.failed[0]!.error}`), { calls, usage });
+    const summary = [parts.join(", "), rjParts.join(", ")]
+      .filter(Boolean)
+      .join("; ");
+    if (rjFailedAll)
+      throw Object.assign(new Error(`${summary}: ${rj.failed[0]!.error}`), {
+        calls,
+        usage,
+      });
     return { calls, usage, summary };
   });
 
   await stage("insert", true, async () => {
     const pending = tree.unplacedNuggets().length;
-    if (!pending) return { calls: 0, usage: ZERO_USAGE, summary: "no new nuggets to place" };
-    const r = await insertNuggets(tree, runner, cfg, { maxCalls: cfg.insert.maxCallsPerRun, log });
+    if (!pending)
+      return {
+        calls: 0,
+        usage: ZERO_USAGE,
+        summary: "no new nuggets to place",
+      };
+    const r = await insertNuggets(tree, runner, cfg, {
+      maxCalls: cfg.insert.maxCallsPerRun,
+      log,
+    });
     const parts = [`placed ${r.placed} nugget(s)`];
-    if (r.skillsCreated.length) parts.push(`new latent skill(s): ${r.skillsCreated.join(", ")}`);
-    for (const c of r.caught) parts.push(`${c.nuggets} to rejected ${c.skill} (rejection #${c.memoryId})`);
+    if (r.skillsCreated.length)
+      parts.push(`new latent skill(s): ${r.skillsCreated.join(", ")}`);
+    for (const c of r.caught)
+      parts.push(
+        `${c.nuggets} to rejected ${c.skill} (rejection #${c.memoryId})`,
+      );
     if (r.deferred) parts.push(`${r.deferred} deferred (budget)`);
     return { calls: r.calls, usage: r.usage, summary: parts.join(", ") };
   });
@@ -200,9 +285,18 @@ export async function runPipeline(deps: RunDeps, opts: RunOptions = {}): Promise
   await stage("score", false, async () => {
     const r = scoreTree(tree, cfg.score);
     const parts = [`${r.scored} skill(s) scored`];
-    if (r.promoted.length) parts.push(`new candidate(s): ${r.promoted.map((p) => `#${p.id} ${p.title} (${p.kind})`).join(", ")}`);
-    if (r.demoted.length) parts.push(`no longer candidate(s): ${r.demoted.map((d) => `#${d.id}`).join(", ")}`);
-    if (r.moved) parts.push(`${r.moved} nugget(s) moved out of wrong-place rejected skills`);
+    if (r.promoted.length)
+      parts.push(
+        `new candidate(s): ${r.promoted.map((p) => `#${p.id} ${p.title} (${p.kind})`).join(", ")}`,
+      );
+    if (r.demoted.length)
+      parts.push(
+        `no longer candidate(s): ${r.demoted.map((d) => `#${d.id}`).join(", ")}`,
+      );
+    if (r.moved)
+      parts.push(
+        `${r.moved} nugget(s) moved out of wrong-place rejected skills`,
+      );
     return { calls: 0, usage: ZERO_USAGE, summary: parts.join("; ") };
   });
 
@@ -219,24 +313,38 @@ export async function runPipeline(deps: RunDeps, opts: RunOptions = {}): Promise
     for (const o of outcomes) {
       if (o.status === "skipped") {
         const n = tree.getNode(o.nodeId);
-        rep.skipped.push({ nodeId: o.nodeId, skill: n?.name ?? n?.title ?? `#${o.nodeId}`, reason: o.reason });
+        rep.skipped.push({
+          nodeId: o.nodeId,
+          skill: n?.name ?? n?.title ?? `#${o.nodeId}`,
+          reason: o.reason,
+        });
         continue;
       }
       calls++;
       if (o.usage) usage = addUsage(usage, o.usage);
       const node = tree.getNode(o.nodeId);
       const skill = node?.name ?? node?.title ?? `#${o.nodeId}`;
-      if (o.status === "open") rep.proposals.push({ id: o.proposalId, nodeId: o.nodeId, skill, files: o.files.length, cost: o.usage.cost });
+      if (o.status === "open")
+        rep.proposals.push({
+          id: o.proposalId,
+          nodeId: o.nodeId,
+          skill,
+          files: o.files.length,
+          cost: o.usage.cost,
+        });
       else if (o.status === "nothing") refiled += o.excluded.length;
       else failed.push(`${skill}: ${o.reason}`);
     }
-    if (!outcomes.length) return { calls, usage, summary: "no candidates to draft" };
+    if (!outcomes.length)
+      return { calls, usage, summary: "no candidates to draft" };
     const parts = [`${rep.proposals.length} new proposal(s)`];
     if (refiled) parts.push(`${refiled} off-topic item(s) re-filed`);
-    if (failed.length) parts.push(`${failed.length} failed (${failed.join("; ")})`);
+    if (failed.length)
+      parts.push(`${failed.length} failed (${failed.join("; ")})`);
     const skipped = outcomes.filter((o) => o.status === "skipped");
     if (skipped.length) parts.push(`${skipped.length} skipped`);
-    if (failed.length && !rep.proposals.length) throw new Error(parts.join(", "));
+    if (failed.length && !rep.proposals.length)
+      throw new Error(parts.join(", "));
     return { calls, usage, summary: parts.join(", ") };
   });
 
@@ -249,7 +357,14 @@ export async function runPipeline(deps: RunDeps, opts: RunOptions = {}): Promise
 
   rep.ms = now().getTime() - started;
   db.finishRun(runId, {
-    stages: rep.stages.map(({ stage, status, calls, usage, summary }) => ({ stage, status, calls, cost: usage.cost, tokens: { input: usage.input, output: usage.output }, summary })),
+    stages: rep.stages.map(({ stage, status, calls, usage, summary }) => ({
+      stage,
+      status,
+      calls,
+      cost: usage.cost,
+      tokens: { input: usage.input, output: usage.output },
+      summary,
+    })),
     proposals: rep.proposals,
     rejections: rep.rejections,
     calls: rep.calls,

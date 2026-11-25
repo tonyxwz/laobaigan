@@ -10,7 +10,10 @@ export interface PrefilterOptions {
   contextTokens: number;
 }
 
-export const DEFAULT_PREFILTER: PrefilterOptions = { chunkTokens: 40_000, contextTokens: 6_000 };
+export const DEFAULT_PREFILTER: PrefilterOptions = {
+  chunkTokens: 40_000,
+  contextTokens: 6_000,
+};
 
 export interface Signals {
   newHumanTurns: number;
@@ -87,7 +90,10 @@ export function buildExcerpt(
     const condensed = !newAt[bi] && !newAt[bi + 1];
     if (b.userIndex === undefined) {
       // assistant activity before the first human turn
-      rendered.push({ text: renderSegment(b.segment, condensed), isNew: false });
+      rendered.push({
+        text: renderSegment(b.segment, condensed),
+        isNew: false,
+      });
       prevHadError = b.segment.some((x) => x.isError);
       continue;
     }
@@ -103,7 +109,8 @@ export function buildExcerpt(
       if (CORRECTION.test(turn.text)) signals.corrections++;
       if (turn.offBranch) signals.rewinds++;
       if (prevHadError) signals.afterToolError++;
-      if (turn.origin === "prompt" && !isTrivialPrompt(turn.text)) substantive++;
+      if (turn.origin === "prompt" && !isTrivialPrompt(turn.text))
+        substantive++;
     } else {
       label = "C";
     }
@@ -111,15 +118,23 @@ export function buildExcerpt(
       turn.offBranch ? " rewound" : ""
     }${turn.origin === "command" ? " command" : ""}] USER:`;
     const body = isNew ? turn.text : truncate(turn.text, 600);
-    rendered.push({ text: `${head}\n${indent(body)}\n${renderSegment(b.segment, condensed)}`, isNew });
+    rendered.push({
+      text: `${head}\n${indent(body)}\n${renderSegment(b.segment, condensed)}`,
+      isNew,
+    });
     prevHadError = b.segment.some((x) => x.isError);
   }
 
   signals.score =
-    signals.longTurns * 2 + signals.corrections * 3 + signals.rewinds * 2 + signals.afterToolError * 2 + substantive;
+    signals.longTurns * 2 +
+    signals.corrections * 3 +
+    signals.rewinds * 2 +
+    signals.afterToolError * 2 +
+    substantive;
 
   const empty = { chunks: [], labels, signals, redactions: {} };
-  if (signals.newHumanTurns === 0) return { ...empty, skip: "no new human turns" };
+  if (signals.newHumanTurns === 0)
+    return { ...empty, skip: "no new human turns" };
   if (substantive === 0) return { ...empty, skip: "only trivial prompts" };
 
   // Context = rendered blocks before the first new one, trimmed to the budget (keep the tail).
@@ -127,7 +142,8 @@ export function buildExcerpt(
   const ctxBlocks = rendered.slice(0, firstNew).map((r) => r.text);
   let ctx = ctxBlocks.join("\n");
   const ctxChars = opts.contextTokens * 4;
-  if (ctx.length > ctxChars) ctx = `… (earlier conversation omitted)\n${ctx.slice(ctx.length - ctxChars)}`;
+  if (ctx.length > ctxChars)
+    ctx = `… (earlier conversation omitted)\n${ctx.slice(ctx.length - ctxChars)}`;
 
   const chunkChars = opts.chunkTokens * 4;
   const chunks: string[] = [];
@@ -144,7 +160,8 @@ export function buildExcerpt(
   const redactions: Record<string, number> = {};
   const redacted = chunks.map((c) => {
     const r = redact(c);
-    for (const [k, v] of Object.entries(r.hits)) redactions[k] = (redactions[k] ?? 0) + v;
+    for (const [k, v] of Object.entries(r.hits))
+      redactions[k] = (redactions[k] ?? 0) + v;
     return r.text;
   });
   return { chunks: redacted, labels, signals, redactions };
@@ -170,22 +187,43 @@ function segment(turns: Turn[]): Block[] {
 /** First + last assistant text, tool usage counts, and up to 3 tool errors. */
 function renderSegment(seg: Turn[], condensed: boolean): string {
   const lines: string[] = [];
-  const texts = seg.filter((x) => x.role === "assistant" && x.text.trim()).map((x) => x.text.trim());
-  const interrupts = seg.filter((x) => x.role === "user" && x.origin === "interrupt").length;
+  const texts = seg
+    .filter((x) => x.role === "assistant" && x.text.trim())
+    .map((x) => x.text.trim());
+  const interrupts = seg.filter(
+    (x) => x.role === "user" && x.origin === "interrupt",
+  ).length;
   const tools = new Map<string, number>();
-  for (const x of seg) for (const c of x.toolCalls ?? []) tools.set(c.name, (tools.get(c.name) ?? 0) + 1);
+  for (const x of seg)
+    for (const c of x.toolCalls ?? [])
+      tools.set(c.name, (tools.get(c.name) ?? 0) + 1);
   const errors = seg.filter((x) => x.role === "tool" && x.isError);
 
   if (condensed) {
     const last = texts[texts.length - 1];
     if (last) lines.push(`  ASSISTANT: ${truncate(oneLine(last), 300)}`);
   } else {
-    if (texts[0]) lines.push(`  ASSISTANT: ${indent(truncate(texts[0], 600), 4).trimStart()}`);
-    if (texts.length > 1) lines.push(`  ASSISTANT (final): ${indent(truncate(texts[texts.length - 1]!, 800), 4).trimStart()}`);
-    for (const e of errors.slice(0, 3)) lines.push(`  TOOL ERROR (${e.toolName}): ${truncate(oneLine(e.text), 300)}`);
+    if (texts[0])
+      lines.push(
+        `  ASSISTANT: ${indent(truncate(texts[0], 600), 4).trimStart()}`,
+      );
+    if (texts.length > 1)
+      lines.push(
+        `  ASSISTANT (final): ${indent(truncate(texts[texts.length - 1]!, 800), 4).trimStart()}`,
+      );
+    for (const e of errors.slice(0, 3))
+      lines.push(
+        `  TOOL ERROR (${e.toolName}): ${truncate(oneLine(e.text), 300)}`,
+      );
   }
-  if (tools.size) lines.push(`  tools: ${[...tools].map(([k, v]) => (v > 1 ? `${k}×${v}` : k)).join(", ")}`);
-  if (interrupts) lines.push(`  (user interrupted the agent${interrupts > 1 ? ` ×${interrupts}` : ""})`);
+  if (tools.size)
+    lines.push(
+      `  tools: ${[...tools].map(([k, v]) => (v > 1 ? `${k}×${v}` : k)).join(", ")}`,
+    );
+  if (interrupts)
+    lines.push(
+      `  (user interrupted the agent${interrupts > 1 ? ` ×${interrupts}` : ""})`,
+    );
   return lines.length ? `${lines.join("\n")}\n` : "";
 }
 

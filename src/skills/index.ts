@@ -19,7 +19,10 @@ export interface RepoContext {
 }
 
 /** Parse `name` / `description` from SKILL.md YAML frontmatter (single-line or folded values). */
-export function parseFrontmatter(md: string): { name?: string; description?: string } {
+export function parseFrontmatter(md: string): {
+  name?: string;
+  description?: string;
+} {
   const m = /^---\r?\n([\s\S]*?)\r?\n---/.exec(md);
   if (!m) return {};
   const out: Record<string, string> = {};
@@ -28,17 +31,30 @@ export function parseFrontmatter(md: string): { name?: string; description?: str
     const kv = /^([A-Za-z_-]+):\s*(.*)$/.exec(lines[i]!);
     if (!kv) continue;
     let value = kv[2]!.trim();
-    if (value === ">" || value === "|" || value === ">-" || value === "|-" || value === "") {
+    if (
+      value === ">" ||
+      value === "|" ||
+      value === ">-" ||
+      value === "|-" ||
+      value === ""
+    ) {
       const parts: string[] = [];
-      while (i + 1 < lines.length && /^\s+\S/.test(lines[i + 1]!)) parts.push(lines[++i]!.trim());
+      while (i + 1 < lines.length && /^\s+\S/.test(lines[i + 1]!))
+        parts.push(lines[++i]!.trim());
       value = parts.join(" ");
     }
     out[kv[1]!] = value.replace(/^["']|["']$/g, "");
   }
-  return { ...(out.name ? { name: out.name } : {}), ...(out.description ? { description: out.description } : {}) };
+  return {
+    ...(out.name ? { name: out.name } : {}),
+    ...(out.description ? { description: out.description } : {}),
+  };
 }
 
-export async function loadSkillsDir(dir: string, scope: SkillInfo["scope"]): Promise<SkillInfo[]> {
+export async function loadSkillsDir(
+  dir: string,
+  scope: SkillInfo["scope"],
+): Promise<SkillInfo[]> {
   const out: SkillInfo[] = [];
   for (const d of await subdirs(dir)) {
     const path = join(d, "SKILL.md");
@@ -49,7 +65,12 @@ export async function loadSkillsDir(dir: string, scope: SkillInfo["scope"]): Pro
       continue;
     }
     const fm = parseFrontmatter(md);
-    out.push({ name: fm.name ?? d.split("/").pop()!, description: fm.description ?? "", path, scope });
+    out.push({
+      name: fm.name ?? d.split("/").pop()!,
+      description: fm.description ?? "",
+      path,
+      scope,
+    });
   }
   return out.sort((a, b) => a.name.localeCompare(b.name));
 }
@@ -76,13 +97,23 @@ export function repoContext(dir: string): Promise<RepoContext | undefined> {
     p = (async () => {
       const root = await projectRoot(dir);
       if (!root) return undefined;
-      const skills = await loadSkillsDir(join(root, ".agents", "skills"), "repo");
+      const skills = await loadSkillsDir(
+        join(root, ".agents", "skills"),
+        "repo",
+      );
       for (const name of ["AGENTS.md", "CLAUDE.md"]) {
         const path = join(root, name);
         try {
           const md = await readFile(path, "utf8");
-          const headings = [...md.matchAll(/^#{1,3}\s+(.+)$/gm)].map((m) => m[1]!.trim());
-          return { root, skills, agentsMdHeadings: headings, agentsMdPath: path };
+          const headings = [...md.matchAll(/^#{1,3}\s+(.+)$/gm)].map((m) =>
+            m[1]!.trim(),
+          );
+          return {
+            root,
+            skills,
+            agentsMdHeadings: headings,
+            agentsMdPath: path,
+          };
         } catch {
           // try next
         }
@@ -95,15 +126,21 @@ export function repoContext(dir: string): Promise<RepoContext | undefined> {
 }
 
 /** Compact text listing for prompts. */
-export function renderSkillIndex(global: SkillInfo[], repo: RepoContext | undefined): string {
+export function renderSkillIndex(
+  global: SkillInfo[],
+  repo: RepoContext | undefined,
+): string {
   const lines = ["Global skills (shared by all agents):"];
   for (const s of global) lines.push(`- ${s.name}: ${s.description}`);
   if (global.length === 0) lines.push("- (none)");
   if (repo) {
     lines.push("", `Repo-local knowledge in ${repo.root}:`);
-    for (const s of repo.skills) lines.push(`- .agents/skills/${s.name}: ${s.description}`);
+    for (const s of repo.skills)
+      lines.push(`- .agents/skills/${s.name}: ${s.description}`);
     if (repo.agentsMdPath) {
-      lines.push(`- ${repo.agentsMdPath.split("/").pop()} sections: ${repo.agentsMdHeadings.join(" | ") || "(no headings)"}`);
+      lines.push(
+        `- ${repo.agentsMdPath.split("/").pop()} sections: ${repo.agentsMdHeadings.join(" | ") || "(no headings)"}`,
+      );
     }
     if (!repo.skills.length && !repo.agentsMdPath) lines.push("- (none)");
   }

@@ -1,7 +1,13 @@
 /** Agents whose session history we can read. */
 export type AgentId = "claude" | "pi" | "opencode" | "codex" | "kiro";
 
-export const ALL_AGENTS: readonly AgentId[] = ["claude", "pi", "opencode", "codex", "kiro"];
+export const ALL_AGENTS: readonly AgentId[] = [
+  "claude",
+  "pi",
+  "opencode",
+  "codex",
+  "kiro",
+];
 
 /** A lightweight pointer to a session, cheap to produce during listing. */
 export interface SessionRef {

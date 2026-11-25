@@ -1,4 +1,9 @@
-import { subtreeNuggets, Tree, type NodeRow, type TreeNode } from "../state/tree.ts";
+import {
+  type NodeRow,
+  subtreeNuggets,
+  type Tree,
+  type TreeNode,
+} from "../state/tree.ts";
 
 /**
  * Hand curation of the knowledge tree. Every edit locks what it touches, so
@@ -26,13 +31,17 @@ function sub(tree: Tree, id: number): TreeNode {
 /** Nodes in the proposal lifecycle can't be reshaped until it ends. */
 function assertFree(n: NodeRow, what: string): void {
   if (n.status === "proposed") {
-    throw new Error(`${what}: #${n.id} is ${n.status}; finish or reject its proposal first`);
+    throw new Error(
+      `${what}: #${n.id} is ${n.status}; finish or reject its proposal first`,
+    );
   }
 }
 
 function assertNotFile(n: NodeRow, what: string): void {
   if (n.origin === "file") {
-    throw new Error(`${what}: #${n.id} is a live skill file (${n.sourcePath ?? n.title}); change it through a proposal`);
+    throw new Error(
+      `${what}: #${n.id} is a live skill file (${n.sourcePath ?? n.title}); change it through a proposal`,
+    );
   }
 }
 
@@ -45,7 +54,11 @@ function skillOf(tree: Tree, n: NodeRow): NodeRow | undefined {
  * Merge skills: sections and body nuggets of each `from` skill move into `into`;
  * the emptied skills are removed. `from` skills must not be live files.
  */
-export function mergeSkills(tree: Tree, into: number, from: number[]): { sections: number; nuggets: number } {
+export function mergeSkills(
+  tree: Tree,
+  into: number,
+  from: number[],
+): { sections: number; nuggets: number } {
   const target = node(tree, into);
   if (target.depth !== 1) throw new Error(`#${into} is not a skill`);
   if (from.includes(into)) throw new Error("Can't merge a skill into itself");
@@ -78,20 +91,35 @@ export function mergeSkills(tree: Tree, into: number, from: number[]): { section
 }
 
 /** Split sections out of a skill into a new (latent, locked) skill. */
-export function splitSkill(tree: Tree, skillId: number, sectionIds: number[], title?: string): number {
+export function splitSkill(
+  tree: Tree,
+  skillId: number,
+  sectionIds: number[],
+  title?: string,
+): number {
   const skill = sub(tree, skillId);
   if (skill.depth !== 1) throw new Error(`#${skillId} is not a skill`);
   assertFree(skill, "split");
   const picked = skill.children.filter((c) => sectionIds.includes(c.id));
   const missing = sectionIds.filter((id) => !picked.some((c) => c.id === id));
-  if (missing.length) throw new Error(`Section(s) ${missing.join(", ")} are not in skill #${skillId}`);
+  if (missing.length)
+    throw new Error(
+      `Section(s) ${missing.join(", ")} are not in skill #${skillId}`,
+    );
   for (const c of picked) assertNotFile(c, "split");
-  if (picked.length === skill.children.length && skill.nuggets.length === 0 && skill.origin !== "file") {
+  if (
+    picked.length === skill.children.length &&
+    skill.nuggets.length === 0 &&
+    skill.origin !== "file"
+  ) {
     throw new Error("A split must leave something behind; use rename instead");
   }
   let created = 0;
   tree.db.tx(() => {
-    created = tree.createNode(skill.parentId!, { title: title ?? picked[0]!.title, locked: true });
+    created = tree.createNode(skill.parentId!, {
+      title: title ?? picked[0]!.title,
+      locked: true,
+    });
     for (const c of picked) {
       tree.moveNode(c.id, created);
       tree.updateNode(c.id, { locked: true });
@@ -123,16 +151,25 @@ export function moveNode(tree: Tree, id: number, parentId: number): void {
 }
 
 /** Rename a node and/or set a skill's name. Live nodes take their names from their files. */
-export function renameNode(tree: Tree, id: number, patch: { title?: string; name?: string }): void {
+export function renameNode(
+  tree: Tree,
+  id: number,
+  patch: { title?: string; name?: string },
+): void {
   const n = node(tree, id);
   assertNotFile(n, "rename");
   if (patch.name !== undefined) {
     if (n.depth !== 1) throw new Error("Only skills have names");
     if (!SKILL_NAME.test(patch.name) || patch.name.length > 64) {
-      throw new Error(`Skill name must be lowercase letters, digits and single hyphens (≤ 64): ${patch.name}`);
+      throw new Error(
+        `Skill name must be lowercase letters, digits and single hyphens (≤ 64): ${patch.name}`,
+      );
     }
-    const clash = tree.children(n.parentId!).find((c) => c.id !== id && c.name === patch.name);
-    if (clash) throw new Error(`Skill #${clash.id} is already named ${patch.name}`);
+    const clash = tree
+      .children(n.parentId!)
+      .find((c) => c.id !== id && c.name === patch.name);
+    if (clash)
+      throw new Error(`Skill #${clash.id} is already named ${patch.name}`);
   }
   tree.updateNode(id, { ...patch, locked: true });
 }
@@ -156,6 +193,9 @@ export function unlockNode(tree: Tree, id: number): void {
       x.children.forEach(walk);
     };
     walk(n);
-    for (const m of subtreeNuggets(n)) tree.db.db.prepare("UPDATE nugget SET assignment_locked = 0 WHERE id = ?").run(m.id);
+    for (const m of subtreeNuggets(n))
+      tree.db.db
+        .prepare("UPDATE nugget SET assignment_locked = 0 WHERE id = ?")
+        .run(m.id);
   });
 }

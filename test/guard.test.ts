@@ -1,13 +1,17 @@
-import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
-import { fauxRunner, toolResults } from "./helpers/faux.ts";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
-import { realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { beforeEach, describe, expect, it } from "vitest";
-import { GuardError, guardedToolDefinitions, resolveGuard, type FileGuard } from "../src/pi/guard.ts";
+import {
+  type FileGuard,
+  GuardError,
+  guardedToolDefinitions,
+  resolveGuard,
+} from "../src/pi/guard.ts";
+import { fauxRunner, toolResults } from "./helpers/faux.ts";
 
 const SKILL = ".config/opencode/skills/dotfiles-management/";
 
@@ -27,14 +31,22 @@ async function worktree() {
   await mkdir(join(wt, ".pi/agent"), { recursive: true });
   await mkdir(join(wt, ".git"), { recursive: true });
   await mkdir(outside);
-  await writeFile(join(wt, ".config/opencode/skills/gradle/SKILL.md"), "gradle");
+  await writeFile(
+    join(wt, ".config/opencode/skills/gradle/SKILL.md"),
+    "gradle",
+  );
   await writeFile(join(wt, ".zshrc"), "zsh");
   await writeFile(join(wt, "AGENTS.md"), "# Agents\n");
   await writeFile(join(wt, ".git/HEAD"), "ref");
   await writeFile(join(outside, "secret.txt"), "secret");
   await symlink("../../.config/opencode/skills", join(wt, ".pi/agent/skills"));
   await symlink(outside, join(wt, ".config/opencode/skills/evil"));
-  return { base, wt, outside, guard: { root: wt, writable: [SKILL] } satisfies FileGuard };
+  return {
+    base,
+    wt,
+    outside,
+    guard: { root: wt, writable: [SKILL] } satisfies FileGuard,
+  };
 }
 
 describe("resolveGuard", () => {
@@ -45,18 +57,35 @@ describe("resolveGuard", () => {
 
   it("allows reads anywhere in the worktree and writes only in the writable paths", async () => {
     const g = await resolveGuard(w.guard);
-    await expect(g.check(join(w.wt, ".zshrc"), "read")).resolves.toBe(join(w.wt, ".zshrc"));
-    await expect(g.check(".config/opencode/skills/gradle/SKILL.md", "read")).resolves.toContain("gradle");
-    await expect(g.check(`${SKILL}SKILL.md`, "write")).resolves.toBe(join(w.wt, SKILL, "SKILL.md"));
-    await expect(g.check(`${SKILL}references/tmux.md`, "write")).resolves.toBe(join(w.wt, SKILL, "references/tmux.md"));
+    await expect(g.check(join(w.wt, ".zshrc"), "read")).resolves.toBe(
+      join(w.wt, ".zshrc"),
+    );
+    await expect(
+      g.check(".config/opencode/skills/gradle/SKILL.md", "read"),
+    ).resolves.toContain("gradle");
+    await expect(g.check(`${SKILL}SKILL.md`, "write")).resolves.toBe(
+      join(w.wt, SKILL, "SKILL.md"),
+    );
+    await expect(g.check(`${SKILL}references/tmux.md`, "write")).resolves.toBe(
+      join(w.wt, SKILL, "references/tmux.md"),
+    );
     // through the tracked relative symlink, like ~/.pi/agent/skills in ~/.cfg
-    await expect(g.check(".pi/agent/skills/dotfiles-management/SKILL.md", "write")).resolves.toBe(join(w.wt, SKILL, "SKILL.md"));
+    await expect(
+      g.check(".pi/agent/skills/dotfiles-management/SKILL.md", "write"),
+    ).resolves.toBe(join(w.wt, SKILL, "SKILL.md"));
   });
 
   it("rejects writes outside the writable paths, with a message naming what is writable", async () => {
     const g = await resolveGuard(w.guard);
-    for (const p of [".zshrc", ".config/opencode/skills/gradle/SKILL.md", "AGENTS.md", ".config/opencode/skills/dotfiles-management-evil/x"]) {
-      await expect(g.check(p, "write")).rejects.toThrow(new RegExp(`not writable in this proposal\\. Writable: ${SKILL}`));
+    for (const p of [
+      ".zshrc",
+      ".config/opencode/skills/gradle/SKILL.md",
+      "AGENTS.md",
+      ".config/opencode/skills/dotfiles-management-evil/x",
+    ]) {
+      await expect(g.check(p, "write")).rejects.toThrow(
+        new RegExp(`not writable in this proposal\\. Writable: ${SKILL}`),
+      );
     }
   });
 
@@ -77,18 +106,28 @@ describe("resolveGuard", () => {
 
   it("never allows writing .git, even if it were listed", async () => {
     const g = await resolveGuard({ root: w.wt, writable: [".git/", SKILL] });
-    await expect(g.check(".git/HEAD", "write")).rejects.toThrow(/\.git is not writable/);
+    await expect(g.check(".git/HEAD", "write")).rejects.toThrow(
+      /\.git is not writable/,
+    );
   });
 
   it("refuses writable entries that escape or aren't relative", async () => {
-    await expect(resolveGuard({ root: w.wt, writable: ["../outside/"] })).rejects.toThrow(GuardError);
-    await expect(resolveGuard({ root: w.wt, writable: [w.outside] })).rejects.toThrow(GuardError);
-    await expect(resolveGuard({ root: w.wt, writable: [".config/opencode/skills/evil/"] })).rejects.toThrow(/escapes/);
+    await expect(
+      resolveGuard({ root: w.wt, writable: ["../outside/"] }),
+    ).rejects.toThrow(GuardError);
+    await expect(
+      resolveGuard({ root: w.wt, writable: [w.outside] }),
+    ).rejects.toThrow(GuardError);
+    await expect(
+      resolveGuard({ root: w.wt, writable: [".config/opencode/skills/evil/"] }),
+    ).rejects.toThrow(/escapes/);
   });
 
   it("an exact-file entry allows that file only (AGENTS.md section proposals)", async () => {
     const g = await resolveGuard({ root: w.wt, writable: ["AGENTS.md"] });
-    await expect(g.check("AGENTS.md", "write")).resolves.toBe(join(w.wt, "AGENTS.md"));
+    await expect(g.check("AGENTS.md", "write")).resolves.toBe(
+      join(w.wt, "AGENTS.md"),
+    );
     await expect(g.check("AGENTS.md.bak", "write")).rejects.toThrow(GuardError);
     await expect(g.checkMkdir(w.wt)).resolves.toBe(w.wt); // write() mkdirs the parent; harmless
     await expect(g.checkMkdir(join(w.wt, "other"))).rejects.toThrow(GuardError);
@@ -98,7 +137,14 @@ describe("resolveGuard", () => {
 describe("guardedToolDefinitions", () => {
   it("keeps pi's tool names", async () => {
     const w = await worktree();
-    expect((await guardedToolDefinitions(w.guard)).map((t) => t.name)).toEqual(["read", "ls", "find", "grep", "write", "edit"]);
+    expect((await guardedToolDefinitions(w.guard)).map((t) => t.name)).toEqual([
+      "read",
+      "ls",
+      "find",
+      "grep",
+      "write",
+      "edit",
+    ]);
   });
 });
 
@@ -114,11 +160,23 @@ describe("drafting session with guarded tools (real pi session)", () => {
       fauxAssistantMessage(
         [
           fauxToolCall("read", { path: ".zshrc" }),
-          fauxToolCall("write", { path: `${SKILL}SKILL.md`, content: "---\nname: dotfiles-management\n---\n" }),
-          fauxToolCall("write", { path: `${SKILL}references/tmux.md`, content: "# tmux\n" }),
+          fauxToolCall("write", {
+            path: `${SKILL}SKILL.md`,
+            content: "---\nname: dotfiles-management\n---\n",
+          }),
+          fauxToolCall("write", {
+            path: `${SKILL}references/tmux.md`,
+            content: "# tmux\n",
+          }),
           fauxToolCall("write", { path: ".zshrc", content: "pwned" }),
-          fauxToolCall("write", { path: ".config/opencode/skills/evil/x.txt", content: "pwned" }),
-          fauxToolCall("edit", { path: ".config/opencode/skills/gradle/SKILL.md", edits: [{ oldText: "gradle", newText: "pwned" }] }),
+          fauxToolCall("write", {
+            path: ".config/opencode/skills/evil/x.txt",
+            content: "pwned",
+          }),
+          fauxToolCall("edit", {
+            path: ".config/opencode/skills/gradle/SKILL.md",
+            edits: [{ oldText: "gradle", newText: "pwned" }],
+          }),
           fauxToolCall("read", { path: join(w.outside, "secret.txt") }),
           fauxToolCall("ls", { path: "../outside" }),
           fauxToolCall("find", { pattern: "*", path: w.outside }),
@@ -128,7 +186,9 @@ describe("drafting session with guarded tools (real pi session)", () => {
       ),
       (ctx) => {
         seen = toolResults(ctx as never);
-        return fauxAssistantMessage([fauxToolCall("report", { ok: true })], { stopReason: "toolUse" });
+        return fauxAssistantMessage([fauxToolCall("report", { ok: true })], {
+          stopReason: "toolUse",
+        });
       },
     ]);
 
@@ -144,11 +204,18 @@ describe("drafting session with guarded tools (real pi session)", () => {
     expect(res.value).toEqual({ ok: true });
 
     // allowed
-    expect(readFileSync(join(w.wt, SKILL, "SKILL.md"), "utf8")).toContain("dotfiles-management");
+    expect(readFileSync(join(w.wt, SKILL, "SKILL.md"), "utf8")).toContain(
+      "dotfiles-management",
+    );
     expect(existsSync(join(w.wt, SKILL, "references/tmux.md"))).toBe(true);
     // untouched
     expect(await readFile(join(w.wt, ".zshrc"), "utf8")).toBe("zsh");
-    expect(await readFile(join(w.wt, ".config/opencode/skills/gradle/SKILL.md"), "utf8")).toBe("gradle");
+    expect(
+      await readFile(
+        join(w.wt, ".config/opencode/skills/gradle/SKILL.md"),
+        "utf8",
+      ),
+    ).toBe("gradle");
     expect(existsSync(join(w.outside, "x.txt"))).toBe(false);
 
     expect(seen.map((r) => [r.name, r.isError])).toEqual([
@@ -164,9 +231,13 @@ describe("drafting session with guarded tools (real pi session)", () => {
       ["grep", true],
     ]);
     expect(seen[0]!.text).toContain("zsh");
-    expect(seen[3]!.text).toMatch(/\.zshrc is not writable in this proposal\. Writable: \.config\/opencode\/skills\/dotfiles-management\//);
+    expect(seen[3]!.text).toMatch(
+      /\.zshrc is not writable in this proposal\. Writable: \.config\/opencode\/skills\/dotfiles-management\//,
+    );
     expect(seen[6]!.text).toMatch(/outside the worktree/);
-    expect(seen.some((r) => r.text.includes("secret") && !r.isError)).toBe(false);
+    expect(seen.some((r) => r.text.includes("secret") && !r.isError)).toBe(
+      false,
+    );
   });
 
   it("refuses non-file tools such as bash when a guard is set", async () => {
@@ -189,10 +260,30 @@ describe("drafting session with guarded tools (real pi session)", () => {
 describe("PiConfigRunner model selection", () => {
   it("uses pi's default model and provider, or a provider/id override", async () => {
     const { PiConfigRunner } = await import("../src/pi/run-pi.ts");
-    const req = { prompt: "x", systemPrompt: "x", resultTool: { name: "r", description: "r", parameters: done } };
-    await expect(new PiConfigRunner(() => ({})).run(req)).rejects.toThrow(/No model: set a default model in pi/);
-    await expect(new PiConfigRunner(() => ({ model: "m" })).run(req)).rejects.toThrow(/No provider for model m/);
-    await expect(new PiConfigRunner(() => ({ provider: "amazon-bedrock", model: "no-such-model" })).run(req)).rejects.toThrow(/amazon-bedrock\/no-such-model not found .*pi's default model/);
-    await expect(new PiConfigRunner(() => ({ provider: "amazon-bedrock", model: "x" })).run({ ...req, model: "openai/no-such" })).rejects.toThrow(/openai\/no-such not found/);
+    const req = {
+      prompt: "x",
+      systemPrompt: "x",
+      resultTool: { name: "r", description: "r", parameters: done },
+    };
+    await expect(new PiConfigRunner(() => ({})).run(req)).rejects.toThrow(
+      /No model: set a default model in pi/,
+    );
+    await expect(
+      new PiConfigRunner(() => ({ model: "m" })).run(req),
+    ).rejects.toThrow(/No provider for model m/);
+    await expect(
+      new PiConfigRunner(() => ({
+        provider: "amazon-bedrock",
+        model: "no-such-model",
+      })).run(req),
+    ).rejects.toThrow(
+      /amazon-bedrock\/no-such-model not found .*pi's default model/,
+    );
+    await expect(
+      new PiConfigRunner(() => ({
+        provider: "amazon-bedrock",
+        model: "x",
+      })).run({ ...req, model: "openai/no-such" }),
+    ).rejects.toThrow(/openai\/no-such not found/);
   });
 });

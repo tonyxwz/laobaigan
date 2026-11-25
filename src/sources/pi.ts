@@ -1,10 +1,27 @@
 import { stat } from "node:fs/promises";
 import { basename } from "node:path";
-import { DEFAULT_LIMITS, DEFAULT_PATHS, type NormalizeLimits } from "../config.ts";
-import { exists, filesWithExt, readFirstJsonlLine, readJsonl, subdirs } from "../util/fs.ts";
+import {
+  DEFAULT_LIMITS,
+  DEFAULT_PATHS,
+  type NormalizeLimits,
+} from "../config.ts";
+import {
+  exists,
+  filesWithExt,
+  readFirstJsonlLine,
+  readJsonl,
+  subdirs,
+} from "../util/fs.ts";
 import { isRecord, renderInput, str, toDate, truncate } from "../util/text.ts";
 import { activeBranch } from "../util/tree.ts";
-import type { ListOptions, SessionRef, SourceAdapter, ToolCall, Transcript, Turn } from "./types.ts";
+import type {
+  ListOptions,
+  SessionRef,
+  SourceAdapter,
+  ToolCall,
+  Transcript,
+  Turn,
+} from "./types.ts";
 
 /**
  * pi: ~/.pi/agent/sessions/<cwd-slug>/<timestamp>_<id>.jsonl
@@ -21,7 +38,10 @@ export class PiAdapter implements SourceAdapter {
   private readonly root: string;
   private readonly limits: NormalizeLimits;
 
-  constructor(root = DEFAULT_PATHS.piSessions, limits: NormalizeLimits = DEFAULT_LIMITS) {
+  constructor(
+    root = DEFAULT_PATHS.piSessions,
+    limits: NormalizeLimits = DEFAULT_LIMITS,
+  ) {
     this.root = root;
     this.limits = limits;
   }
@@ -36,7 +56,8 @@ export class PiAdapter implements SourceAdapter {
         const st = await stat(file);
         if (opts.since && st.mtime < opts.since) continue;
         const header = await readFirstJsonlLine(file);
-        const h = isRecord(header) && header.type === "session" ? header : undefined;
+        const h =
+          isRecord(header) && header.type === "session" ? header : undefined;
         const cwd = h && str(h.cwd);
         yield {
           agent: this.agent,
@@ -58,7 +79,11 @@ export class PiAdapter implements SourceAdapter {
 
 type Entry = Record<string, unknown>;
 
-export function parsePi(lines: Entry[], ref: SessionRef, limits: NormalizeLimits): Transcript {
+export function parsePi(
+  lines: Entry[],
+  ref: SessionRef,
+  limits: NormalizeLimits,
+): Transcript {
   const header = lines.find((l) => l.type === "session");
   const byId = new Map<string, Entry>();
   let leaf: string | undefined;
@@ -90,7 +115,13 @@ export function parsePi(lines: Entry[], ref: SessionRef, limits: NormalizeLimits
         const cmd = str(m.command);
         if (cmd) push({ role: "user", text: `!${cmd}`, ts, origin: "command" });
         const out = str(m.output);
-        if (out) push({ role: "tool", toolName: "bash", text: truncate(out, limits.toolResultChars), ts });
+        if (out)
+          push({
+            role: "tool",
+            toolName: "bash",
+            text: truncate(out, limits.toolResultChars),
+            ts,
+          });
         break;
       }
       case "assistant": {
@@ -101,12 +132,20 @@ export function parsePi(lines: Entry[], ref: SessionRef, limits: NormalizeLimits
             if (!isRecord(b)) continue;
             if (b.type === "text" && str(b.text)) texts.push(b.text as string);
             else if (b.type === "toolCall")
-              toolCalls.push({ name: str(b.name) ?? "unknown", input: renderInput(b.arguments, limits.toolInputChars) });
+              toolCalls.push({
+                name: str(b.name) ?? "unknown",
+                input: renderInput(b.arguments, limits.toolInputChars),
+              });
           }
         }
         const text = texts.join("\n");
         if (text || toolCalls.length)
-          push({ role: "assistant", text, ts, ...(toolCalls.length ? { toolCalls } : {}) });
+          push({
+            role: "assistant",
+            text,
+            ts,
+            ...(toolCalls.length ? { toolCalls } : {}),
+          });
         break;
       }
       case "toolResult":
@@ -129,9 +168,12 @@ export function parsePi(lines: Entry[], ref: SessionRef, limits: NormalizeLimits
     location: ref.location,
     cwd: (header && str(header.cwd)) ?? ref.cwd ?? "",
     ...(title ? { title } : {}),
-    startedAt: (header && toDate(header.timestamp)) ?? turns[0]?.ts ?? ref.updatedAt,
+    startedAt:
+      (header && toDate(header.timestamp)) ?? turns[0]?.ts ?? ref.updatedAt,
     updatedAt: turns[turns.length - 1]?.ts ?? ref.updatedAt,
-    ...(parentSession ? { parentSessionId: basename(parentSession, ".jsonl") } : {}),
+    ...(parentSession
+      ? { parentSessionId: basename(parentSession, ".jsonl") }
+      : {}),
     turns,
   };
 }
@@ -140,7 +182,13 @@ function contentText(content: unknown): string {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
   return content
-    .map((b) => (isRecord(b) ? (b.type === "text" ? (str(b.text) ?? "") : `[${String(b.type)}]`) : ""))
+    .map((b) =>
+      isRecord(b)
+        ? b.type === "text"
+          ? (str(b.text) ?? "")
+          : `[${String(b.type)}]`
+        : "",
+    )
     .filter(Boolean)
     .join("\n");
 }

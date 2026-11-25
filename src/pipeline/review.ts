@@ -1,5 +1,5 @@
-import { Rejections } from "../state/rejections.ts";
 import { Feedback, type FeedbackWithProposal } from "../state/feedback.ts";
+import { Rejections } from "../state/rejections.ts";
 import type { NodeRow, Tree } from "../state/tree.ts";
 import { truncate } from "../util/text.ts";
 
@@ -19,14 +19,28 @@ function renderOne(f: FeedbackWithProposal): string {
       return `${head}: asked for a revision: "${truncate(f.text, 800)}"`;
     case "chat": {
       const mine = (f.turns ?? []).filter((t) => t.role === "user").slice(-8);
-      return [`${head}: said in a revise chat:`, ...mine.map((t) => `    > ${truncate(t.text.replace(/\s+/g, " "), 500)}`)].join("\n");
+      return [
+        `${head}: said in a revise chat:`,
+        ...mine.map(
+          (t) => `    > ${truncate(t.text.replace(/\s+/g, " "), 500)}`,
+        ),
+      ].join("\n");
     }
     case "edit":
-      return [`${head}: ${f.text}. Their change to the AI draft:`, ...truncate(f.diff ?? "", 1500).split("\n").map((l) => `    ${l}`)].join("\n");
+      return [
+        `${head}: ${f.text}. Their change to the AI draft:`,
+        ...truncate(f.diff ?? "", 1500)
+          .split("\n")
+          .map((l) => `    ${l}`),
+      ].join("\n");
   }
 }
 
-export function reviewFeedbackPrompt(tree: Tree, skill: Pick<NodeRow, "id" | "parentId">, opts: { maxChars?: number } = {}): string {
+export function reviewFeedbackPrompt(
+  tree: Tree,
+  skill: Pick<NodeRow, "id" | "parentId">,
+  opts: { maxChars?: number } = {},
+): string {
   const max = opts.maxChars ?? 5000;
   const fb = new Feedback(tree.db);
   const own = fb.forNode(skill.id).reverse();
@@ -40,8 +54,14 @@ export function reviewFeedbackPrompt(tree: Tree, skill: Pick<NodeRow, "id" | "pa
       const m = memories.get(s.id);
       const rejections = fb.forNode(s.id).filter((f) => f.kind === "reject");
       const last = rejections.at(-1);
-      if (m?.rule) nearby.push(`- ${s.name ?? s.title}: rejected ${day(m.createdAt)} as ${m.kind}: ${m.rule}`);
-      else if (last) nearby.push(`- ${s.name ?? s.title}: rejected ${day(last.createdAt)}${last.text ? `: "${truncate(last.text, 300)}"` : " (no reason given)"}`);
+      if (m?.rule)
+        nearby.push(
+          `- ${s.name ?? s.title}: rejected ${day(m.createdAt)} as ${m.kind}: ${m.rule}`,
+        );
+      else if (last)
+        nearby.push(
+          `- ${s.name ?? s.title}: rejected ${day(last.createdAt)}${last.text ? `: "${truncate(last.text, 300)}"` : " (no reason given)"}`,
+        );
     }
   }
   if (!own.length && !nearby.length && !ownRule?.rule) return "";
@@ -56,7 +76,9 @@ export function reviewFeedbackPrompt(tree: Tree, skill: Pick<NodeRow, "id" | "pa
     return true;
   };
   if (ownRule?.rule) {
-    push(`<rejection_rule> This skill was rejected before (${ownRule.kind}): ${ownRule.rule}. Follow this rule. </rejection_rule>`);
+    push(
+      `<rejection_rule> This skill was rejected before (${ownRule.kind}): ${ownRule.rule}. Follow this rule. </rejection_rule>`,
+    );
   }
   if (own.length) {
     push(
@@ -66,7 +88,9 @@ export function reviewFeedbackPrompt(tree: Tree, skill: Pick<NodeRow, "id" | "pa
     push("</review_feedback>", true);
   }
   if (nearby.length) {
-    push("<rejected_nearby> Proposals the engineer rejected for other skills in this scope. Don't propose the same thing here:");
+    push(
+      "<rejected_nearby> Proposals the engineer rejected for other skills in this scope. Don't propose the same thing here:",
+    );
     for (const n of nearby.slice(-6)) if (!push(n)) break;
     push("</rejected_nearby>", true);
   }

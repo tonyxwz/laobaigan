@@ -1,7 +1,12 @@
 import { ClaudeAdapter } from "./claude.ts";
 import { OpencodeAdapter } from "./opencode.ts";
 import { PiAdapter } from "./pi.ts";
-import type { AgentId, ListOptions, SessionRef, SourceAdapter } from "./types.ts";
+import type {
+  AgentId,
+  ListOptions,
+  SessionRef,
+  SourceAdapter,
+} from "./types.ts";
 
 export * from "./types.ts";
 
@@ -30,7 +35,9 @@ export async function scan(
   const now = opts.now ?? new Date();
   const cutoff = opts.settleMs ? now.getTime() - opts.settleMs : Infinity;
   const out: { ref: SessionRef; adapter: SourceAdapter }[] = [];
-  const warn = opts.onWarning ?? ((agent, m) => process.stderr.write(`warning: ${agent}: ${m}\n`));
+  const warn =
+    opts.onWarning ??
+    ((agent, m) => process.stderr.write(`warning: ${agent}: ${m}\n`));
   for (const adapter of adapters) {
     if (opts.agents && !opts.agents.includes(adapter.agent)) continue;
     const found: { ref: SessionRef; adapter: SourceAdapter }[] = [];
@@ -47,5 +54,7 @@ export async function scan(
     }
     out.push(...found);
   }
-  return out.sort((a, b) => a.ref.updatedAt.getTime() - b.ref.updatedAt.getTime());
+  return out.sort(
+    (a, b) => a.ref.updatedAt.getTime() - b.ref.updatedAt.getTime(),
+  );
 }

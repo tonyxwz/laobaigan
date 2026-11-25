@@ -1,5 +1,14 @@
-import { lstat, mkdir, readdir, readFile, realpath, stat, writeFile, access } from "node:fs/promises";
 import { constants } from "node:fs";
+import {
+  access,
+  lstat,
+  mkdir,
+  readdir,
+  readFile,
+  realpath,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import {
   createEditToolDefinition,
@@ -32,7 +41,14 @@ export interface FileGuard {
   writable: string[];
 }
 
-export const GUARDED_TOOLS = ["read", "ls", "find", "grep", "write", "edit"] as const;
+export const GUARDED_TOOLS = [
+  "read",
+  "ls",
+  "find",
+  "grep",
+  "write",
+  "edit",
+] as const;
 export type GuardedToolName = (typeof GUARDED_TOOLS)[number];
 
 export class GuardError extends Error {}
@@ -49,7 +65,8 @@ async function realish(p: string): Promise<string> {
       if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
       // A dangling symlink: refuse rather than follow it later.
       try {
-        if ((await lstat(cur)).isSymbolicLink()) throw new GuardError(`${p}: dangling symlink`);
+        if ((await lstat(cur)).isSymbolicLink())
+          throw new GuardError(`${p}: dangling symlink`);
       } catch (e) {
         if (e instanceof GuardError) throw e;
       }
@@ -77,10 +94,14 @@ export async function resolveGuard(g: FileGuard): Promise<ResolvedGuard> {
   const root = await realpath(g.root);
   const writable = await Promise.all(
     g.writable.map(async (w) => {
-      if (isAbsolute(w) || w.split(/[\\/]/).includes("..")) throw new GuardError(`Writable path must be relative to the worktree: ${w}`);
+      if (isAbsolute(w) || w.split(/[\\/]/).includes(".."))
+        throw new GuardError(
+          `Writable path must be relative to the worktree: ${w}`,
+        );
       const dir = w.endsWith("/");
       const real = await realish(join(root, w));
-      if (!inside(real, root)) throw new GuardError(`Writable path escapes the worktree: ${w}`);
+      if (!inside(real, root))
+        throw new GuardError(`Writable path escapes the worktree: ${w}`);
       return { real, dir, label: w };
     }),
   );
@@ -89,13 +110,21 @@ export async function resolveGuard(g: FileGuard): Promise<ResolvedGuard> {
     root,
     async check(absPath, mode) {
       const real = await realish(resolve(root, absPath));
-      if (!inside(real, root)) throw new GuardError(`${absPath} is outside the worktree; only files in the worktree can be ${mode === "read" ? "read" : "changed"}.`);
+      if (!inside(real, root))
+        throw new GuardError(
+          `${absPath} is outside the worktree; only files in the worktree can be ${mode === "read" ? "read" : "changed"}.`,
+        );
       if (mode === "read") return real;
       const rel = relative(root, real);
-      if (rel.split(sep).includes(".git")) throw new GuardError(`${show(real)}: .git is not writable.`);
-      const ok = writable.some((w) => (w.dir ? inside(real, w.real) : real === w.real));
+      if (rel.split(sep).includes(".git"))
+        throw new GuardError(`${show(real)}: .git is not writable.`);
+      const ok = writable.some((w) =>
+        w.dir ? inside(real, w.real) : real === w.real,
+      );
       if (!ok) {
-        throw new GuardError(`${show(real)} is not writable in this proposal. Writable: ${writable.map((w) => w.label).join(", ") || "(nothing)"}.`);
+        throw new GuardError(
+          `${show(real)} is not writable in this proposal. Writable: ${writable.map((w) => w.label).join(", ") || "(nothing)"}.`,
+        );
       }
       return real;
     },
@@ -105,7 +134,8 @@ export async function resolveGuard(g: FileGuard): Promise<ResolvedGuard> {
       } catch (err) {
         if (!(err instanceof GuardError)) throw err;
         const real = await realish(resolve(root, dir));
-        if (inside(real, root) && writable.some((w) => inside(w.real, real))) return real;
+        if (inside(real, root) && writable.some((w) => inside(w.real, real)))
+          return real;
         throw err;
       }
     },
@@ -114,7 +144,10 @@ export async function resolveGuard(g: FileGuard): Promise<ResolvedGuard> {
 }
 
 /** Pi's file tools with guarded filesystem operations. */
-export async function guardedToolDefinitions(guard: FileGuard, names: readonly GuardedToolName[] = GUARDED_TOOLS): Promise<ToolDefinition[]> {
+export async function guardedToolDefinitions(
+  guard: FileGuard,
+  names: readonly GuardedToolName[] = GUARDED_TOOLS,
+): Promise<ToolDefinition[]> {
   const g = await resolveGuard(guard);
   const cwd = g.root;
   const r = (p: string) => g.check(p, "read");
@@ -151,19 +184,25 @@ export async function guardedToolDefinitions(guard: FileGuard, names: readonly G
           readFile: async (p) => readFile(await r(p), "utf8"),
         },
       }) as unknown as ToolDefinition,
-    find: () => withPathCheck(createFindToolDefinition(cwd) as unknown as ToolDefinition, r),
+    find: () =>
+      withPathCheck(
+        createFindToolDefinition(cwd) as unknown as ToolDefinition,
+        r,
+      ),
     write: () =>
       createWriteToolDefinition(cwd, {
         operations: {
           writeFile: async (p, content) => writeFile(await w(p), content),
-          mkdir: async (d) => void (await mkdir(await g.checkMkdir(d), { recursive: true })),
+          mkdir: async (d) =>
+            void (await mkdir(await g.checkMkdir(d), { recursive: true })),
         },
       }) as unknown as ToolDefinition,
     edit: () =>
       createEditToolDefinition(cwd, {
         operations: {
           // Refuse up front, before the model spends effort on edits that can't be saved.
-          access: async (p) => access(await w(p), constants.R_OK | constants.W_OK),
+          access: async (p) =>
+            access(await w(p), constants.R_OK | constants.W_OK),
           readFile: async (p) => readFile(await w(p)),
           writeFile: async (p, content) => writeFile(await w(p), content),
         },
@@ -173,7 +212,10 @@ export async function guardedToolDefinitions(guard: FileGuard, names: readonly G
 }
 
 /** Check a tool's `path` argument before it runs (for tools without pluggable path operations). */
-function withPathCheck(def: ToolDefinition, check: (p: string) => Promise<string>): ToolDefinition {
+function withPathCheck(
+  def: ToolDefinition,
+  check: (p: string) => Promise<string>,
+): ToolDefinition {
   const execute = def.execute.bind(def);
   return {
     ...def,

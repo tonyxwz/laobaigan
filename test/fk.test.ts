@@ -1,11 +1,11 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { realpathSync } from "node:fs";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { mergeSkills } from "../src/pipeline/curate.ts";
 import { syncTree } from "../src/pipeline/sync.ts";
-import { StateDb, type NuggetInsert } from "../src/state/db.ts";
+import { type NuggetInsert, StateDb } from "../src/state/db.ts";
 import { Proposals } from "../src/state/proposals.ts";
 import { Tree } from "../src/state/tree.ts";
 
@@ -23,7 +23,8 @@ const nugget = (sessionId: string): NuggetInsert => ({
   evidence: [{ label: "U1", quote: "q" }],
 });
 
-const md = (name: string, body: string) => `---\nname: ${name}\ndescription: Use for ${name}.\n---\n\n# ${name}\n\n${body}`;
+const md = (name: string, body: string) =>
+  `---\nname: ${name}\ndescription: Use for ${name}.\n---\n\n# ${name}\n\n${body}`;
 
 async function setup() {
   const dir = realpathSync(await mkdtemp(join(tmpdir(), "lbg-fk-")));
@@ -34,7 +35,8 @@ async function setup() {
   const db = new StateDb(":memory:");
   const tree = new Tree(db);
   const sync = () => syncTree(tree, { skillsDir: dir, declared: [] });
-  const live = (name: string) => tree.trees({ scope: "global" })[0]!.children.find((c) => c.name === name)!;
+  const live = (name: string) =>
+    tree.trees({ scope: "global" })[0]!.children.find((c) => c.name === name)!;
   return { dir, write, db, tree, sync, live };
 }
 
@@ -46,7 +48,10 @@ function fkClean(db: StateDb) {
 describe("deleting nodes never breaks references", () => {
   it("a removed section that 'covered' a nugget: the nugget and its covered mark move to the skill", async () => {
     const { write, db, tree, sync, live } = await setup();
-    await write("gradle", "intro\n\n## Build\nbuild text\n\n## Test\ntest text");
+    await write(
+      "gradle",
+      "intro\n\n## Build\nbuild text\n\n## Test\ntest text",
+    );
     await sync();
     const test = live("gradle").children.find((c) => c.title === "Test")!;
     const n = db.insertNugget(nugget("a"));
@@ -55,7 +60,10 @@ describe("deleting nodes never breaks references", () => {
 
     await write("gradle", "intro\n\n## Build\nbuild text"); // e.g. an accepted update dropped the section
     await sync();
-    expect(db.getNugget(n)).toMatchObject({ nodeId: live("gradle").id, coveredNodeId: live("gradle").id });
+    expect(db.getNugget(n)).toMatchObject({
+      nodeId: live("gradle").id,
+      coveredNodeId: live("gradle").id,
+    });
     fkClean(db);
   });
 
@@ -66,7 +74,15 @@ describe("deleting nodes never breaks references", () => {
     const id = live("tmux").id;
     tree.updateNode(id, { status: "candidate", proposalKind: "update" });
     const props = new Proposals(db);
-    const p = props.create({ nodeId: id, kind: "update", scope: "global", targetRoot: dir, writable: ["tmux/"], nuggetIds: [], sessions: 2 });
+    const p = props.create({
+      nodeId: id,
+      kind: "update",
+      scope: "global",
+      targetRoot: dir,
+      writable: ["tmux/"],
+      nuggetIds: [],
+      sessions: 2,
+    });
     props.markFailed(p, "x");
 
     await rm(join(dir, "tmux"), { recursive: true });
@@ -79,11 +95,23 @@ describe("deleting nodes never breaks references", () => {
   it("pruning empty latent nodes skips ones with proposals and clears covered marks", async () => {
     const { db, tree } = await setup();
     const root = tree.ensureRoot({ scope: "global" });
-    const withHistory = tree.createNode(root, { title: "had a failed proposal" });
+    const withHistory = tree.createNode(root, {
+      title: "had a failed proposal",
+    });
     const props = new Proposals(db);
-    const p = props.create({ nodeId: withHistory, kind: "new", scope: "global", targetRoot: "/x", writable: ["a/"], nuggetIds: [], sessions: 3 });
+    const p = props.create({
+      nodeId: withHistory,
+      kind: "new",
+      scope: "global",
+      targetRoot: "/x",
+      writable: ["a/"],
+      nuggetIds: [],
+      sessions: 3,
+    });
     props.markFailed(p, "x");
-    const coveredBy = tree.createNode(root, { title: "empty, but covered something" });
+    const coveredBy = tree.createNode(root, {
+      title: "empty, but covered something",
+    });
     const elsewhere = tree.createNode(root, { title: "holds the nugget" });
     const n = db.insertNugget(nugget("b"));
     tree.attachNugget(n, elsewhere);
@@ -106,11 +134,25 @@ describe("deleting nodes never breaks references", () => {
     tree.attachNugget(n, a);
     tree.setCovered(n, a);
     const props = new Proposals(db);
-    props.markRejected(props.create({ nodeId: b, kind: "new", scope: "global", targetRoot: "/x", writable: ["b/"], nuggetIds: [], sessions: 3 }), "no");
+    props.markRejected(
+      props.create({
+        nodeId: b,
+        kind: "new",
+        scope: "global",
+        targetRoot: "/x",
+        writable: ["b/"],
+        nuggetIds: [],
+        sessions: 3,
+      }),
+      "no",
+    );
     tree.updateNode(b, { status: "open" });
 
     mergeSkills(tree, into, [a, b]);
-    expect(db.getNugget(n)).toMatchObject({ nodeId: into, coveredNodeId: into });
+    expect(db.getNugget(n)).toMatchObject({
+      nodeId: into,
+      coveredNodeId: into,
+    });
     expect(tree.getNode(a)).toBeUndefined();
     fkClean(db);
   });

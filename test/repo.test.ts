@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { realpathSync } from "node:fs";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
@@ -31,23 +31,46 @@ describe("resolveRepo", () => {
   it("uses the git top-level for paths inside a repo", async () => {
     const sub = join(ws, "src", "Handbook", "docs");
     await mkdir(sub, { recursive: true });
-    expect(await resolveRepo(sub, "")).toEqual({ ok: true, root: join(ws, "src", "Handbook"), via: "git" });
+    expect(await resolveRepo(sub, "")).toEqual({
+      ok: true,
+      root: join(ws, "src", "Handbook"),
+      via: "git",
+    });
   });
 
   it("maps a workspace root to the package the text mentions most", async () => {
     expect(await isPackageWorkspace(ws)).toBe(true);
-    const text = "Run evals in Datasets. The wiki (Handbook) links to it. Datasets has the configs.";
-    expect(await resolveRepo(ws, text)).toEqual({ ok: true, root: join(ws, "src", "Datasets"), via: "workspace-package" });
+    const text =
+      "Run evals in Datasets. The wiki (Handbook) links to it. Datasets has the configs.";
+    expect(await resolveRepo(ws, text)).toEqual({
+      ok: true,
+      root: join(ws, "src", "Datasets"),
+      via: "workspace-package",
+    });
     // a full path counts more than a bare name
-    expect((await resolveRepo(ws, `Datasets Datasets ${join(ws, "src", "Handbook")}`)) as { root: string }).toMatchObject({
+    expect(
+      (await resolveRepo(
+        ws,
+        `Datasets Datasets ${join(ws, "src", "Handbook")}`,
+      )) as { root: string },
+    ).toMatchObject({
       root: join(ws, "src", "Handbook"),
     });
   });
 
   it("is unresolved on ties or no mention, listing candidates", async () => {
     const tie = await resolveRepo(ws, "Datasets and Handbook");
-    expect(tie).toMatchObject({ ok: false, candidates: [join(ws, "src", "Handbook"), join(ws, "src", "Datasets")].sort() });
-    expect(await resolveRepo(ws, "nothing relevant")).toMatchObject({ ok: false, reason: expect.stringMatching(/none mentioned/) });
+    expect(tie).toMatchObject({
+      ok: false,
+      candidates: [
+        join(ws, "src", "Handbook"),
+        join(ws, "src", "Datasets"),
+      ].sort(),
+    });
+    expect(await resolveRepo(ws, "nothing relevant")).toMatchObject({
+      ok: false,
+      reason: expect.stringMatching(/none mentioned/),
+    });
   });
 
   it("treats topics naming 3+ packages as workspace-wide (unresolved)", async () => {
@@ -58,21 +81,34 @@ describe("resolveRepo", () => {
     }
     await writeFile(join(ws3, "packageInfo"), "");
     const text = "packages: Datasets Datasets Datasets, Handbook, Docs";
-    expect(await resolveRepo(ws3, text)).toMatchObject({ ok: false, reason: expect.stringMatching(/spans 3 packages/) });
+    expect(await resolveRepo(ws3, text)).toMatchObject({
+      ok: false,
+      reason: expect.stringMatching(/spans 3 packages/),
+    });
     // a weak lead (3 vs 2) isn't enough either
-    expect(await resolveRepo(ws, "Datasets Datasets Datasets Handbook Handbook")).toMatchObject({
+    expect(
+      await resolveRepo(ws, "Datasets Datasets Datasets Handbook Handbook"),
+    ).toMatchObject({
       ok: false,
       reason: expect.stringMatching(/no clear winner/),
     });
   });
 
   it("does not match a package name inside a longer word", async () => {
-    expect(await resolveRepo(ws, "HandbookExtra and Datasets")).toMatchObject({ root: join(ws, "src", "Datasets") });
+    expect(await resolveRepo(ws, "HandbookExtra and Datasets")).toMatchObject({
+      root: join(ws, "src", "Datasets"),
+    });
   });
 
   it("uses the only package of a single-package workspace; rejects non-repos", async () => {
-    expect(await resolveRepo(solo, "")).toMatchObject({ ok: true, root: join(solo, "src", "OnlyPkg") });
-    expect(await resolveRepo(plain, "x")).toMatchObject({ ok: false, reason: expect.stringMatching(/not a git repo/) });
+    expect(await resolveRepo(solo, "")).toMatchObject({
+      ok: true,
+      root: join(solo, "src", "OnlyPkg"),
+    });
+    expect(await resolveRepo(plain, "x")).toMatchObject({
+      ok: false,
+      reason: expect.stringMatching(/not a git repo/),
+    });
     expect(await resolveRepo("", "x")).toMatchObject({ ok: false });
   });
 });

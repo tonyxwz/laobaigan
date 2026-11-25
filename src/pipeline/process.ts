@@ -1,14 +1,29 @@
+import { join } from "node:path";
 import { agentModel, type Config } from "../config.ts";
 import type { PiRunner, Usage } from "../pi/run-pi.ts";
 import { addUsage, ZERO_USAGE } from "../pi/run-pi.ts";
-import { loadSkillsDir, renderSkillIndex, repoContext, type SkillInfo } from "../skills/index.ts";
-import { scan, type AgentId, type SessionRef, type SourceAdapter, type Transcript } from "../sources/index.ts";
+import {
+  loadSkillsDir,
+  renderSkillIndex,
+  repoContext,
+  type SkillInfo,
+} from "../skills/index.ts";
+import {
+  type AgentId,
+  type SessionRef,
+  type SourceAdapter,
+  scan,
+  type Transcript,
+} from "../sources/index.ts";
 import type { StateDb } from "../state/db.ts";
 import { Rejections } from "../state/rejections.ts";
-import { extractionMemories, extractNuggets, type ExtractedNugget } from "./extract.ts";
+import {
+  type ExtractedNugget,
+  extractionMemories,
+  extractNuggets,
+} from "./extract.ts";
 import { fingerprintTranscript } from "./fingerprint.ts";
 import { buildExcerpt, type Excerpt } from "./prefilter.ts";
-import { join } from "node:path";
 
 export interface ProcessOptions {
   since?: Date;
@@ -37,9 +52,19 @@ export interface ProcessOptions {
 
 export interface SessionOutcome {
   ref: SessionRef;
-  status: "up-to-date" | "skipped" | "planned" | "extracted" | "deferred" | "error" | "aborted";
+  status:
+    | "up-to-date"
+    | "skipped"
+    | "planned"
+    | "extracted"
+    | "deferred"
+    | "error"
+    | "aborted";
   detail?: string;
-  excerpt?: Pick<Excerpt, "signals" | "redactions"> & { chunks: number; approxTokens: number };
+  excerpt?: Pick<Excerpt, "signals" | "redactions"> & {
+    chunks: number;
+    approxTokens: number;
+  };
   /** The exact chunks sent (or that would be sent) to the model; only with `only`. */
   excerptText?: string[];
   nuggets?: ExtractedNugget[];
@@ -97,7 +122,12 @@ export async function processSessions(
   let abortedReason: string | undefined;
 
   for (const { ref, adapter } of found) {
-    if (opts.only && (ref.agent !== opts.only.agent || !ref.sessionId.startsWith(opts.only.idPrefix))) continue;
+    if (
+      opts.only &&
+      (ref.agent !== opts.only.agent ||
+        !ref.sessionId.startsWith(opts.only.idPrefix))
+    )
+      continue;
     if (abortedReason) {
       outcomes.push({ ref, status: "aborted", detail: "run aborted" });
       continue;
@@ -111,13 +141,16 @@ export async function processSessions(
     try {
       t = await adapter.load(ref);
     } catch (err) {
-      if (persist) db.recordSession(ref, ref.cwd ?? "", "error", `load: ${String(err)}`);
+      if (persist)
+        db.recordSession(ref, ref.cwd ?? "", "error", `load: ${String(err)}`);
       outcomes.push({ ref, status: "error", detail: `load: ${String(err)}` });
       continue;
     }
 
     const fps = fingerprintTranscript(t);
-    const seen = opts.fresh ? new Set<string>() : db.seenFingerprints(fps.values());
+    const seen = opts.fresh
+      ? new Set<string>()
+      : db.seenFingerprints(fps.values());
     for (const fp of fps.values()) if (runSeen.has(fp)) seen.add(fp);
     const excerpt = buildExcerpt(t, fps, seen, {
       chunkTokens: cfg.extract.chunkTokens,
@@ -127,47 +160,91 @@ export async function processSessions(
       signals: excerpt.signals,
       redactions: excerpt.redactions,
       chunks: excerpt.chunks.length,
-      approxTokens: Math.round(excerpt.chunks.reduce((a, c) => a + c.length, 0) / 4),
+      approxTokens: Math.round(
+        excerpt.chunks.reduce((a, c) => a + c.length, 0) / 4,
+      ),
     };
 
     // Never learn from lbg's own drafting/revising sessions.
-    if (/\/lbg-(draft|chat)-[^/]*(\/|$)/.test(t.cwd)) excerpt.skip = "lbg's own drafting session";
+    if (/\/lbg-(draft|chat)-[^/]*(\/|$)/.test(t.cwd))
+      excerpt.skip = "lbg's own drafting session";
     if (excerpt.skip) {
       if (persist) {
         db.tx(() => {
           db.markSeen(t.agent, t.sessionId, fps.values());
-          db.recordSession(ref, t.cwd, "skipped", excerpt.skip, excerpt.signals);
+          db.recordSession(
+            ref,
+            t.cwd,
+            "skipped",
+            excerpt.skip,
+            excerpt.signals,
+          );
         });
       }
       for (const fp of fps.values()) runSeen.add(fp);
-      outcomes.push({ ref, status: "skipped", detail: excerpt.skip, excerpt: summary });
+      outcomes.push({
+        ref,
+        status: "skipped",
+        detail: excerpt.skip,
+        excerpt: summary,
+      });
       continue;
     }
 
     if (opts.plan) {
       for (const fp of fps.values()) runSeen.add(fp);
-      outcomes.push({ ref, status: "planned", excerpt: summary, ...(opts.only ? { excerptText: excerpt.chunks } : {}) });
+      outcomes.push({
+        ref,
+        status: "planned",
+        excerpt: summary,
+        ...(opts.only ? { excerptText: excerpt.chunks } : {}),
+      });
       continue;
     }
     if (calls + excerpt.chunks.length > maxCalls) {
-      outcomes.push({ ref, status: "deferred", detail: `call budget (${maxCalls}) reached`, excerpt: summary });
+      outcomes.push({
+        ref,
+        status: "deferred",
+        detail: `call budget (${maxCalls}) reached`,
+        excerpt: summary,
+      });
       continue;
     }
 
     const repo = await repoContext(t.cwd);
     try {
-      log(`extract ${t.agent}:${t.sessionId} (${summary.chunks} chunk(s), ~${summary.approxTokens} tok)`);
-      const rejected = extractionMemories(memories, repo?.root ?? (t.cwd || undefined));
-      if (rejected.length) log(`  rejected topics in the prompt: ${rejected.map((m) => `#${m.id}`).join(", ")}`);
+      log(
+        `extract ${t.agent}:${t.sessionId} (${summary.chunks} chunk(s), ~${summary.approxTokens} tok)`,
+      );
+      const rejected = extractionMemories(
+        memories,
+        repo?.root ?? (t.cwd || undefined),
+      );
+      if (rejected.length)
+        log(
+          `  rejected topics in the prompt: ${rejected.map((m) => `#${m.id}`).join(", ")}`,
+        );
       const out = await extractNuggets(
         runner,
-        { transcript: t, ...(repo ? { repoRoot: repo.root } : {}), skillIndex: renderSkillIndex(globalSkills, repo), excerpt, rejected },
+        {
+          transcript: t,
+          ...(repo ? { repoRoot: repo.root } : {}),
+          skillIndex: renderSkillIndex(globalSkills, repo),
+          excerpt,
+          rejected,
+        },
         { id: agentModel(cfg).model, thinking: agentModel(cfg).thinking },
       );
-      if (persist) new Rejections(db).addExtractUses(rejected.map((m) => m.id), out.calls);
+      if (persist)
+        new Rejections(db).addExtractUses(
+          rejected.map((m) => m.id),
+          out.calls,
+        );
       calls += out.calls;
       usage = addUsage(usage, out.usage);
-      const nuggets = out.nuggets.map((n) => normalizeScope(n, repo?.root ?? (t.cwd || undefined), globalSkills));
+      const nuggets = out.nuggets.map((n) =>
+        normalizeScope(n, repo?.root ?? (t.cwd || undefined), globalSkills),
+      );
       if (persist) {
         db.tx(() => {
           for (const n of nuggets) {
@@ -198,11 +275,23 @@ export async function processSessions(
             });
           }
           db.markSeen(t.agent, t.sessionId, fps.values());
-          db.recordSession(ref, t.cwd, "extracted", `${nuggets.length} nugget(s), ${out.dropped} dropped`, excerpt.signals);
+          db.recordSession(
+            ref,
+            t.cwd,
+            "extracted",
+            `${nuggets.length} nugget(s), ${out.dropped} dropped`,
+            excerpt.signals,
+          );
         });
       }
       for (const fp of fps.values()) runSeen.add(fp);
-      outcomes.push({ ref, status: "extracted", excerpt: summary, nuggets, usage: out.usage });
+      outcomes.push({
+        ref,
+        status: "extracted",
+        excerpt: summary,
+        nuggets,
+        usage: out.usage,
+      });
       consecutiveErrors = 0;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -217,7 +306,8 @@ export async function processSessions(
 
   if (record) {
     const byStatus: Record<string, number> = {};
-    for (const o of outcomes) byStatus[o.status] = (byStatus[o.status] ?? 0) + 1;
+    for (const o of outcomes)
+      byStatus[o.status] = (byStatus[o.status] ?? 0) + 1;
     db.finishRun(runId, {
       byStatus,
       calls,
@@ -226,16 +316,30 @@ export async function processSessions(
       ...(abortedReason ? { abortedReason } : {}),
     });
   }
-  return { outcomes, usage, calls, warnings, ...(abortedReason ? { abortedReason } : {}) };
+  return {
+    outcomes,
+    usage,
+    calls,
+    warnings,
+    ...(abortedReason ? { abortedReason } : {}),
+  };
 }
 
 /** Fill in the repo for repo-scoped nuggets; fix obviously-wrong coveredBy names. */
 /** `repoRoot`: the session's repo, or its working directory when that isn't a repo (e.g. a multi-repo workspace root). */
-function normalizeScope(n: ExtractedNugget, repoRoot: string | undefined, global: SkillInfo[]): ExtractedNugget {
+function normalizeScope(
+  n: ExtractedNugget,
+  repoRoot: string | undefined,
+  global: SkillInfo[],
+): ExtractedNugget {
   const out = { ...n };
   if (out.scope === "repo" && !out.repo && repoRoot) out.repo = repoRoot;
   if (out.scope === "global") delete out.repo;
-  if (out.coveredBySkill && !global.some((s) => s.name === out.coveredBySkill) && !/agents\.md|claude\.md|\.agents\//i.test(out.coveredBySkill)) {
+  if (
+    out.coveredBySkill &&
+    !global.some((s) => s.name === out.coveredBySkill) &&
+    !/agents\.md|claude\.md|\.agents\//i.test(out.coveredBySkill)
+  ) {
     // Keep the model's hint but mark it as unverified.
     out.coveredBySkill = `?${out.coveredBySkill}`;
   }

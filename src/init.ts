@@ -20,11 +20,16 @@ export interface InitReport {
   pi: { provider?: string; model?: string; cli?: string };
 }
 
-const tilde = (p: string, h: string) => (p === h ? "~" : p.startsWith(`${h}/`) ? `~${p.slice(h.length)}` : p);
+const tilde = (p: string, h: string) =>
+  p === h ? "~" : p.startsWith(`${h}/`) ? `~${p.slice(h.length)}` : p;
 
 /** First `name` on PATH. */
-export function onPath(name: string, path: string = process.env.PATH ?? ""): string | undefined {
-  for (const d of path.split(delimiter)) if (d && existsSync(join(d, name))) return join(d, name);
+export function onPath(
+  name: string,
+  path: string = process.env.PATH ?? "",
+): string | undefined {
+  for (const d of path.split(delimiter))
+    if (d && existsSync(join(d, name))) return join(d, name);
   return undefined;
 }
 
@@ -39,7 +44,11 @@ export async function init(opts: {
   const h = opts.home ?? homedir();
   const skillsDir = opts.skillsDir ?? detectSkillsDir(h);
   const agents = [];
-  for (const a of opts.adapters) agents.push({ agent: a.agent, available: await a.available().catch(() => false) });
+  for (const a of opts.adapters)
+    agents.push({
+      agent: a.agent,
+      available: await a.available().catch(() => false),
+    });
   let config: InitReport["config"] = "kept";
   if (!existsSync(configPath)) {
     mkdirSync(dirname(configPath), { recursive: true });
@@ -60,7 +69,10 @@ export async function init(opts: {
     configPath,
     config,
     skillsDir,
-    skillsDirs: skillsDirCandidates(h).map((p) => ({ path: p, exists: existsSync(p) })),
+    skillsDirs: skillsDirCandidates(h).map((p) => ({
+      path: p,
+      exists: existsSync(p),
+    })),
     agents,
     pi: { ...pi, ...(cli ? { cli } : {}) },
   };
@@ -82,6 +94,12 @@ export function renderInit(r: InitReport, h: string = homedir()): string {
     "  lbg service install     run it hourly in the background (systemd user timer)",
     "  lbg prompt              show waiting proposals in your shell prompt",
   ];
-  if (!r.agents.some((a) => a.available)) lines.splice(lines.indexOf("Next:"), 0, "No agent sessions found; lbg learns from Claude Code, pi, and opencode sessions.", "");
+  if (!r.agents.some((a) => a.available))
+    lines.splice(
+      lines.indexOf("Next:"),
+      0,
+      "No agent sessions found; lbg learns from Claude Code, pi, and opencode sessions.",
+      "",
+    );
   return `${lines.join("\n")}\n`;
 }

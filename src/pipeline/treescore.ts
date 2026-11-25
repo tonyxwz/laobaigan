@@ -1,8 +1,18 @@
 import type { ScoreConfig } from "../config.ts";
 import type { NuggetRow } from "../state/db.ts";
-import { Rejections, type MemoryRow } from "../state/rejections.ts";
-import { subtreeNuggets, type ProposalKind, type Tree, type TreeNode } from "../state/tree.ts";
-import { evidenceStats, meetsPromotion, scoreOf, type EvidenceStats } from "./stats.ts";
+import { type MemoryRow, Rejections } from "../state/rejections.ts";
+import {
+  type ProposalKind,
+  subtreeNuggets,
+  type Tree,
+  type TreeNode,
+} from "../state/tree.ts";
+import {
+  type EvidenceStats,
+  evidenceStats,
+  meetsPromotion,
+  scoreOf,
+} from "./stats.ts";
 
 /**
  * Recursive scoring over the knowledge tree. Recurrence is counted over a
@@ -32,24 +42,40 @@ export function skillStats(skill: TreeNode): SkillStats {
   if (skill.origin !== "file") return base;
   const since = skill.renderedAt?.getTime() ?? 0;
   // Both kinds only count since the last render: an accepted proposal absorbs them.
-  const sinceRender = members.filter((n) => (n.attachedAt?.getTime() ?? Infinity) > since);
+  const sinceRender = members.filter(
+    (n) => (n.attachedAt?.getTime() ?? Infinity) > since,
+  );
   const covered = sinceRender.filter((n) => n.coveredNodeId !== undefined);
   const fresh = sinceRender.filter((n) => n.coveredNodeId === undefined);
   return {
     ...base,
-    fresh: { nuggets: fresh.length, sessions: sessionsOf(fresh), agents: [...new Set(fresh.map((n) => n.agent))].sort() },
+    fresh: {
+      nuggets: fresh.length,
+      sessions: sessionsOf(fresh),
+      agents: [...new Set(fresh.map((n) => n.agent))].sort(),
+    },
     covered: { nuggets: covered.length, sessions: sessionsOf(covered) },
   };
 }
 
 /** Which proposal (if any) a skill has earned, ignoring its current status. */
-export function earnedProposal(skill: TreeNode, stats: SkillStats, cfg: ScoreConfig): ProposalKind | undefined {
+export function earnedProposal(
+  skill: TreeNode,
+  stats: SkillStats,
+  cfg: ScoreConfig,
+): ProposalKind | undefined {
   if (stats.nuggets === 0) return undefined;
-  if (skill.origin !== "file") return meetsPromotion(stats, cfg.promote) ? "new" : undefined;
+  if (skill.origin !== "file")
+    return meetsPromotion(stats, cfg.promote) ? "new" : undefined;
   const p = cfg.promote;
   const fresh = stats.fresh!;
-  if (fresh.sessions >= p.updateMinSessions || (fresh.sessions >= 2 && fresh.agents.length >= 2)) return "update";
-  if (stats.covered!.sessions >= p.fixDescriptionMinSessions) return "fix-description";
+  if (
+    fresh.sessions >= p.updateMinSessions ||
+    (fresh.sessions >= 2 && fresh.agents.length >= 2)
+  )
+    return "update";
+  if (stats.covered!.sessions >= p.fixDescriptionMinSessions)
+    return "fix-description";
   return undefined;
 }
 
@@ -76,7 +102,10 @@ export interface TreeScoreResult {
  *   later        re-proposed after `reproposeAfterSessions` new sessions (the default rule)
  * No memory in effect (none, forgotten, expired): the default rule.
  */
-export function rejectedRule(skill: TreeNode, memory: MemoryRow | undefined): "never" | "after-rejection" | "default" {
+export function rejectedRule(
+  skill: TreeNode,
+  memory: MemoryRow | undefined,
+): "never" | "after-rejection" | "default" {
   if (skill.status !== "rejected" || !memory) return "default";
   if (memory.kind === "not-useful") return "never";
   if (memory.kind === "outdated") return "after-rejection";
@@ -91,7 +120,8 @@ export function applyWrongPlace(tree: Tree): number {
     if (m.kind !== "wrong-place" || m.targetNodeId === undefined) continue;
     const skill = tree.subtree(nodeId);
     const target = tree.getNode(m.targetNodeId);
-    if (!skill || skill.status !== "rejected" || !target || target.depth !== 1) continue;
+    if (!skill || skill.status !== "rejected" || !target || target.depth !== 1)
+      continue;
     const ns = subtreeNuggets(skill).filter((n) => !n.assignmentLocked);
     if (!ns.length) continue;
     for (const n of ns) {
@@ -115,29 +145,67 @@ function attachedAfter(skill: TreeNode, at: number): TreeNode {
 }
 
 export function scoreTree(tree: Tree, cfg: ScoreConfig): TreeScoreResult {
-  const res: TreeScoreResult = { scored: 0, promoted: [], demoted: [], moved: 0 };
+  const res: TreeScoreResult = {
+    scored: 0,
+    promoted: [],
+    demoted: [],
+    moved: 0,
+  };
   tree.db.tx(() => {
     res.moved = applyWrongPlace(tree);
     const memories = new Rejections(tree.db).byNode();
     for (const root of tree.trees()) {
       for (const skill of root.children) {
         const rule = rejectedRule(skill, memories.get(skill.id));
-        const counted = rule === "after-rejection" ? attachedAfter(skill, memories.get(skill.id)!.createdAt.getTime()) : skill;
+        const counted =
+          rule === "after-rejection"
+            ? attachedAfter(skill, memories.get(skill.id)!.createdAt.getTime())
+            : skill;
         const stats = skillStats(counted);
         const score = scoreOf(stats, cfg.weights);
         res.scored++;
-        let kind = rule === "never" ? undefined : earnedProposal(counted, stats, cfg);
-        if (rule === "default" && skill.status === "rejected" && stats.sessions < (skill.rejectedSessions ?? 0) + cfg.promote.reproposeAfterSessions) kind = undefined;
+        let kind =
+          rule === "never" ? undefined : earnedProposal(counted, stats, cfg);
+        if (
+          rule === "default" &&
+          skill.status === "rejected" &&
+          stats.sessions <
+            (skill.rejectedSessions ?? 0) + cfg.promote.reproposeAfterSessions
+        )
+          kind = undefined;
 
         if (skill.status === "proposed") {
           tree.updateNode(skill.id, { stats, score });
         } else if (kind) {
-          tree.updateNode(skill.id, { stats, score, status: "candidate", proposalKind: kind });
-          if (skill.status !== "candidate" || skill.proposalKind !== kind) res.promoted.push({ id: skill.id, title: skill.name ?? skill.title, kind, score });
+          tree.updateNode(skill.id, {
+            stats,
+            score,
+            status: "candidate",
+            proposalKind: kind,
+          });
+          if (skill.status !== "candidate" || skill.proposalKind !== kind)
+            res.promoted.push({
+              id: skill.id,
+              title: skill.name ?? skill.title,
+              kind,
+              score,
+            });
         } else {
-          tree.db.db.prepare("UPDATE node SET proposal_kind = NULL WHERE id = ?").run(skill.id);
-          tree.updateNode(skill.id, { stats, score, ...(skill.status === "candidate" ? { status: "open" as const } : {}) });
-          if (skill.status === "candidate") res.demoted.push({ id: skill.id, title: skill.name ?? skill.title });
+          tree.db.db
+            .prepare("UPDATE node SET proposal_kind = NULL WHERE id = ?")
+            .run(skill.id);
+          tree.updateNode(skill.id, {
+            stats,
+            score,
+            ...(skill.status === "candidate"
+              ? { status: "open" as const }
+              : {}),
+          });
+          if (skill.status === "candidate")
+            res.demoted.push({
+              id: skill.id,
+              title: skill.name ?? skill.title,
+            });
         }
       }
     }

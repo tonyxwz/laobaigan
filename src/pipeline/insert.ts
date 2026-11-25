@@ -1,10 +1,15 @@
-import { Type, type Static, type TSchema } from "typebox";
+import { type Static, type TSchema, Type } from "typebox";
 import { agentModel, type Config } from "../config.ts";
 import type { PiRequest, PiRunner, Usage } from "../pi/run-pi.ts";
 import { addUsage, ZERO_USAGE } from "../pi/run-pi.ts";
 import type { NuggetRow } from "../state/db.ts";
-import { Rejections, type MemoryRow } from "../state/rejections.ts";
-import { subtreeNuggets, Tree, type Scope, type TreeNode } from "../state/tree.ts";
+import { type MemoryRow, Rejections } from "../state/rejections.ts";
+import {
+  type Scope,
+  subtreeNuggets,
+  type Tree,
+  type TreeNode,
+} from "../state/tree.ts";
 import { truncate } from "../util/text.ts";
 import { skillName } from "./stats.ts";
 
@@ -25,19 +30,37 @@ import { skillName } from "./stats.ts";
 export const SkillRouteSchema = Type.Object({
   newSkills: Type.Array(
     Type.Object({
-      key: Type.String({ description: "Short local id you invent, e.g. 's1'." }),
-      title: Type.String({ description: "Skill title, e.g. 'Dotfiles management'." }),
-      name: Type.Optional(Type.String({ description: "Skill name: lowercase letters, digits, single hyphens." })),
-      description: Type.String({ description: "One sentence: what it covers and WHEN an agent should use it." }),
+      key: Type.String({
+        description: "Short local id you invent, e.g. 's1'.",
+      }),
+      title: Type.String({
+        description: "Skill title, e.g. 'Dotfiles management'.",
+      }),
+      name: Type.Optional(
+        Type.String({
+          description: "Skill name: lowercase letters, digits, single hyphens.",
+        }),
+      ),
+      description: Type.String({
+        description:
+          "One sentence: what it covers and WHEN an agent should use it.",
+      }),
     }),
   ),
   placements: Type.Array(
     Type.Object({
       nuggetId: Type.Integer(),
-      skillId: Type.Optional(Type.Integer({ description: "An EXISTING skill id." })),
-      newSkillKey: Type.Optional(Type.String({ description: "A key from newSkills." })),
+      skillId: Type.Optional(
+        Type.Integer({ description: "An EXISTING skill id." }),
+      ),
+      newSkillKey: Type.Optional(
+        Type.String({ description: "A key from newSkills." }),
+      ),
     }),
-    { description: "Exactly one entry per new nugget, with exactly one of skillId / newSkillKey." },
+    {
+      description:
+        "Exactly one entry per new nugget, with exactly one of skillId / newSkillKey.",
+    },
   ),
 });
 export type SkillRoute = Static<typeof SkillRouteSchema>;
@@ -62,22 +85,40 @@ Rules:
 export const SectionRouteSchema = Type.Object({
   newSections: Type.Array(
     Type.Object({
-      key: Type.String({ description: "Short local id you invent, e.g. 'n1'." }),
+      key: Type.String({
+        description: "Short local id you invent, e.g. 'n1'.",
+      }),
       title: Type.String({ description: "Section title, e.g. 'tmux'." }),
-      description: Type.String({ description: "One sentence: what this section covers." }),
+      description: Type.String({
+        description: "One sentence: what this section covers.",
+      }),
     }),
   ),
   placements: Type.Array(
     Type.Object({
       nuggetId: Type.Integer(),
-      sectionId: Type.Optional(Type.Integer({ description: "An EXISTING section id." })),
-      newSectionKey: Type.Optional(Type.String({ description: "A key from newSections." })),
-      body: Type.Optional(Type.Boolean({ description: "True: belongs in the skill's main text, not a section." })),
+      sectionId: Type.Optional(
+        Type.Integer({ description: "An EXISTING section id." }),
+      ),
+      newSectionKey: Type.Optional(
+        Type.String({ description: "A key from newSections." }),
+      ),
+      body: Type.Optional(
+        Type.Boolean({
+          description: "True: belongs in the skill's main text, not a section.",
+        }),
+      ),
       alreadyCovered: Type.Optional(
-        Type.Boolean({ description: "True if the target section/skill text ALREADY states this knowledge." }),
+        Type.Boolean({
+          description:
+            "True if the target section/skill text ALREADY states this knowledge.",
+        }),
       ),
     }),
-    { description: "Exactly one entry per nugget, with exactly one of sectionId / newSectionKey / body." },
+    {
+      description:
+        "Exactly one entry per nugget, with exactly one of sectionId / newSectionKey / body.",
+    },
   ),
 });
 export type SectionRoute = Static<typeof SectionRouteSchema>;
@@ -99,7 +140,11 @@ function renderNugget(n: NuggetRow): string {
     `<nugget id="${n.id}" kind="${n.kind}">`,
     `title: ${n.title}`,
     ...(n.triggers.length ? [`triggers: ${n.triggers.join("; ")}`] : []),
-    ...(n.excludedFrom.length ? [`not_in_skills: ${n.excludedFrom.join(", ")} (left out of them as off-topic; never place it there)`] : []),
+    ...(n.excludedFrom.length
+      ? [
+          `not_in_skills: ${n.excludedFrom.join(", ")} (left out of them as off-topic; never place it there)`,
+        ]
+      : []),
     truncate(n.knowledge, 800),
     "</nugget>",
   ].join("\n");
@@ -108,41 +153,90 @@ function renderNugget(n: NuggetRow): string {
 const originLabel = (s: TreeNode) => (s.origin === "file" ? "live" : s.origin);
 
 /** Stable first (skill list), new nuggets last, so the prefix can be cached. */
-export function buildSkillPrompt(root: TreeNode, nuggets: NuggetRow[], rejected: Map<number, MemoryRow> = new Map()): string {
-  const lines = [`Scope: ${root.scope === "global" ? "global (applies across repositories)" : `repository ${root.repo}`}`, "", "<skills>"];
+export function buildSkillPrompt(
+  root: TreeNode,
+  nuggets: NuggetRow[],
+  rejected: Map<number, MemoryRow> = new Map(),
+): string {
+  const lines = [
+    `Scope: ${root.scope === "global" ? "global (applies across repositories)" : `repository ${root.repo}`}`,
+    "",
+    "<skills>",
+  ];
   const byId = new Map(root.children.map((c) => [c.id, c]));
   for (const s of root.children) {
     const m = rejected.get(s.id);
-    const target = m?.kind === "wrong-place" && m.targetNodeId !== undefined ? byId.get(m.targetNodeId) : undefined;
+    const target =
+      m?.kind === "wrong-place" && m.targetNodeId !== undefined
+        ? byId.get(m.targetNodeId)
+        : undefined;
     lines.push(
       `<skill id="${s.id}" kind="${originLabel(s)}"${s.name ? ` name="${s.name}"` : ""}${m ? ` rejected="${m.kind}"` : ""}>`,
       `title: ${s.title}`,
-      ...(s.description ? [`description: ${truncate(s.description, 300)}`] : []),
-      ...(m?.rule ? [`rejection_rule: ${m.rule}${target ? ` (route this knowledge to skill id ${target.id}, ${target.name ?? target.title})` : ""}`] : []),
-      ...(s.children.length ? [`sections: ${s.children.map((c) => c.title).join(" | ")}`] : []),
+      ...(s.description
+        ? [`description: ${truncate(s.description, 300)}`]
+        : []),
+      ...(m?.rule
+        ? [
+            `rejection_rule: ${m.rule}${target ? ` (route this knowledge to skill id ${target.id}, ${target.name ?? target.title})` : ""}`,
+          ]
+        : []),
+      ...(s.children.length
+        ? [`sections: ${s.children.map((c) => c.title).join(" | ")}`]
+        : []),
       "</skill>",
     );
   }
   if (!root.children.length) lines.push("(none yet)");
-  lines.push("</skills>", "", "<new_nuggets>", ...nuggets.map(renderNugget), "</new_nuggets>", "", "Call route_to_skills now.");
+  lines.push(
+    "</skills>",
+    "",
+    "<new_nuggets>",
+    ...nuggets.map(renderNugget),
+    "</new_nuggets>",
+    "",
+    "Call route_to_skills now.",
+  );
   return lines.join("\n");
 }
 
-export function buildSectionPrompt(skill: TreeNode, nuggets: NuggetRow[]): string {
+export function buildSectionPrompt(
+  skill: TreeNode,
+  nuggets: NuggetRow[],
+): string {
   const lines = [
     `<skill id="${skill.id}" kind="${originLabel(skill)}"${skill.name ? ` name="${skill.name}"` : ""}>`,
     `title: ${skill.title}`,
-    ...(skill.description ? [`description: ${truncate(skill.description, 300)}`] : []),
+    ...(skill.description
+      ? [`description: ${truncate(skill.description, 300)}`]
+      : []),
     ...(skill.summary ? [`body: ${truncate(skill.summary, 1500)}`] : []),
     "</skill>",
     "",
     "<sections>",
   ];
   for (const c of skill.children) {
-    lines.push(`<section id="${c.id}">`, `title: ${c.title}`, ...(c.summary ? [truncate(c.summary, 1200)] : c.description ? [c.description] : []), "</section>");
+    lines.push(
+      `<section id="${c.id}">`,
+      `title: ${c.title}`,
+      ...(c.summary
+        ? [truncate(c.summary, 1200)]
+        : c.description
+          ? [c.description]
+          : []),
+      "</section>",
+    );
   }
   if (!skill.children.length) lines.push("(none yet)");
-  lines.push("</sections>", "", "<new_nuggets>", ...nuggets.map(renderNugget), "</new_nuggets>", "", "Call route_to_sections now.");
+  lines.push(
+    "</sections>",
+    "",
+    "<new_nuggets>",
+    ...nuggets.map(renderNugget),
+    "</new_nuggets>",
+    "",
+    "Call route_to_sections now.",
+  );
   return lines.join("\n");
 }
 
@@ -151,12 +245,22 @@ export function buildSectionPrompt(skill: TreeNode, nuggets: NuggetRow[]): strin
 const SKILL_NAME = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 
 export interface SkillPlan {
-  newSkills: { key: string; title: string; name: string; description: string; nuggetIds: number[] }[];
+  newSkills: {
+    key: string;
+    title: string;
+    name: string;
+    description: string;
+    nuggetIds: number[];
+  }[];
   placements: { nuggetId: number; skillId: number }[];
   repairs: string[];
 }
 
-export function validateSkillRoute(res: SkillRoute, root: TreeNode, nuggets: NuggetRow[]): SkillPlan {
+export function validateSkillRoute(
+  res: SkillRoute,
+  root: TreeNode,
+  nuggets: NuggetRow[],
+): SkillPlan {
   const repairs: string[] = [];
   const ids = new Set(nuggets.map((n) => n.id));
   const skills = new Set(root.children.map((c) => c.id));
@@ -167,10 +271,19 @@ export function validateSkillRoute(res: SkillRoute, root: TreeNode, nuggets: Nug
       repairs.push(`duplicate new skill key ${s.key}`);
       continue;
     }
-    let name = s.name && SKILL_NAME.test(s.name) && s.name.length <= 64 ? s.name : skillName(s.title);
+    let name =
+      s.name && SKILL_NAME.test(s.name) && s.name.length <= 64
+        ? s.name
+        : skillName(s.title);
     if (taken.has(name)) name = `${name}-${byKey.size + 2}`;
     taken.add(name);
-    byKey.set(s.key, { key: s.key, title: s.title, name, description: s.description, nuggetIds: [] });
+    byKey.set(s.key, {
+      key: s.key,
+      title: s.title,
+      name,
+      description: s.description,
+      nuggetIds: [],
+    });
   }
   const placed = new Set<number>();
   const placements: SkillPlan["placements"] = [];
@@ -183,15 +296,25 @@ export function validateSkillRoute(res: SkillRoute, root: TreeNode, nuggets: Nug
       repairs.push(`nugget ${p.nuggetId} placed twice; kept first`);
       continue;
     }
-    const banned = p.skillId !== undefined && nuggets.find((n) => n.id === p.nuggetId)!.excludedFrom.includes(p.skillId);
+    const banned =
+      p.skillId !== undefined &&
+      nuggets
+        .find((n) => n.id === p.nuggetId)!
+        .excludedFrom.includes(p.skillId);
     if (banned) {
-      repairs.push(`nugget ${p.nuggetId}: was left out of skill ${p.skillId}; new skill`);
+      repairs.push(
+        `nugget ${p.nuggetId}: was left out of skill ${p.skillId}; new skill`,
+      );
       continue;
     }
-    if (p.skillId !== undefined && skills.has(p.skillId)) placements.push({ nuggetId: p.nuggetId, skillId: p.skillId });
-    else if (p.newSkillKey !== undefined && byKey.has(p.newSkillKey)) byKey.get(p.newSkillKey)!.nuggetIds.push(p.nuggetId);
+    if (p.skillId !== undefined && skills.has(p.skillId))
+      placements.push({ nuggetId: p.nuggetId, skillId: p.skillId });
+    else if (p.newSkillKey !== undefined && byKey.has(p.newSkillKey))
+      byKey.get(p.newSkillKey)!.nuggetIds.push(p.nuggetId);
     else {
-      repairs.push(`nugget ${p.nuggetId}: invalid target ${p.skillId ?? p.newSkillKey}`);
+      repairs.push(
+        `nugget ${p.nuggetId}: invalid target ${p.skillId ?? p.newSkillKey}`,
+      );
       continue;
     }
     placed.add(p.nuggetId);
@@ -202,26 +325,51 @@ export function validateSkillRoute(res: SkillRoute, root: TreeNode, nuggets: Nug
     let name = skillName(n.title);
     if (taken.has(name)) name = `${name}-${n.id}`;
     taken.add(name);
-    byKey.set(`auto-${n.id}`, { key: `auto-${n.id}`, title: n.title, name, description: n.triggers[0] ?? n.title, nuggetIds: [n.id] });
+    byKey.set(`auto-${n.id}`, {
+      key: `auto-${n.id}`,
+      title: n.title,
+      name,
+      description: n.triggers[0] ?? n.title,
+      nuggetIds: [n.id],
+    });
   }
-  return { newSkills: [...byKey.values()].filter((s) => s.nuggetIds.length), placements, repairs };
+  return {
+    newSkills: [...byKey.values()].filter((s) => s.nuggetIds.length),
+    placements,
+    repairs,
+  };
 }
 
 export interface SectionPlan {
-  newSections: { key: string; title: string; description: string; nuggetIds: number[] }[];
+  newSections: {
+    key: string;
+    title: string;
+    description: string;
+    nuggetIds: number[];
+  }[];
   /** sectionId undefined = skill body. */
   placements: { nuggetId: number; sectionId?: number; covered: boolean }[];
   repairs: string[];
 }
 
-export function validateSectionRoute(res: SectionRoute, skill: TreeNode, nuggets: NuggetRow[]): SectionPlan {
+export function validateSectionRoute(
+  res: SectionRoute,
+  skill: TreeNode,
+  nuggets: NuggetRow[],
+): SectionPlan {
   const repairs: string[] = [];
   const ids = new Set(nuggets.map((n) => n.id));
   const sections = new Set(skill.children.map((c) => c.id));
   const byKey = new Map<string, SectionPlan["newSections"][number]>();
   for (const s of res.newSections) {
     if (byKey.has(s.key)) repairs.push(`duplicate new section key ${s.key}`);
-    else byKey.set(s.key, { key: s.key, title: s.title, description: s.description, nuggetIds: [] });
+    else
+      byKey.set(s.key, {
+        key: s.key,
+        title: s.title,
+        description: s.description,
+        nuggetIds: [],
+      });
   }
   const placed = new Set<number>();
   const placements: SectionPlan["placements"] = [];
@@ -231,13 +379,23 @@ export function validateSectionRoute(res: SectionRoute, skill: TreeNode, nuggets
       continue;
     }
     if (p.sectionId !== undefined && sections.has(p.sectionId)) {
-      placements.push({ nuggetId: p.nuggetId, sectionId: p.sectionId, covered: p.alreadyCovered === true });
+      placements.push({
+        nuggetId: p.nuggetId,
+        sectionId: p.sectionId,
+        covered: p.alreadyCovered === true,
+      });
     } else if (p.newSectionKey !== undefined && byKey.has(p.newSectionKey)) {
       byKey.get(p.newSectionKey)!.nuggetIds.push(p.nuggetId);
     } else {
       // body (explicit, or as the safe fallback for an invalid target)
-      if (!p.body) repairs.push(`nugget ${p.nuggetId}: invalid section ${p.sectionId ?? p.newSectionKey}; skill body`);
-      placements.push({ nuggetId: p.nuggetId, covered: p.body === true && p.alreadyCovered === true });
+      if (!p.body)
+        repairs.push(
+          `nugget ${p.nuggetId}: invalid section ${p.sectionId ?? p.newSectionKey}; skill body`,
+        );
+      placements.push({
+        nuggetId: p.nuggetId,
+        covered: p.body === true && p.alreadyCovered === true,
+      });
     }
     placed.add(p.nuggetId);
   }
@@ -246,7 +404,11 @@ export function validateSectionRoute(res: SectionRoute, skill: TreeNode, nuggets
     repairs.push(`nugget ${n.id} unplaced; skill body`);
     placements.push({ nuggetId: n.id, covered: false });
   }
-  return { newSections: [...byKey.values()].filter((s) => s.nuggetIds.length), placements, repairs };
+  return {
+    newSections: [...byKey.values()].filter((s) => s.nuggetIds.length),
+    placements,
+    repairs,
+  };
 }
 
 // ---- driver ---------------------------------------------------------------------
@@ -267,7 +429,9 @@ export interface InsertResult {
 
 /** Level 2 is worth a call when the skill has sections, or is a non-file skill growing several new nuggets. */
 function wantsSections(skill: TreeNode, incoming: number): boolean {
-  return skill.children.length > 0 || (skill.origin !== "file" && incoming >= 2);
+  return (
+    skill.children.length > 0 || (skill.origin !== "file" && incoming >= 2)
+  );
 }
 
 /** A repo nugget without a repo (older extractions) belongs to its session's working directory. */
@@ -277,7 +441,8 @@ function scopeOf(n: NuggetRow): Scope | undefined {
   return repo ? { scope: "repo", repo } : undefined;
 }
 
-const scopeKey = (s: Scope) => (s.scope === "global" ? "global" : `repo:${s.repo}`);
+const scopeKey = (s: Scope) =>
+  s.scope === "global" ? "global" : `repo:${s.repo}`;
 
 /**
  * Place nuggets in the tree (default: all unplaced ones). Call `syncTree` first so
@@ -287,13 +452,30 @@ export async function insertNuggets(
   tree: Tree,
   runner: PiRunner,
   cfg: Config,
-  opts: { nuggets?: NuggetRow[]; maxCalls?: number; batchSize?: number; log?: (m: string) => void } = {},
+  opts: {
+    nuggets?: NuggetRow[];
+    maxCalls?: number;
+    batchSize?: number;
+    log?: (m: string) => void;
+  } = {},
 ): Promise<InsertResult> {
   const log = opts.log ?? (() => {});
   const maxCalls = opts.maxCalls ?? Infinity;
   const batchSize = opts.batchSize ?? 40;
-  const res: InsertResult = { placed: 0, skillsCreated: [], sectionsCreated: [], covered: 0, repairs: [], calls: 0, usage: ZERO_USAGE, deferred: 0, caught: [] };
-  const call = async <S extends TSchema>(req: PiRequest<S>): Promise<Static<S>> => {
+  const res: InsertResult = {
+    placed: 0,
+    skillsCreated: [],
+    sectionsCreated: [],
+    covered: 0,
+    repairs: [],
+    calls: 0,
+    usage: ZERO_USAGE,
+    deferred: 0,
+    caught: [],
+  };
+  const call = async <S extends TSchema>(
+    req: PiRequest<S>,
+  ): Promise<Static<S>> => {
     const r = await runner.run(req);
     res.calls++;
     res.usage = addUsage(res.usage, r.usage);
@@ -305,11 +487,15 @@ export async function insertNuggets(
   for (const n of pending) {
     const s = scopeOf(n);
     if (!s) {
-      res.repairs.push(`nugget ${n.id}: repo-specific but no repository or working directory; left unplaced`);
+      res.repairs.push(
+        `nugget ${n.id}: repo-specific but no repository or working directory; left unplaced`,
+      );
       continue;
     }
     if (s.scope === "repo" && !n.repo) {
-      tree.db.db.prepare("UPDATE nugget SET repo = ? WHERE id = ?").run(s.repo!, n.id);
+      tree.db.db
+        .prepare("UPDATE nugget SET repo = ? WHERE id = ?")
+        .run(s.repo!, n.id);
       n.repo = s.repo!;
     }
     const e = byScope.get(scopeKey(s)) ?? { scope: s, nuggets: [] };
@@ -325,26 +511,50 @@ export async function insertNuggets(
       // Rejected skills, with the rule of their newest memory: look-alikes go there, not to a twin.
       const memories = new Rejections(tree.db);
       const inEffect = memories.byNode();
-      const rejected = new Map([...inEffect].filter(([id]) => root.children.some((c) => c.id === id && c.status === "rejected")));
+      const rejected = new Map(
+        [...inEffect].filter(([id]) =>
+          root.children.some((c) => c.id === id && c.status === "rejected"),
+        ),
+      );
 
       // ---- level 1: which skill?
       let plan: SkillPlan;
       if (root.children.length === 0 && batch.length === 1) {
         const n = batch[0]!;
-        plan = { newSkills: [{ key: "solo", title: n.title, name: skillName(n.title), description: n.triggers[0] ?? n.title, nuggetIds: [n.id] }], placements: [], repairs: [] };
+        plan = {
+          newSkills: [
+            {
+              key: "solo",
+              title: n.title,
+              name: skillName(n.title),
+              description: n.triggers[0] ?? n.title,
+              nuggetIds: [n.id],
+            },
+          ],
+          placements: [],
+          repairs: [],
+        };
       } else {
         if (res.calls >= maxCalls) {
           res.deferred += all.length - i;
-          log(`insert ${scopeKey(scope)}: call budget (${maxCalls}) reached; ${all.length - i} nugget(s) wait for the next run`);
+          log(
+            `insert ${scopeKey(scope)}: call budget (${maxCalls}) reached; ${all.length - i} nugget(s) wait for the next run`,
+          );
           break;
         }
-        log(`insert ${scopeKey(scope)}: ${batch.length} nugget(s) vs ${root.children.length} skill(s)`);
+        log(
+          `insert ${scopeKey(scope)}: ${batch.length} nugget(s) vs ${root.children.length} skill(s)`,
+        );
         plan = validateSkillRoute(
           await call({
             ...agentModel(cfg),
             systemPrompt: withGuidance(SKILL_SYSTEM_PROMPT, cfg),
             prompt: buildSkillPrompt(root, batch, rejected),
-            resultTool: { name: "route_to_skills", description: "Place each new nugget in a skill.", parameters: SkillRouteSchema },
+            resultTool: {
+              name: "route_to_skills",
+              description: "Place each new nugget in a skill.",
+              parameters: SkillRouteSchema,
+            },
           }),
           root,
           batch,
@@ -357,28 +567,52 @@ export async function insertNuggets(
       const byId = new Map(batch.map((n) => [n.id, n]));
       tree.db.tx(() => {
         for (const s of plan.newSkills) {
-          const id = tree.createNode(rootId, { title: s.title, name: s.name, description: s.description });
+          const id = tree.createNode(rootId, {
+            title: s.title,
+            name: s.name,
+            description: s.description,
+          });
           res.skillsCreated.push(s.name);
-          toSkill.set(id, s.nuggetIds.map((x) => byId.get(x)!));
+          toSkill.set(
+            id,
+            s.nuggetIds.map((x) => byId.get(x)!),
+          );
         }
       });
-      for (const p of plan.placements) toSkill.set(p.skillId, [...(toSkill.get(p.skillId) ?? []), byId.get(p.nuggetId)!]);
+      for (const p of plan.placements)
+        toSkill.set(p.skillId, [
+          ...(toSkill.get(p.skillId) ?? []),
+          byId.get(p.nuggetId)!,
+        ]);
 
       // ---- level 2: which section?
       for (const [skillId, ns] of toSkill) {
         const skill = tree.subtree(skillId)!;
         let sp: SectionPlan;
         if (!wantsSections(skill, ns.length) || res.calls >= maxCalls) {
-          if (wantsSections(skill, ns.length)) log(`insert: call budget reached; ${ns.length} nugget(s) go to the body of ${skill.name ?? skill.title}`);
-          sp = { newSections: [], placements: ns.map((n) => ({ nuggetId: n.id, covered: false })), repairs: [] };
+          if (wantsSections(skill, ns.length))
+            log(
+              `insert: call budget reached; ${ns.length} nugget(s) go to the body of ${skill.name ?? skill.title}`,
+            );
+          sp = {
+            newSections: [],
+            placements: ns.map((n) => ({ nuggetId: n.id, covered: false })),
+            repairs: [],
+          };
         } else {
-          log(`insert ${skill.name ?? skill.title}: ${ns.length} nugget(s) vs ${skill.children.length} section(s)`);
+          log(
+            `insert ${skill.name ?? skill.title}: ${ns.length} nugget(s) vs ${skill.children.length} section(s)`,
+          );
           sp = validateSectionRoute(
             await call({
               ...agentModel(cfg),
               systemPrompt: withGuidance(SECTION_SYSTEM_PROMPT, cfg),
               prompt: buildSectionPrompt(skill, ns),
-              resultTool: { name: "route_to_sections", description: "Place each nugget in a section of this skill.", parameters: SectionRouteSchema },
+              resultTool: {
+                name: "route_to_sections",
+                description: "Place each nugget in a section of this skill.",
+                parameters: SectionRouteSchema,
+              },
             }),
             skill,
             ns,
@@ -388,12 +622,21 @@ export async function insertNuggets(
         const caught = rejected.get(skillId);
         if (caught) {
           memories.addCaught(caught.id, ns.length);
-          res.caught.push({ memoryId: caught.id, skill: skill.name ?? skill.title, nuggets: ns.length });
+          res.caught.push({
+            memoryId: caught.id,
+            skill: skill.name ?? skill.title,
+            nuggets: ns.length,
+          });
         }
         tree.db.tx(() => {
           for (const s of sp.newSections) {
-            const id = tree.createNode(skillId, { title: s.title, description: s.description });
-            res.sectionsCreated.push(`${skill.name ?? skill.title} › ${s.title}`);
+            const id = tree.createNode(skillId, {
+              title: s.title,
+              description: s.description,
+            });
+            res.sectionsCreated.push(
+              `${skill.name ?? skill.title} › ${s.title}`,
+            );
             for (const n of s.nuggetIds) tree.attachNugget(n, id);
             res.placed += s.nuggetIds.length;
           }
@@ -401,7 +644,10 @@ export async function insertNuggets(
             const target = p.sectionId ?? skillId;
             tree.attachNugget(p.nuggetId, target);
             // Only live text can already "cover" something; latent text is our own summary.
-            const live = (p.sectionId ? skill.children.find((c) => c.id === p.sectionId)?.origin : skill.origin) === "file";
+            const live =
+              (p.sectionId
+                ? skill.children.find((c) => c.id === p.sectionId)?.origin
+                : skill.origin) === "file";
             if (p.covered && live) {
               tree.setCovered(p.nuggetId, target);
               res.covered++;
@@ -419,7 +665,9 @@ export async function insertNuggets(
 
 function withGuidance(prompt: string, cfg: Config): string {
   const g = cfg.clustering.guidance?.trim();
-  return g ? `${prompt}\n\nGuidance from the engineer (follow it):\n${g}` : prompt;
+  return g
+    ? `${prompt}\n\nGuidance from the engineer (follow it):\n${g}`
+    : prompt;
 }
 
 /**
@@ -431,7 +679,12 @@ export function detachLatent(tree: Tree): NuggetRow[] {
   tree.db.tx(() => {
     for (const root of tree.trees()) {
       for (const skill of root.children) {
-        if (skill.origin !== "latent" || skill.locked || (skill.status !== "open" && skill.status !== "candidate")) continue;
+        if (
+          skill.origin !== "latent" ||
+          skill.locked ||
+          (skill.status !== "open" && skill.status !== "candidate")
+        )
+          continue;
         for (const n of subtreeNuggets(skill)) {
           if (n.assignmentLocked) continue;
           tree.detachNugget(n.id);

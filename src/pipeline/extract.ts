@@ -1,9 +1,9 @@
-import { Type, type Static } from "typebox";
+import { type Static, Type } from "typebox";
 import type { PiRunner, ThinkingLevel, Usage } from "../pi/run-pi.ts";
 import { addUsage, ZERO_USAGE } from "../pi/run-pi.ts";
 import type { Transcript } from "../sources/types.ts";
-import type { Excerpt } from "./prefilter.ts";
 import type { MemoryRow } from "../state/rejections.ts";
+import type { Excerpt } from "./prefilter.ts";
 
 export const NuggetSchema = Type.Object({
   kind: Type.Union([
@@ -13,31 +13,50 @@ export const NuggetSchema = Type.Object({
     Type.Literal("correction"),
     Type.Literal("location"),
   ]),
-  title: Type.String({ description: "One line, canonical phrasing of the knowledge." }),
+  title: Type.String({
+    description: "One line, canonical phrasing of the knowledge.",
+  }),
   knowledge: Type.String({
     description:
       "The knowledge itself, self-contained, in markdown: exact commands, paths, names, rules, and the why. Written so an agent with no access to this session can act on it.",
   }),
   triggers: Type.Array(Type.String(), {
-    description: "Situations in which an agent would need this, e.g. 'building a Gradle project'.",
+    description:
+      "Situations in which an agent would need this, e.g. 'building a Gradle project'.",
   }),
   scope: Type.Union([Type.Literal("global"), Type.Literal("repo")], {
-    description: "'repo' if it only matters inside one repository/package; 'global' if it helps across repos.",
+    description:
+      "'repo' if it only matters inside one repository/package; 'global' if it helps across repos.",
   }),
   repo: Type.Optional(
-    Type.String({ description: "Absolute path of the repository when scope is 'repo'. Omit if unknown." }),
+    Type.String({
+      description:
+        "Absolute path of the repository when scope is 'repo'. Omit if unknown.",
+    }),
   ),
   evidence: Type.Array(
     Type.Object({
-      label: Type.String({ description: "A USER turn label from the transcript, e.g. 'U3'. Never 'C'." }),
-      quote: Type.String({ description: "Short verbatim quote (≤ 200 chars) from that turn." }),
+      label: Type.String({
+        description:
+          "A USER turn label from the transcript, e.g. 'U3'. Never 'C'.",
+      }),
+      quote: Type.String({
+        description: "Short verbatim quote (≤ 200 chars) from that turn.",
+      }),
     }),
     { minItems: 1 },
   ),
   coveredBySkill: Type.Optional(
-    Type.String({ description: "Name of an existing skill (or AGENTS.md) that already contains this knowledge." }),
+    Type.String({
+      description:
+        "Name of an existing skill (or AGENTS.md) that already contains this knowledge.",
+    }),
   ),
-  confidence: Type.Number({ minimum: 0, maximum: 1, description: "How sure you are this is reusable knowledge." }),
+  confidence: Type.Number({
+    minimum: 0,
+    maximum: 1,
+    description: "How sure you are this is reusable knowledge.",
+  }),
 });
 
 export const ReportSchema = Type.Object({
@@ -86,15 +105,25 @@ export interface ExtractInput {
 }
 
 /** The memories extraction should see: in effect, outdated or not-useful, global or this repo. */
-export function extractionMemories(all: MemoryRow[], repoRoot: string | undefined): MemoryRow[] {
-  return all.filter((m) => (m.kind === "outdated" || m.kind === "not-useful") && (m.scope === "global" || (repoRoot !== undefined && m.repo === repoRoot)));
+export function extractionMemories(
+  all: MemoryRow[],
+  repoRoot: string | undefined,
+): MemoryRow[] {
+  return all.filter(
+    (m) =>
+      (m.kind === "outdated" || m.kind === "not-useful") &&
+      (m.scope === "global" || (repoRoot !== undefined && m.repo === repoRoot)),
+  );
 }
 
 export function renderRejectedTopics(ms: MemoryRow[]): string[] {
   if (!ms.length) return [];
   return [
     "<rejected_topics>",
-    ...ms.map((m) => `- [${m.kind}] ${m.topic.name ?? m.topic.title}${m.scope === "repo" ? " (this repository)" : ""}: ${m.rule ?? ""}`),
+    ...ms.map(
+      (m) =>
+        `- [${m.kind}] ${m.topic.name ?? m.topic.title}${m.scope === "repo" ? " (this repository)" : ""}: ${m.rule ?? ""}`,
+    ),
     "</rejected_topics>",
     "",
   ];
@@ -108,17 +137,25 @@ export interface ExtractOutput {
   calls: number;
 }
 
-export function buildExtractPrompt(input: ExtractInput, chunk: string, part: { index: number; total: number }): string {
+export function buildExtractPrompt(
+  input: ExtractInput,
+  chunk: string,
+  part: { index: number; total: number },
+): string {
   const t = input.transcript;
   return [
     `Session: ${t.agent}:${t.sessionId}${t.title ? ` — "${t.title}"` : ""}`,
     ...(t.memory
-      ? [`Source: memory note saved by ${t.agent}${t.memory.originSessionId ? ` in session ${t.memory.originSessionId}` : ""} (not a conversation; see the rules)`]
+      ? [
+          `Source: memory note saved by ${t.agent}${t.memory.originSessionId ? ` in session ${t.memory.originSessionId}` : ""} (not a conversation; see the rules)`,
+        ]
       : []),
     `Working directory: ${t.cwd || "(unknown)"}`,
     `Repository root: ${input.repoRoot ?? "(not a git repo / unknown)"}`,
     `Dates: ${t.startedAt.toISOString().slice(0, 10)} → ${t.updatedAt.toISOString().slice(0, 10)}`,
-    part.total > 1 ? `This is part ${part.index + 1} of ${part.total} of the session.` : "",
+    part.total > 1
+      ? `This is part ${part.index + 1} of ${part.total} of the session.`
+      : "",
     "",
     "<existing_knowledge>",
     input.skillIndex,
@@ -149,10 +186,14 @@ export async function extractNuggets(
       model: model.id,
       thinking: model.thinking,
       systemPrompt: EXTRACT_SYSTEM_PROMPT,
-      prompt: buildExtractPrompt(input, chunks[i]!, { index: i, total: chunks.length }),
+      prompt: buildExtractPrompt(input, chunks[i]!, {
+        index: i,
+        total: chunks.length,
+      }),
       resultTool: {
         name: "report_knowledge",
-        description: "Report the reusable knowledge the user taught the agent in this transcript (possibly none).",
+        description:
+          "Report the reusable knowledge the user taught the agent in this transcript (possibly none).",
         parameters: ReportSchema,
       },
     });
@@ -161,13 +202,17 @@ export async function extractNuggets(
       const byLabel = new Map<string, string>();
       for (const e of n.evidence) {
         const label = e.label.trim();
-        if (labels.has(label) && !byLabel.has(label)) byLabel.set(label, e.quote.slice(0, 300));
+        if (labels.has(label) && !byLabel.has(label))
+          byLabel.set(label, e.quote.slice(0, 300));
       }
       if (byLabel.size === 0 || n.confidence < 0.5) {
         dropped++;
         continue;
       }
-      nuggets.push({ ...n, evidence: [...byLabel].map(([label, quote]) => ({ label, quote })) });
+      nuggets.push({
+        ...n,
+        evidence: [...byLabel].map(([label, quote]) => ({ label, quote })),
+      });
     }
   }
   return { nuggets, dropped, usage, calls: chunks.length };

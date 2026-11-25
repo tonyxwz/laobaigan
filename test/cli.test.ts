@@ -10,15 +10,26 @@ async function lbg(...args: string[]) {
   const state = await mkdtemp(join(tmpdir(), "lbg-cli-"));
   const r = spawnSync(process.execPath, [CLI, ...args], {
     encoding: "utf8",
-    env: { ...process.env, LBG_STATE_DIR: state, LBG_CONFIG: join(state, "none.json"), NODE_NO_WARNINGS: "1" },
+    env: {
+      ...process.env,
+      LBG_STATE_DIR: state,
+      LBG_CONFIG: join(state, "none.json"),
+      NODE_NO_WARNINGS: "1",
+    },
   });
   return { code: r.status, out: r.stdout, err: r.stderr };
 }
 
 describe("CLI: only lbg run calls models", () => {
   it.each([
-    [["extract", "--session", "pi:x"], /lbg extract` is gone.*lbg run --dry-run --fresh --stages extract --session/],
-    [["tree", "insert", "--all"], /lbg tree insert` is gone.*lbg run --stages sync,insert,score/],
+    [
+      ["extract", "--session", "pi:x"],
+      /lbg extract` is gone.*lbg run --dry-run --fresh --stages extract --session/,
+    ],
+    [
+      ["tree", "insert", "--all"],
+      /lbg tree insert` is gone.*lbg run --stages sync,insert,score/,
+    ],
     [["cluster"], /lbg cluster` is gone.*lbg run --stages sync,insert,score/],
     [["draft", "121"], /lbg draft` is gone.*lbg run --only <skill-id>/],
   ])("lbg %s points to lbg run", async (args, msg) => {
@@ -28,8 +39,12 @@ describe("CLI: only lbg run calls models", () => {
   });
 
   it("refuses --fresh without --dry-run, and bad --only ids", async () => {
-    expect((await lbg("run", "--fresh")).err).toMatch(/--fresh needs --dry-run/);
-    expect((await lbg("run", "--only", "abc")).err).toMatch(/--only expects skill ids/);
+    expect((await lbg("run", "--fresh")).err).toMatch(
+      /--fresh needs --dry-run/,
+    );
+    expect((await lbg("run", "--only", "abc")).err).toMatch(
+      /--only expects skill ids/,
+    );
   });
 
   it("a dry run with nothing to do leaves no state behind", async () => {

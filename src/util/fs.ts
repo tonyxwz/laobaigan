@@ -1,7 +1,7 @@
 import { createReadStream } from "node:fs";
-import { readFile, readdir, stat } from "node:fs/promises";
-import { createInterface } from "node:readline";
+import { readdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
+import { createInterface } from "node:readline";
 
 /** Parse a whole JSONL file; malformed lines are skipped. */
 export async function readJsonl(path: string): Promise<unknown[]> {
@@ -19,8 +19,13 @@ export async function readJsonl(path: string): Promise<unknown[]> {
 }
 
 /** Parse only the first JSONL line, without reading the whole file. */
-export async function readFirstJsonlLine(path: string): Promise<unknown | undefined> {
-  const rl = createInterface({ input: createReadStream(path, { encoding: "utf8" }), crlfDelay: Infinity });
+export async function readFirstJsonlLine(
+  path: string,
+): Promise<unknown | undefined> {
+  const rl = createInterface({
+    input: createReadStream(path, { encoding: "utf8" }),
+    crlfDelay: Infinity,
+  });
   try {
     for await (const line of rl) {
       if (!line.trim()) continue;
@@ -37,8 +42,14 @@ export async function readFirstJsonlLine(path: string): Promise<unknown | undefi
 }
 
 /** The first non-undefined `pick(line)` over a JSONL file's lines, reading only as far as needed. */
-export async function findInJsonl<T>(path: string, pick: (line: unknown) => T | undefined): Promise<T | undefined> {
-  const rl = createInterface({ input: createReadStream(path, { encoding: "utf8" }), crlfDelay: Infinity });
+export async function findInJsonl<T>(
+  path: string,
+  pick: (line: unknown) => T | undefined,
+): Promise<T | undefined> {
+  const rl = createInterface({
+    input: createReadStream(path, { encoding: "utf8" }),
+    crlfDelay: Infinity,
+  });
   try {
     for await (const line of rl) {
       if (!line.trim()) continue;
@@ -77,10 +88,15 @@ export async function subdirs(dir: string): Promise<string[]> {
 }
 
 /** Files directly in `dir` ending with `ext` (empty if `dir` is missing). */
-export async function filesWithExt(dir: string, ext: string): Promise<string[]> {
+export async function filesWithExt(
+  dir: string,
+  ext: string,
+): Promise<string[]> {
   try {
     const entries = await readdir(dir, { withFileTypes: true });
-    return entries.filter((e) => e.isFile() && e.name.endsWith(ext)).map((e) => join(dir, e.name));
+    return entries
+      .filter((e) => e.isFile() && e.name.endsWith(ext))
+      .map((e) => join(dir, e.name));
   } catch {
     return [];
   }

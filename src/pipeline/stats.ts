@@ -43,7 +43,9 @@ export function evidenceStats(c: { members: NuggetRow[] }): EvidenceStats {
     days: days.size,
     corrections,
     coveredBy: [...covered].sort(),
-    ...(stamps.length ? { firstSeen: stamps[0]!, lastSeen: stamps[stamps.length - 1]! } : {}),
+    ...(stamps.length
+      ? { firstSeen: stamps[0]!, lastSeen: stamps[stamps.length - 1]! }
+      : {}),
   };
 }
 
@@ -57,12 +59,33 @@ export function scoreOf(s: EvidenceStats, w: ScoreConfig["weights"]): number {
   );
 }
 
-export function meetsPromotion(s: EvidenceStats, p: ScoreConfig["promote"]): boolean {
-  return s.sessions >= p.minSessions || (s.sessions >= p.minSessionsCrossAgent && s.agents.length >= 2);
+export function meetsPromotion(
+  s: EvidenceStats,
+  p: ScoreConfig["promote"],
+): boolean {
+  return (
+    s.sessions >= p.minSessions ||
+    (s.sessions >= p.minSessionsCrossAgent && s.agents.length >= 2)
+  );
 }
 
 export function skillName(title: string): string {
-  const stop = new Set(["the", "a", "an", "and", "or", "of", "for", "to", "in", "on", "with", "by", "is", "are"]);
+  const stop = new Set([
+    "the",
+    "a",
+    "an",
+    "and",
+    "or",
+    "of",
+    "for",
+    "to",
+    "in",
+    "on",
+    "with",
+    "by",
+    "is",
+    "are",
+  ]);
   const words = title
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, " ")
@@ -78,6 +101,19 @@ export function skillName(title: string): string {
   return name || "skill";
 }
 
-export function evidenceText(c: { title: string; summary: string; members: NuggetRow[] }): string {
-  return [c.title, c.summary, ...c.members.flatMap((m) => [m.title, m.knowledge, m.cwd, ...m.evidence.map((e) => e.quote)])].join("\n");
+export function evidenceText(c: {
+  title: string;
+  summary: string;
+  members: NuggetRow[];
+}): string {
+  return [
+    c.title,
+    c.summary,
+    ...c.members.flatMap((m) => [
+      m.title,
+      m.knowledge,
+      m.cwd,
+      ...m.evidence.map((e) => e.quote),
+    ]),
+  ].join("\n");
 }

@@ -319,7 +319,12 @@ export interface NuggetRow {
   repo?: string;
   coveredBy?: string;
   confidence: number;
-  evidence: { label: string; fingerprint?: string; ts?: string; quote: string }[];
+  evidence: {
+    label: string;
+    fingerprint?: string;
+    ts?: string;
+    quote: string;
+  }[];
   /** Placed by hand; insert/rebalance keep it where it is. */
   assignmentLocked: boolean;
   /** Knowledge-tree node (skill or section) it is attached to. */
@@ -337,7 +342,6 @@ export interface NuggetRow {
   forgottenMemory?: number;
   createdAt: Date;
 }
-
 
 export interface SessionRow {
   agent: AgentId;
@@ -360,7 +364,12 @@ export interface NuggetInsert {
   repo?: string;
   coveredBy?: string;
   confidence: number;
-  evidence: { label: string; fingerprint?: string; ts?: string; quote: string }[];
+  evidence: {
+    label: string;
+    fingerprint?: string;
+    ts?: string;
+    quote: string;
+  }[];
 }
 
 export class StateDb {
@@ -369,12 +378,17 @@ export class StateDb {
   constructor(path: string) {
     if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
     this.db = new DatabaseSync(path);
-    this.db.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;");
+    this.db.exec(
+      "PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;",
+    );
     this.migrate();
   }
 
   private migrate(): void {
-    const v = Number((this.db.prepare("PRAGMA user_version").get() as { user_version: number }).user_version);
+    const v = Number(
+      (this.db.prepare("PRAGMA user_version").get() as { user_version: number })
+        .user_version,
+    );
     for (let i = v; i < MIGRATIONS.length; i++) {
       this.tx(() => {
         this.db.exec(MIGRATIONS[i]!);
@@ -409,7 +423,9 @@ export class StateDb {
 
   getSession(agent: AgentId, sessionId: string): SessionRow | undefined {
     return this.db
-      .prepare("SELECT agent, session_id, version, status, detail FROM session WHERE agent = ? AND session_id = ?")
+      .prepare(
+        "SELECT agent, session_id, version, status, detail FROM session WHERE agent = ? AND session_id = ?",
+      )
       .get(agent, sessionId) as SessionRow | undefined;
   }
 
@@ -454,13 +470,19 @@ export class StateDb {
 
   /** Subset of `fingerprints` already recorded. */
   seenFingerprints(fingerprints: Iterable<string>): Set<string> {
-    const stmt = this.db.prepare("SELECT 1 FROM turn_seen WHERE fingerprint = ?");
+    const stmt = this.db.prepare(
+      "SELECT 1 FROM turn_seen WHERE fingerprint = ?",
+    );
     const out = new Set<string>();
     for (const fp of fingerprints) if (stmt.get(fp)) out.add(fp);
     return out;
   }
 
-  markSeen(agent: AgentId, sessionId: string, fingerprints: Iterable<string>): void {
+  markSeen(
+    agent: AgentId,
+    sessionId: string,
+    fingerprints: Iterable<string>,
+  ): void {
     const stmt = this.db.prepare(
       "INSERT OR IGNORE INTO turn_seen (fingerprint, agent, session_id, seen_at) VALUES (?, ?, ?, ?)",
     );
@@ -502,37 +524,51 @@ export class StateDb {
   }
 
   finishRun(id: number, stats: unknown): void {
-    this.db.prepare("UPDATE run SET finished_at = ?, stats = ? WHERE id = ?").run(Date.now(), JSON.stringify(stats), id);
+    this.db
+      .prepare("UPDATE run SET finished_at = ?, stats = ? WHERE id = ?")
+      .run(Date.now(), JSON.stringify(stats), id);
   }
 
   // ---- nuggets ---------------------------------------------------------------
 
   nuggets(): NuggetRow[] {
-    return (this.db.prepare("SELECT * FROM nugget ORDER BY id").all() as Row[]).map(toNugget);
+    return (
+      this.db.prepare("SELECT * FROM nugget ORDER BY id").all() as Row[]
+    ).map(toNugget);
   }
 
   getNugget(id: number): NuggetRow | undefined {
-    const r = this.db.prepare("SELECT * FROM nugget WHERE id = ?").get(id) as Row | undefined;
+    const r = this.db.prepare("SELECT * FROM nugget WHERE id = ?").get(id) as
+      | Row
+      | undefined;
     return r ? toNugget(r) : undefined;
   }
 
   counts(): Record<string, number> {
-    const one = (sql: string) => Number((this.db.prepare(sql).get() as { n: number }).n);
+    const one = (sql: string) =>
+      Number((this.db.prepare(sql).get() as { n: number }).n);
     return {
       sessions: one("SELECT count(*) n FROM session"),
-      extracted: one("SELECT count(*) n FROM session WHERE status = 'extracted'"),
+      extracted: one(
+        "SELECT count(*) n FROM session WHERE status = 'extracted'",
+      ),
       skipped: one("SELECT count(*) n FROM session WHERE status = 'skipped'"),
       errors: one("SELECT count(*) n FROM session WHERE status = 'error'"),
       turnsSeen: one("SELECT count(*) n FROM turn_seen"),
       nuggets: one("SELECT count(*) n FROM nugget"),
       unplaced: one("SELECT count(*) n FROM nugget WHERE node_id IS NULL"),
       skills: one("SELECT count(*) n FROM node WHERE depth = 1"),
-      liveSkills: one("SELECT count(*) n FROM node WHERE depth = 1 AND origin = 'file'"),
-      candidates: one("SELECT count(*) n FROM node WHERE depth = 1 AND status = 'candidate'"),
-      openProposals: one("SELECT count(*) n FROM proposal WHERE status IN ('drafting', 'open')"),
+      liveSkills: one(
+        "SELECT count(*) n FROM node WHERE depth = 1 AND origin = 'file'",
+      ),
+      candidates: one(
+        "SELECT count(*) n FROM node WHERE depth = 1 AND status = 'candidate'",
+      ),
+      openProposals: one(
+        "SELECT count(*) n FROM proposal WHERE status IN ('drafting', 'open')",
+      ),
     };
   }
-
 }
 
 type Row = Record<string, unknown>;
@@ -564,12 +600,22 @@ function toNugget(r: Row): NuggetRow {
     evidence: parseJson(r.evidence, [] as NuggetRow["evidence"]),
     assignmentLocked: Number(r.assignment_locked ?? 0) === 1,
     ...(r.node_id != null ? { nodeId: Number(r.node_id) } : {}),
-    ...(r.covered_node_id != null ? { coveredNodeId: Number(r.covered_node_id) } : {}),
-    ...(r.attached_at != null ? { attachedAt: new Date(Number(r.attached_at)) } : {}),
+    ...(r.covered_node_id != null
+      ? { coveredNodeId: Number(r.covered_node_id) }
+      : {}),
+    ...(r.attached_at != null
+      ? { attachedAt: new Date(Number(r.attached_at)) }
+      : {}),
     excludedFrom: parseJson(r.excluded_from, [] as number[]),
-    ...(r.forgotten_at != null ? { forgottenAt: new Date(Number(r.forgotten_at)) } : {}),
-    ...(r.forgotten_reason ? { forgottenReason: String(r.forgotten_reason) } : {}),
-    ...(r.forgotten_memory != null ? { forgottenMemory: Number(r.forgotten_memory) } : {}),
+    ...(r.forgotten_at != null
+      ? { forgottenAt: new Date(Number(r.forgotten_at)) }
+      : {}),
+    ...(r.forgotten_reason
+      ? { forgottenReason: String(r.forgotten_reason) }
+      : {}),
+    ...(r.forgotten_memory != null
+      ? { forgottenMemory: Number(r.forgotten_memory) }
+      : {}),
     createdAt: new Date(Number(r.created_at)),
   };
 }

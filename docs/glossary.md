@@ -53,15 +53,16 @@ sessions ─extract─▶ nuggets ─insert─▶ knowledge tree ─score─▶ 
 
 **Nugget**
 : One piece of knowledge **you taught an agent** in a session, written so a future agent can act on it without that session. The unit everything else is built from. Fields:
-  - **kind**: `procedure` (how to do something), `fact` (what/where something is), `preference` (a convention you insist on), `correction` ("no, do Y, not X"), `location` (where things live)
-  - **title** and **knowledge**: one line, then the self-contained content with exact commands and paths
-  - **triggers**: situations where an agent would need it
-  - **scope**: `global` (useful in any repo) or `repo` (one repository, with its path)
-  - **evidence**: the turn labels it came from, with short quotes, timestamps, agent and session
-  - **confidence**: 0–1; below 0.5 it's dropped
-  - **covered**: set when it was routed to a live skill that already says this
 
-  Example: *"Use `rg` rather than `grep -r` to search code"*: a `correction`, `global`, from a pi session on 2026-11-02.
+- **kind**: `procedure` (how to do something), `fact` (what/where something is), `preference` (a convention you insist on), `correction` ("no, do Y, not X"), `location` (where things live)
+- **title** and **knowledge**: one line, then the self-contained content with exact commands and paths
+- **triggers**: situations where an agent would need it
+- **scope**: `global` (useful in any repo) or `repo` (one repository, with its path)
+- **evidence**: the turn labels it came from, with short quotes, timestamps, agent and session
+- **confidence**: 0–1; below 0.5 it's dropped
+- **covered**: set when it was routed to a live skill that already says this
+
+Example: _"Use `rg` rather than `grep -r` to search code"_: a `correction`, `global`, from a pi session on 2026-11-02.
 
 **Evidence**
 : The sessions behind a nugget or a skill. Counting distinct evidence (sessions, agents, days) is how lbg tells a repeated explanation from a one-off.
@@ -91,15 +92,17 @@ depth 2  section  a "##" section of SKILL.md, a references/*.md file, or an AGEN
 : A depth-2 node: a subtopic of a skill. Rendered as a section of `SKILL.md` or as `references/<section>.md`, which agents read only when needed.
 
 **Origin**: where a node came from:
-  - **live** (`file`): parsed from an existing skill file or `AGENTS.md` section. Files are the source of truth for these.
-  - **declared**: a skill you asked for in `config.topics`, existing before it has evidence.
-  - **latent**: grown by lbg from evidence; invisible to agents until proposed and accepted.
+
+- **live** (`file`): parsed from an existing skill file or `AGENTS.md` section. Files are the source of truth for these.
+- **declared**: a skill you asked for in `config.topics`, existing before it has evidence.
+- **latent**: grown by lbg from evidence; invisible to agents until proposed and accepted.
 
 **Status** (of a skill):
-  - **open**: nothing to do
-  - **candidate**: has earned a proposal, of kind `new`, `update` or `fix-description`
-  - **proposed**: has a drafting or open proposal; frozen against curation and re-scoring
-  - **rejected**: you rejected its proposal; returns only with evidence from new sessions
+
+- **open**: nothing to do
+- **candidate**: has earned a proposal, of kind `new`, `update` or `fix-description`
+- **proposed**: has a drafting or open proposal; frozen against curation and re-scoring
+- **rejected**: you rejected its proposal; returns only with evidence from new sessions
 
 **Sync**
 : Reading the skill files back into the tree at the start of every run (`src/pipeline/sync.ts`). Your hand edits and accepted proposals show up as live nodes; removed files never drop evidence.
@@ -121,9 +124,10 @@ depth 2  section  a "##" section of SKILL.md, a references/*.md file, or an AGEN
 
 **Promotion**
 : A skill becoming a candidate:
-  - **new**: a latent or declared skill with evidence from ≥ 3 sessions, or ≥ 2 across different agents
-  - **update**: a live skill with fresh evidence from ≥ 2 sessions
-  - **fix-description**: a live skill with covered evidence from ≥ 2 sessions
+
+- **new**: a latent or declared skill with evidence from ≥ 3 sessions, or ≥ 2 across different agents
+- **update**: a live skill with fresh evidence from ≥ 2 sessions
+- **fix-description**: a live skill with covered evidence from ≥ 2 sessions
 
 **Curation**
 : Your hand edits to the tree: `lbg tree merge | split | move | rename | unlock` and `lbg nuggets move`. Every edit is **locked**, so automation never undoes it. Live skills change only through proposals.
@@ -141,8 +145,9 @@ depth 2  section  a "##" section of SKILL.md, a references/*.md file, or an AGEN
 
 **Proposal**
 : One drafted change to one skill, stored in lbg's database: the changed files (path, hash of the original, new content), a summary for you, the evidence, and the cost. lbg doesn't use git.
-  - **kind**: `new`, `update`, or `fix-description`
-  - **status**: `drafting` → `open` → `accepted` or `rejected`, or `failed`
+
+- **kind**: `new`, `update`, or `fix-description`
+- **status**: `drafting` → `open` → `accepted` or `rejected`, or `failed`
 
 **Off-topic evidence (excluded)**
 : A nugget the drafter left out of a skill because it's only adjacent to the skill's topic. It's re-filed in a better skill (or a new latent one), never routed back to that skill, and no longer counts toward it. `lbg proposal show` lists it with the reason.
@@ -164,10 +169,11 @@ depth 2  section  a "##" section of SKILL.md, a references/*.md file, or an AGEN
 
 **Accept / reject / revise / edit**
 : How you review a proposal:
-  - **accept**: write its files into the skills dir or repo, then sync. You commit them yourself.
-  - **reject**: drop it, with a reason. Leaves a rejection memory.
-  - **revise**: change it with pi, as a chat or one-shot feedback.
-  - **edit**: change it in your editor.
+
+- **accept**: write its files into the skills dir or repo, then sync. You commit them yourself.
+- **reject**: drop it, with a reason. Leaves a rejection memory.
+- **revise**: change it with pi, as a chat or one-shot feedback.
+- **edit**: change it in your editor.
 
 ## Running
 

@@ -1,8 +1,20 @@
 import { DatabaseSync } from "node:sqlite";
-import { DEFAULT_LIMITS, DEFAULT_PATHS, type NormalizeLimits } from "../config.ts";
+import {
+  DEFAULT_LIMITS,
+  DEFAULT_PATHS,
+  type NormalizeLimits,
+} from "../config.ts";
 import { exists } from "../util/fs.ts";
 import { isRecord, renderInput, str, toDate, truncate } from "../util/text.ts";
-import { SourceUnavailable, type ListOptions, type SessionRef, type SourceAdapter, type ToolCall, type Transcript, type Turn } from "./types.ts";
+import {
+  type ListOptions,
+  type SessionRef,
+  type SourceAdapter,
+  SourceUnavailable,
+  type ToolCall,
+  type Transcript,
+  type Turn,
+} from "./types.ts";
 
 /**
  * opencode (v2): SQLite at ~/.local/share/opencode/opencode.db
@@ -20,7 +32,10 @@ export class OpencodeAdapter implements SourceAdapter {
   private readonly dbPath: string;
   private readonly limits: NormalizeLimits;
 
-  constructor(dbPath = DEFAULT_PATHS.opencodeDb, limits: NormalizeLimits = DEFAULT_LIMITS) {
+  constructor(
+    dbPath = DEFAULT_PATHS.opencodeDb,
+    limits: NormalizeLimits = DEFAULT_LIMITS,
+  ) {
     this.dbPath = dbPath;
     this.limits = limits;
   }
@@ -41,7 +56,13 @@ export class OpencodeAdapter implements SourceAdapter {
   async *list(opts: ListOptions = {}): AsyncIterable<SessionRef> {
     const since = opts.since?.getTime() ?? 0;
     const rows = this.withDb((db) => {
-      const tables = new Set((db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as { name: string }[]).map((t) => t.name));
+      const tables = new Set(
+        (
+          db
+            .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+            .all() as { name: string }[]
+        ).map((t) => t.name),
+      );
       if (!tables.has("session_v2")) {
         throw new SourceUnavailable(
           tables.has("session")
@@ -72,15 +93,24 @@ export class OpencodeAdapter implements SourceAdapter {
 
   async load(ref: SessionRef): Promise<Transcript> {
     const { session, messages } = this.withDb((db) => ({
-      session: db.prepare(`SELECT * FROM session_v2 WHERE id = ?`).get(ref.sessionId),
+      session: db
+        .prepare(`SELECT * FROM session_v2 WHERE id = ?`)
+        .get(ref.sessionId),
       messages: db
-        .prepare(`SELECT type, time_created, data FROM session_message WHERE session_id = ? ORDER BY seq`)
+        .prepare(
+          `SELECT type, time_created, data FROM session_message WHERE session_id = ? ORDER BY seq`,
+        )
         .all(ref.sessionId),
     }));
-    if (!session) throw new Error(`opencode session not found: ${ref.sessionId}`);
+    if (!session)
+      throw new Error(`opencode session not found: ${ref.sessionId}`);
     return parseOpencode(
       session,
-      messages.map((m) => ({ type: String(m.type), timeCreated: Number(m.time_created), data: safeJson(m.data) })),
+      messages.map((m) => ({
+        type: String(m.type),
+        timeCreated: Number(m.time_created),
+        data: safeJson(m.data),
+      })),
       ref,
       this.limits,
     );
@@ -105,7 +135,13 @@ export function parseOpencode(
     const ts = toDate(row.timeCreated);
     if (row.type === "user") {
       const text = (str(d.text) ?? "").trim();
-      if (text) turns.push({ role: "user", text, ts, origin: text.startsWith("/") ? "command" : "prompt" });
+      if (text)
+        turns.push({
+          role: "user",
+          text,
+          ts,
+          origin: text.startsWith("/") ? "command" : "prompt",
+        });
       continue;
     }
     if (row.type !== "assistant" || !Array.isArray(d.content)) continue;
@@ -120,9 +156,13 @@ export function parseOpencode(
       else if (p.type === "tool") {
         const name = str(p.name) ?? "unknown";
         const state = isRecord(p.state) ? p.state : {};
-        toolCalls.push({ name, input: renderInput(state.input, limits.toolInputChars) });
+        toolCalls.push({
+          name,
+          input: renderInput(state.input, limits.toolInputChars),
+        });
         const error = str(state.error);
-        const out = error ?? partsText(state.content) ?? str(state.output) ?? "";
+        const out =
+          error ?? partsText(state.content) ?? str(state.output) ?? "";
         results.push({
           role: "tool",
           toolName: name,
@@ -133,7 +173,13 @@ export function parseOpencode(
       }
     }
     const text = texts.join("\n");
-    if (text || toolCalls.length) turns.push({ role: "assistant", text, ts, ...(toolCalls.length ? { toolCalls } : {}) });
+    if (text || toolCalls.length)
+      turns.push({
+        role: "assistant",
+        text,
+        ts,
+        ...(toolCalls.length ? { toolCalls } : {}),
+      });
     turns.push(...results);
   }
 
@@ -154,7 +200,9 @@ export function parseOpencode(
 
 function partsText(content: unknown): string | undefined {
   if (!Array.isArray(content)) return undefined;
-  return content.map((c) => (isRecord(c) && c.type === "text" ? (str(c.text) ?? "") : "")).join("\n");
+  return content
+    .map((c) => (isRecord(c) && c.type === "text" ? (str(c.text) ?? "") : ""))
+    .join("\n");
 }
 
 function safeJson(v: unknown): unknown {

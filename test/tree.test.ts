@@ -3,10 +3,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
-import { MIGRATIONS, StateDb, type NuggetInsert } from "../src/state/db.ts";
+import { MIGRATIONS, type NuggetInsert, StateDb } from "../src/state/db.ts";
 import { subtreeNuggets, Tree } from "../src/state/tree.ts";
 
-const nugget = (sessionId: string, over: Partial<NuggetInsert> = {}): NuggetInsert => ({
+const nugget = (
+  sessionId: string,
+  over: Partial<NuggetInsert> = {},
+): NuggetInsert => ({
   runId: 1,
   agent: "pi",
   sessionId,
@@ -49,23 +52,54 @@ describe("migration 6: topics/clusters → tree", () => {
     const db = new StateDb(path);
     const tree = new Tree(db);
     const [global, repo] = tree.trees();
-    expect(global).toMatchObject({ depth: 0, scope: "global", origin: "root", title: "Global skills" });
+    expect(global).toMatchObject({
+      depth: 0,
+      scope: "global",
+      origin: "root",
+      title: "Global skills",
+    });
     expect(repo).toMatchObject({ depth: 0, scope: "repo", repo: "/w/D" });
     expect(global!.id).toBeGreaterThan(15); // after all topic ids
 
-    expect(global!.children.map((s) => [s.id, s.title, s.origin, s.status, s.locked])).toEqual([
+    expect(
+      global!.children.map((s) => [
+        s.id,
+        s.title,
+        s.origin,
+        s.status,
+        s.locked,
+      ]),
+    ).toEqual([
       [4, "Pi config", "latent", "candidate", false],
       [14, "Dotfiles", "declared", "open", true],
       [15, "Gradle", "declared", "open", false],
     ]);
     const pi = global!.children[0]!;
-    expect(pi).toMatchObject({ summary: "pi sum", summaryDirty: false, score: 11, stats: { sessions: 3 } });
+    expect(pi).toMatchObject({
+      summary: "pi sum",
+      summaryDirty: false,
+      score: 11,
+      stats: { sessions: 3 },
+    });
     expect(pi.children).toEqual([]);
     expect(pi.nuggets.map((n) => n.id)).toEqual([1]);
 
     const dot = global!.children[1]!;
-    expect(dot).toMatchObject({ name: "dotfiles-management", description: "zsh, tmux", summary: "", summaryDirty: true });
-    expect(dot.children.map((s) => [s.depth, s.title, s.summary, s.locked, s.nuggets.map((n) => n.id)])).toEqual([
+    expect(dot).toMatchObject({
+      name: "dotfiles-management",
+      description: "zsh, tmux",
+      summary: "",
+      summaryDirty: true,
+    });
+    expect(
+      dot.children.map((s) => [
+        s.depth,
+        s.title,
+        s.summary,
+        s.locked,
+        s.nuggets.map((n) => n.id),
+      ]),
+    ).toEqual([
       [2, "zsh", "zsh sum", true, [2]],
       [2, "tmux", "tmux sum", false, [3]],
     ]);
@@ -89,12 +123,25 @@ describe("Tree", () => {
     expect(repoRoot).not.toBe(root);
     expect(() => tree.ensureRoot({ scope: "repo" })).toThrow(/repo path/);
 
-    const skill = tree.createNode(root, { title: "Dotfiles", name: "dotfiles-management" });
+    const skill = tree.createNode(root, {
+      title: "Dotfiles",
+      name: "dotfiles-management",
+    });
     const section = tree.createNode(skill, { title: "tmux" });
-    expect(tree.getNode(skill)).toMatchObject({ depth: 1, scope: "global", origin: "latent" });
+    expect(tree.getNode(skill)).toMatchObject({
+      depth: 1,
+      scope: "global",
+      origin: "latent",
+    });
     expect(tree.getNode(section)).toMatchObject({ depth: 2 });
-    expect(() => tree.createNode(section, { title: "too deep" })).toThrow(/sections can't have children/);
-    expect(tree.path(section).map((n) => n.title)).toEqual(["Global skills", "Dotfiles", "tmux"]);
+    expect(() => tree.createNode(section, { title: "too deep" })).toThrow(
+      /sections can't have children/,
+    );
+    expect(tree.path(section).map((n) => n.title)).toEqual([
+      "Global skills",
+      "Dotfiles",
+      "tmux",
+    ]);
   });
 
   it("attaches nuggets with scope checks and marks ancestors dirty (not the root)", () => {
@@ -111,7 +158,10 @@ describe("Tree", () => {
     expect(tree.getNode(section)!.summaryDirty).toBe(true);
     expect(tree.getNode(skill)!.summaryDirty).toBe(true);
     expect(tree.getNode(root)!.summaryDirty).toBe(false);
-    expect(db.getNugget(g)).toMatchObject({ nodeId: section, assignmentLocked: true });
+    expect(db.getNugget(g)).toMatchObject({
+      nodeId: section,
+      assignmentLocked: true,
+    });
     expect(() => tree.attachNugget(r, section)).toThrow(/Scope mismatch/);
     expect(() => tree.attachNugget(g, root)).toThrow(/not to a root/);
   });
@@ -148,6 +198,11 @@ describe("Tree", () => {
     tree.attachNugget(db.insertNugget(nugget("a")), used);
 
     expect(tree.pruneEmpty()).toBe(2);
-    expect(tree.trees()[0]!.children.map((c) => c.title)).toEqual(["declared", "from file", "proposed", "used"]);
+    expect(tree.trees()[0]!.children.map((c) => c.title)).toEqual([
+      "declared",
+      "from file",
+      "proposed",
+      "used",
+    ]);
   });
 });

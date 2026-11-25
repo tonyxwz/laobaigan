@@ -56,14 +56,14 @@ lbg run --dry-run --fresh --stages extract --session pi:01a19be3   # what lbg wo
 lbg run --max-calls 10                           # read at most 10 sessions this time
 ```
 
-| Option | What it does |
-|---|---|
-| `--stages a,b` | Run only these stages (`sync`, `extract`, `insert`, `score`, `draft`). |
-| `--only <id>…` | Draft only these skills, now. Without `--stages`, it runs sync, score and draft only. |
+| Option                   | What it does                                                                                                                                  |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--stages a,b`           | Run only these stages (`sync`, `extract`, `insert`, `score`, `draft`).                                                                        |
+| `--only <id>…`           | Draft only these skills, now. Without `--stages`, it runs sync, score and draft only.                                                         |
 | `--session <agent>:<id>` | Read only this session (an id prefix is enough), even if it's still active. Prints what it learned. Pending rejections wait for a normal run. |
-| `--dry-run` | Work on a temporary copy of the state database. Models are called and cost money, but nothing is kept, not even the prompt file. |
-| `--fresh` | With `--dry-run` only: treat every message as new, even ones lbg has already read. |
-| `--max-calls N` | Session budget for this run. |
+| `--dry-run`              | Work on a temporary copy of the state database. Models are called and cost money, but nothing is kept, not even the prompt file.              |
+| `--fresh`                | With `--dry-run` only: treat every message as new, even ones lbg has already read.                                                            |
+| `--max-calls N`          | Session budget for this run.                                                                                                                  |
 
 The run prints one line per stage and one per new proposal:
 
@@ -91,11 +91,11 @@ lbg proposal diff <id>                 # only the diff, in git format
 
 ### Kinds of proposal
 
-| Kind | When | What it changes |
-|---|---|---|
-| `new` | something you explained in ≥ 3 sessions (or ≥ 2 with different agents) has no skill yet | a new skill folder (`SKILL.md` + `references/`), or a new `AGENTS.md` section / `.agents/skills/<name>` in a repository |
-| `update` | a skill you have got new knowledge from ≥ 2 sessions | that skill's files |
-| `fix-description` | you explained something a skill already says | the skill's `description`, so agents load it when they should |
+| Kind              | When                                                                                    | What it changes                                                                                                         |
+| ----------------- | --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `new`             | something you explained in ≥ 3 sessions (or ≥ 2 with different agents) has no skill yet | a new skill folder (`SKILL.md` + `references/`), or a new `AGENTS.md` section / `.agents/skills/<name>` in a repository |
+| `update`          | a skill you have got new knowledge from ≥ 2 sessions                                    | that skill's files                                                                                                      |
+| `fix-description` | you explained something a skill already says                                            | the skill's `description`, so agents load it when they should                                                           |
 
 Global knowledge goes to your skills directory; knowledge about one repository goes to that repository.
 
@@ -143,12 +143,12 @@ Rejecting makes no model call and keeps the files out. Give a reason: it is the 
 
 Each rejection leaves a **rejection memory**. The next `lbg run` classifies it into a kind and a one-line rule, unless you gave `--kind` (then your reason is the rule).
 
-| Kind | Meaning | What lbg does |
-|---|---|---|
-| `outdated` | the knowledge is stale | its evidence stops counting; corrected knowledge about the topic is welcome and can be proposed |
-| `not-useful` | don't make a skill about this topic | not extracted again, never proposed again; expires after 90 days |
-| `wrong-place` | right knowledge, wrong skill | its evidence moves to the skill it belongs in (`--to`) |
-| `later` | not now | proposed again once the topic comes up in 2 new sessions |
+| Kind          | Meaning                             | What lbg does                                                                                   |
+| ------------- | ----------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `outdated`    | the knowledge is stale              | its evidence stops counting; corrected knowledge about the topic is welcome and can be proposed |
+| `not-useful`  | don't make a skill about this topic | not extracted again, never proposed again; expires after 90 days                                |
+| `wrong-place` | right knowledge, wrong skill        | its evidence moves to the skill it belongs in (`--to`)                                          |
+| `later`       | not now                             | proposed again once the topic comes up in 2 new sessions                                        |
 
 A rejection with no reason becomes `later`. Similar knowledge goes to the rejected skill instead of growing a look-alike, and drafts of nearby skills follow the rule. The run prints one line per classified memory (`rejection #N classified: … — check: lbg rejections`).
 
@@ -285,11 +285,26 @@ systemctl --user disable --now laobaigan.timer   # pause
 
   // Secrets specific to your environment, redacted before anything reaches a model
   // (in addition to the built-in rules: keys, tokens, JWTs, passwords, cookies, …).
-  "redact": { "extraPatterns": [{ "pattern": "(corp_sso=)[^\\s;]+", "replace": "$1[REDACTED]", "name": "corp-sso" }] },
+  "redact": {
+    "extraPatterns": [
+      {
+        "pattern": "(corp_sso=)[^\\s;]+",
+        "replace": "$1[REDACTED]",
+        "name": "corp-sso"
+      }
+    ]
+  },
 
   // Optional steering: skills you want to exist, and a policy for how knowledge is grouped.
-  "topics": [{ "name": "dotfiles-management", "description": "zsh, tmux, and agent configs in my dotfiles repo" }],
-  "clustering": { "guidance": "Prefer one umbrella skill per ecosystem, with reference files per tool." },
+  "topics": [
+    {
+      "name": "dotfiles-management",
+      "description": "zsh, tmux, and agent configs in my dotfiles repo"
+    }
+  ],
+  "clustering": {
+    "guidance": "Prefer one umbrella skill per ecosystem, with reference files per tool."
+  },
 
   // What `lbg proposal accept <id> --commit` runs after writing the files (lbg never runs git itself).
   // One command for everything, or { "global": "…", "repo": "…" } per target.
@@ -300,27 +315,28 @@ systemctl --user disable --now laobaigan.timer   # pause
 }
 ```
 
-| Setting | Meaning |
-|---|---|
-| `extract.maxCallsPerRun` | sessions read per run |
-| `insert.maxCallsPerRun` | routing calls per run |
-| `render.maxPerRun` | proposals drafted per run |
-| `render.retryAfterHours` | wait after a failed draft before the timer tries that skill again |
-| `render.maxSkillLines` | a drafted `SKILL.md` longer than this fails its check (detail belongs in `references/`) |
-| `rejections.maxCallsPerRun` | rejections classified per run |
-| `rejections.expireDays` | when `not-useful` memories expire (0 = never) |
-| `agent` | `pi` (default) or `claude-code`: the agent for every call (extraction, rejection classification, tree routing, drafting, revise one-shot and interactive) |
-| `pi.model`, `pi.thinking` | pi's model (`provider/id`, or an id of pi's default provider) and thinking level (`off`, `minimal`, `low`, `medium`, `high`). Unset: pi's defaults |
-| `claudeCode.model`, `claudeCode.thinking` | Claude Code's model (`sonnet`, `opus`, a full id) and thinking level (mapped to its effort; `off` disables thinking). Unset: Claude Code's defaults |
-| `claudeCode.executable` | the `claude` to run for `claude-code` models (a path, or a name on `PATH`); default: the one bundled with the Agent SDK (interactive revise: `claude` on `PATH`) |
-| `claudeCode.settingSources` | Claude Code settings files loaded for those calls; default `["user"]`, so your login and provider settings (e.g. Bedrock) apply |
-| `claudeCode.settings` | Claude Code settings for lbg's sessions only, on top of your settings files (e.g. turn plugins off, set `env`, a separate credentials helper). lbg's own settings win; your `hooks` run next to lbg's guard hook (interactive revise only: background calls run no settings hooks). `disableAllHooks`, `allowManagedHooksOnly` and `permissions` are refused, since they could switch the guard off |
+| Setting                                   | Meaning                                                                                                                                                                                                                                                                                                                                                                                             |
+| ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `extract.maxCallsPerRun`                  | sessions read per run                                                                                                                                                                                                                                                                                                                                                                               |
+| `insert.maxCallsPerRun`                   | routing calls per run                                                                                                                                                                                                                                                                                                                                                                               |
+| `render.maxPerRun`                        | proposals drafted per run                                                                                                                                                                                                                                                                                                                                                                           |
+| `render.retryAfterHours`                  | wait after a failed draft before the timer tries that skill again                                                                                                                                                                                                                                                                                                                                   |
+| `render.maxSkillLines`                    | a drafted `SKILL.md` longer than this fails its check (detail belongs in `references/`)                                                                                                                                                                                                                                                                                                             |
+| `rejections.maxCallsPerRun`               | rejections classified per run                                                                                                                                                                                                                                                                                                                                                                       |
+| `rejections.expireDays`                   | when `not-useful` memories expire (0 = never)                                                                                                                                                                                                                                                                                                                                                       |
+| `agent`                                   | `pi` (default) or `claude-code`: the agent for every call (extraction, rejection classification, tree routing, drafting, revise one-shot and interactive)                                                                                                                                                                                                                                           |
+| `pi.model`, `pi.thinking`                 | pi's model (`provider/id`, or an id of pi's default provider) and thinking level (`off`, `minimal`, `low`, `medium`, `high`). Unset: pi's defaults                                                                                                                                                                                                                                                  |
+| `claudeCode.model`, `claudeCode.thinking` | Claude Code's model (`sonnet`, `opus`, a full id) and thinking level (mapped to its effort; `off` disables thinking). Unset: Claude Code's defaults                                                                                                                                                                                                                                                 |
+| `claudeCode.executable`                   | the `claude` to run for `claude-code` models (a path, or a name on `PATH`); default: the one bundled with the Agent SDK (interactive revise: `claude` on `PATH`)                                                                                                                                                                                                                                    |
+| `claudeCode.settingSources`               | Claude Code settings files loaded for those calls; default `["user"]`, so your login and provider settings (e.g. Bedrock) apply                                                                                                                                                                                                                                                                     |
+| `claudeCode.settings`                     | Claude Code settings for lbg's sessions only, on top of your settings files (e.g. turn plugins off, set `env`, a separate credentials helper). lbg's own settings win; your `hooks` run next to lbg's guard hook (interactive revise only: background calls run no settings hooks). `disableAllHooks`, `allowManagedHooksOnly` and `permissions` are refused, since they could switch the guard off |
 
 ### Claude Code
 
 With `"agent": "claude-code"`, those calls run in headless Claude Code sessions through the [Agent SDK](https://code.claude.com/docs/en/agent-sdk/overview) instead of pi, using Claude Code's login and billing. `claudeCode.executable` picks the `claude` binary; set it if you don't want the one bundled with the SDK.
 
 Every session:
+
 - loads only the settings in `claudeCode.settingSources` (default `["user"]`: login, provider, model overrides);
 - gets none of your own Claude Code context, like pi's sessions: no `CLAUDE.md` (yours or a project's), no `~/.claude/rules`, no auto-memory, and the default output style instead of yours (`CLAUDE_CODE_DISABLE_CLAUDE_MDS=1`, `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`, `outputStyle: "default"`);
 - has skills, MCP servers, and hooks from settings files and plugins turned off;
@@ -331,6 +347,7 @@ Every session:
 **Extract, classify and routing** get no tools and run in an empty temporary directory.
 
 **Drafting and one-shot revise** run in the proposal's scratch worktree with Claude Code's built-in `Read`, `Glob`, `Grep`, `Write` and `Edit`, and nothing else (no `Bash`, no web, no subagents). lbg decides every tool call before it runs, with the same checks as pi's guarded tools:
+
 - `Read`, `Glob`, `Grep`: only inside the worktree (symlinks resolved; glob patterns can't be absolute or use `..`);
 - `Write`, `Edit`: only the proposal's writable paths, never `.git`;
 - anything else is denied, and the model is told why.
@@ -343,12 +360,12 @@ The check is a `PreToolUse` hook, which runs whatever your settings' allow rules
 
 `commitCommand` runs with `sh -c` in the target directory. Placeholders are replaced with shell-quoted values, so don't quote them yourself:
 
-| Placeholder | Value |
-|---|---|
-| `${updated_files}` | every written or deleted file (absolute paths, each quoted) |
-| `${draft_note}` | the suggested commit message (summary + evidence) |
-| `${target_root}` | the skills directory, or the repository |
-| `${skill}`, `${proposal_id}` | the skill name, the proposal id |
+| Placeholder                  | Value                                                       |
+| ---------------------------- | ----------------------------------------------------------- |
+| `${updated_files}`           | every written or deleted file (absolute paths, each quoted) |
+| `${draft_note}`              | the suggested commit message (summary + evidence)           |
+| `${target_root}`             | the skills directory, or the repository                     |
+| `${skill}`, `${proposal_id}` | the skill name, the proposal id                             |
 
 `~` in the command means your home directory, including after `=` (as in `--git-dir=~/.cfg`), which `sh` itself wouldn't expand.
 

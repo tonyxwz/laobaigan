@@ -1,4 +1,11 @@
-import { closeSync, mkdirSync, openSync, readFileSync, unlinkSync, writeSync } from "node:fs";
+import {
+  closeSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  unlinkSync,
+  writeSync,
+} from "node:fs";
 import { dirname } from "node:path";
 
 /**
@@ -17,7 +24,8 @@ export function acquireLock(path: string): (() => void) | undefined {
         if (released) return;
         released = true;
         try {
-          if (readFileSync(path, "utf8").trim() === String(process.pid)) unlinkSync(path);
+          if (readFileSync(path, "utf8").trim() === String(process.pid))
+            unlinkSync(path);
         } catch {
           // already gone
         }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { parseDuration, parseSince } from "../src/util/time.ts";
 import { renderInput, truncate } from "../src/util/text.ts";
+import { parseDuration, parseSince } from "../src/util/time.ts";
 
 describe("time", () => {
   it("parses durations", () => {
@@ -11,8 +11,12 @@ describe("time", () => {
   });
   it("parses since as duration or date", () => {
     const now = new Date("2026-01-08T00:00:00Z");
-    expect(parseSince("7d", now).toISOString()).toBe("2026-01-01T00:00:00.000Z");
-    expect(parseSince("2026-01-02", now).toISOString()).toBe("2026-01-02T00:00:00.000Z");
+    expect(parseSince("7d", now).toISOString()).toBe(
+      "2026-01-01T00:00:00.000Z",
+    );
+    expect(parseSince("2026-01-02", now).toISOString()).toBe(
+      "2026-01-02T00:00:00.000Z",
+    );
   });
 });
 

@@ -24,9 +24,13 @@ export function writePromptStatus(db: StateDb, stateDir: string): number {
 }
 
 /** Snippets for the shell, using `path` (shown by `lbg prompt`). */
-export function promptSnippets(path: string): { starship: string; zsh: string } {
+export function promptSnippets(path: string): {
+  starship: string;
+  zsh: string;
+} {
   const home = process.env.HOME ?? "";
-  const p = home && path.startsWith(`${home}/`) ? `~${path.slice(home.length)}` : path;
+  const p =
+    home && path.startsWith(`${home}/`) ? `~${path.slice(home.length)}` : path;
   return {
     starship: [
       "# ~/.config/starship.toml",

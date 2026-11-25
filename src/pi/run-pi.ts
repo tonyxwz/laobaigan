@@ -1,22 +1,29 @@
 import { homedir } from "node:os";
+import type { Api, Model } from "@earendil-works/pi-ai";
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import {
+  type CreateAgentSessionOptions,
   createAgentSession,
   createExtensionRuntime,
   defineTool,
   ModelRuntime,
-  type CreateAgentSessionOptions,
   type ResourceLoader,
   SessionManager,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import type { Static, TSchema } from "typebox";
-import type { Api, Model } from "@earendil-works/pi-ai";
-import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { GUARDED_TOOLS, guardedToolDefinitions, type FileGuard, type GuardedToolName } from "./guard.ts";
+import {
+  type FileGuard,
+  GUARDED_TOOLS,
+  type GuardedToolName,
+  guardedToolDefinitions,
+} from "./guard.ts";
 
 /** The only provider laobaigan may use. */
 
-export type ThinkingLevel = NonNullable<CreateAgentSessionOptions["thinkingLevel"]>;
+export type ThinkingLevel = NonNullable<
+  CreateAgentSessionOptions["thinkingLevel"]
+>;
 
 export interface ResultTool<S extends TSchema> {
   name: string;
@@ -72,12 +79,22 @@ export function addUsage(a: Usage, b: Usage): Usage {
   };
 }
 
-export const ZERO_USAGE: Usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 };
+export const ZERO_USAGE: Usage = {
+  input: 0,
+  output: 0,
+  cacheRead: 0,
+  cacheWrite: 0,
+  cost: 0,
+};
 
 /** A loader that discovers nothing: no extensions, skills, prompts, or AGENTS.md. */
 function minimalLoader(systemPrompt: string): ResourceLoader {
   return {
-    getExtensions: () => ({ extensions: [], errors: [], runtime: createExtensionRuntime() }),
+    getExtensions: () => ({
+      extensions: [],
+      errors: [],
+      runtime: createExtensionRuntime(),
+    }),
     getSkills: () => ({ skills: [], diagnostics: [] }),
     getPrompts: () => ({ prompts: [], diagnostics: [] }),
     getThemes: () => ({ themes: [], diagnostics: [] }),
@@ -105,16 +122,26 @@ export class SdkPiRunner implements PiRunner {
     this.resolve = resolve;
   }
 
-  async run<S extends TSchema>(req: PiRequest<S>): Promise<PiResult<Static<S>>> {
+  async run<S extends TSchema>(
+    req: PiRequest<S>,
+  ): Promise<PiResult<Static<S>>> {
     const { runtime, model, thinking } = await this.resolve(req.model);
     const tools = req.tools ?? [];
     let fileTools: ToolDefinition[] = [];
     let cwd = req.cwd ?? process.cwd();
     if (req.fileGuard) {
       // Every file tool is the guarded version; anything else (bash, …) is refused.
-      const bad = tools.filter((t) => !(GUARDED_TOOLS as readonly string[]).includes(t));
-      if (bad.length) throw new Error(`Tools not allowed with a file guard: ${bad.join(", ")}`);
-      fileTools = await guardedToolDefinitions(req.fileGuard, tools as GuardedToolName[]);
+      const bad = tools.filter(
+        (t) => !(GUARDED_TOOLS as readonly string[]).includes(t),
+      );
+      if (bad.length)
+        throw new Error(
+          `Tools not allowed with a file guard: ${bad.join(", ")}`,
+        );
+      fileTools = await guardedToolDefinitions(
+        req.fileGuard,
+        tools as GuardedToolName[],
+      );
       cwd = req.fileGuard.root;
     }
 
@@ -126,7 +153,11 @@ export class SdkPiRunner implements PiRunner {
       parameters: req.resultTool.parameters,
       async execute(_id, params) {
         captured = { value: params as Static<S> };
-        return { content: [{ type: "text", text: "Recorded. You are done." }], details: undefined, terminate: true };
+        return {
+          content: [{ type: "text", text: "Recorded. You are done." }],
+          details: undefined,
+          terminate: true,
+        };
       },
     });
 
@@ -156,7 +187,9 @@ export class SdkPiRunner implements PiRunner {
       const stats = session.getSessionStats();
       if (!captured) {
         const last = session.getLastAssistantText?.() ?? "";
-        throw new Error(`Model never called ${req.resultTool.name}. Last reply: ${last.slice(0, 300)}`);
+        throw new Error(
+          `Model never called ${req.resultTool.name}. Last reply: ${last.slice(0, 300)}`,
+        );
       }
       return {
         value: captured.value,
@@ -175,12 +208,20 @@ export class SdkPiRunner implements PiRunner {
 }
 
 /** pi's own defaults, from ~/.pi/agent/settings.json (global settings only). */
-export function piDefaults(): { provider?: string; model?: string; thinking?: ThinkingLevel } {
+export function piDefaults(): {
+  provider?: string;
+  model?: string;
+  thinking?: ThinkingLevel;
+} {
   const sm = SettingsManager.create(homedir());
   const provider = sm.getDefaultProvider();
   const model = sm.getDefaultModel();
   const thinking = sm.getDefaultThinkingLevel() as ThinkingLevel | undefined;
-  return { ...(provider ? { provider } : {}), ...(model ? { model } : {}), ...(thinking ? { thinking } : {}) };
+  return {
+    ...(provider ? { provider } : {}),
+    ...(model ? { model } : {}),
+    ...(thinking ? { thinking } : {}),
+  };
 }
 
 /**
@@ -196,13 +237,29 @@ export class PiConfigRunner extends SdkPiRunner {
       const rt = await runtime;
       const d = defaults();
       const spec = id ?? d.model;
-      if (!spec) throw new Error("No model: set a default model in pi (/model, or defaultModel in ~/.pi/agent/settings.json), or pi.model in lbg's config");
+      if (!spec)
+        throw new Error(
+          "No model: set a default model in pi (/model, or defaultModel in ~/.pi/agent/settings.json), or pi.model in lbg's config",
+        );
       const slash = spec.indexOf("/");
-      const [provider, modelId] = slash > 0 && id ? [spec.slice(0, slash), spec.slice(slash + 1)] : [d.provider, spec];
-      if (!provider) throw new Error(`No provider for model ${spec}: set defaultProvider in pi, or use "provider/id"`);
+      const [provider, modelId] =
+        slash > 0 && id
+          ? [spec.slice(0, slash), spec.slice(slash + 1)]
+          : [d.provider, spec];
+      if (!provider)
+        throw new Error(
+          `No provider for model ${spec}: set defaultProvider in pi, or use "provider/id"`,
+        );
       const model = rt.getModel(provider, modelId);
-      if (!model) throw new Error(`Model ${provider}/${modelId} not found in the pi model catalog${id ? "" : " (pi's default model)"}`);
-      return { runtime: rt, model, ...(!id && d.thinking ? { thinking: d.thinking } : {}) };
+      if (!model)
+        throw new Error(
+          `Model ${provider}/${modelId} not found in the pi model catalog${id ? "" : " (pi's default model)"}`,
+        );
+      return {
+        runtime: rt,
+        model,
+        ...(!id && d.thinking ? { thinking: d.thinking } : {}),
+      };
     });
   }
 }

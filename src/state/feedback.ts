@@ -59,19 +59,43 @@ export class Feedback {
   }
 
   /** Store feedback (redacted). Returns its id. */
-  add(f: { proposalId: number; kind: FeedbackKind; text: string; turns?: Turn[]; diff?: string; at?: Date }): number {
-    if (!FEEDBACK_KINDS.includes(f.kind)) throw new Error(`Bad feedback kind: ${f.kind}`);
-    if (!this.db.db.prepare("SELECT 1 FROM proposal WHERE id = ?").get(f.proposalId)) throw new Error(`No proposal ${f.proposalId}`);
+  add(f: {
+    proposalId: number;
+    kind: FeedbackKind;
+    text: string;
+    turns?: Turn[];
+    diff?: string;
+    at?: Date;
+  }): number {
+    if (!FEEDBACK_KINDS.includes(f.kind))
+      throw new Error(`Bad feedback kind: ${f.kind}`);
+    if (
+      !this.db.db
+        .prepare("SELECT 1 FROM proposal WHERE id = ?")
+        .get(f.proposalId)
+    )
+      throw new Error(`No proposal ${f.proposalId}`);
     const turns = f.turns?.map((t) => ({ role: t.role, text: clean(t.text) }));
     return Number(
       this.db.db
-        .prepare("INSERT INTO feedback (proposal_id, kind, text, turns, diff, created_at) VALUES (?, ?, ?, ?, ?, ?)")
-        .run(f.proposalId, f.kind, clean(f.text), turns ? JSON.stringify(turns) : null, f.diff ? clean(f.diff) : null, (f.at ?? new Date()).getTime())
-        .lastInsertRowid,
+        .prepare(
+          "INSERT INTO feedback (proposal_id, kind, text, turns, diff, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .run(
+          f.proposalId,
+          f.kind,
+          clean(f.text),
+          turns ? JSON.stringify(turns) : null,
+          f.diff ? clean(f.diff) : null,
+          (f.at ?? new Date()).getTime(),
+        ).lastInsertRowid,
     );
   }
 
-  private query(where: string, ...args: (number | string)[]): FeedbackWithProposal[] {
+  private query(
+    where: string,
+    ...args: (number | string)[]
+  ): FeedbackWithProposal[] {
     return (
       this.db.db
         .prepare(

@@ -1,16 +1,35 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
-import { applyPatch, createPatch } from "diff";
 import { dirname, join } from "node:path";
+import { applyPatch, createPatch } from "diff";
 import { agentModel, type Config } from "../config.ts";
 import { GUARDED_TOOLS } from "../pi/guard.ts";
-import { addUsage, ZERO_USAGE, type PiRunner, type Usage } from "../pi/run-pi.ts";
+import {
+  addUsage,
+  type PiRunner,
+  type Usage,
+  ZERO_USAGE,
+} from "../pi/run-pi.ts";
 import { Feedback } from "../state/feedback.ts";
-import { reviewFeedbackPrompt } from "./review.ts";
-import { hashContent, Proposals, type DraftFile, type ProposalRow } from "../state/proposals.ts";
+import {
+  type DraftFile,
+  hashContent,
+  type ProposalRow,
+  Proposals,
+} from "../state/proposals.ts";
 import { subtreeNuggets, type Tree, type TreeNode } from "../state/tree.ts";
 import { applyExclusions, type Rehomed } from "./exclude.ts";
+import {
+  buildDraftPrompt,
+  DRAFT_SYSTEM_PROMPT,
+  diffSnapshot,
+  makeScratch,
+  type RenderTarget,
+  ReportDraftSchema,
+  snapshot,
+  verifyDraft,
+} from "./render.ts";
+import { reviewFeedbackPrompt } from "./review.ts";
 import { checkScope, scopeProblem } from "./scope.ts";
-import { buildDraftPrompt, diffSnapshot, DRAFT_SYSTEM_PROMPT, makeScratch, ReportDraftSchema, snapshot, verifyDraft, type RenderTarget } from "./render.ts";
 
 /**
  * Change an open proposal: one-shot `revise "feedback"`, an interactive pi chat, or
@@ -53,7 +72,8 @@ export interface Rebased {
 export function targetOf(p: ProposalRow, skill: TreeNode): RenderTarget {
   const dir = p.writable.find((w) => w.endsWith("/"));
   const file = p.writable.find((w) => !w.endsWith("/"));
-  const liveSection = !!file && !dir && /\/(AGENTS|CLAUDE)\.md#/.test(skill.sourcePath ?? "");
+  const liveSection =
+    !!file && !dir && /\/(AGENTS|CLAUDE)\.md#/.test(skill.sourcePath ?? "");
   return {
     root: p.targetRoot,
     skillName: p.skillName ?? skill.name ?? `node-${skill.id}`,
@@ -64,13 +84,20 @@ export function targetOf(p: ProposalRow, skill: TreeNode): RenderTarget {
   };
 }
 
-export async function openDraft(tree: Tree, id: number): Promise<DraftWorkspace> {
+export async function openDraft(
+  tree: Tree,
+  id: number,
+): Promise<DraftWorkspace> {
   const props = new Proposals(tree.db);
   const p = props.assertFree(id);
-  if (p.status !== "open") throw new Error(`Proposal #${id} is ${p.status}; only open proposals can be changed`);
+  if (p.status !== "open")
+    throw new Error(
+      `Proposal #${id} is ${p.status}; only open proposals can be changed`,
+    );
   props.claim(id); // a revise chat can take hours: hold the proposal so it isn't accepted/rejected meanwhile
   const skill = tree.subtree(p.nodeId);
-  if (!skill) throw new Error(`Proposal #${id}: node ${p.nodeId} no longer exists`);
+  if (!skill)
+    throw new Error(`Proposal #${id}: node ${p.nodeId} no longer exists`);
   const openedAt = new Date();
   const target = targetOf(p, skill);
   const base = await snapshot(target.root, target.writable);
@@ -88,7 +115,8 @@ export async function openDraft(tree: Tree, id: number): Promise<DraftWorkspace>
         content = now;
       } else {
         const patch = createPatch(f.path, f.baseContent ?? "", f.content ?? "");
-        const merged = f.content === null || now === null ? false : applyPatch(now, patch);
+        const merged =
+          f.content === null || now === null ? false : applyPatch(now, patch);
         if (merged !== false) {
           rebased.push({ path: f.path, how: "merged" });
           content = merged;
@@ -104,7 +132,16 @@ export async function openDraft(tree: Tree, id: number): Promise<DraftWorkspace>
       await writeFile(abs, content);
     }
   }
-  return { proposal: p, skill, target, base, scratch, openedAt, release: () => props.release(id), rebased };
+  return {
+    proposal: p,
+    skill,
+    target,
+    base,
+    scratch,
+    openedAt,
+    release: () => props.release(id),
+    rebased,
+  };
 }
 
 export interface CloseResult {
@@ -119,7 +156,8 @@ export interface CloseResult {
   files: DraftFile[];
 }
 
-const same = (a: DraftFile[], b: DraftFile[]) => JSON.stringify(a) === JSON.stringify(b);
+const same = (a: DraftFile[], b: DraftFile[]) =>
+  JSON.stringify(a) === JSON.stringify(b);
 
 /** Verify the scratch files and, if they're fine and different, store them on the proposal. */
 /**
@@ -134,15 +172,45 @@ export async function closeDraft(
 ): Promise<CloseResult> {
   const files = await diffSnapshot(ws.base, ws.scratch, ws.target.writable);
   const problems = verifyDraft(files, ws.base, ws.target, cfg);
-  if (problems.length) return { problems, warnings: [], changed: false, files, rebased: ws.rebased };
+  if (problems.length)
+    return {
+      problems,
+      warnings: [],
+      changed: false,
+      files,
+      rebased: ws.rebased,
+    };
   // You steer revisions, so a wider description is your call: a warning, not a block. A hand edit isn't checked.
-  const scope = opts.refreshEvidence ? checkScope(files, ws.base, ws.target, ws.proposal.kind, ws.skill.origin === "file") : undefined;
-  const warnings = scope?.widened ? [`${scopeProblem(scope)}. Keep it only if you mean to change what this skill is about.`] : [];
+  const scope = opts.refreshEvidence
+    ? checkScope(
+        files,
+        ws.base,
+        ws.target,
+        ws.proposal.kind,
+        ws.skill.origin === "file",
+      )
+    : undefined;
+  const warnings = scope?.widened
+    ? [
+        `${scopeProblem(scope)}. Keep it only if you mean to change what this skill is about.`,
+      ]
+    : [];
   const changed = !same(files, ws.proposal.files);
   if (changed || opts.summary) {
     const prev = (ws.proposal.usage as Usage | undefined) ?? ZERO_USAGE;
-    const evidence = opts.refreshEvidence ? { draftedAt: ws.openedAt, nuggetIds: subtreeNuggets(ws.skill).map((n) => n.id) } : undefined;
-    new Proposals(tree.db).markOpen(ws.proposal.id, files, opts.summary ?? ws.proposal.summary ?? "", opts.usage ? addUsage(prev, opts.usage) : ws.proposal.usage, evidence);
+    const evidence = opts.refreshEvidence
+      ? {
+          draftedAt: ws.openedAt,
+          nuggetIds: subtreeNuggets(ws.skill).map((n) => n.id),
+        }
+      : undefined;
+    new Proposals(tree.db).markOpen(
+      ws.proposal.id,
+      files,
+      opts.summary ?? ws.proposal.summary ?? "",
+      opts.usage ? addUsage(prev, opts.usage) : ws.proposal.usage,
+      evidence,
+    );
   }
   return { problems, warnings, changed, files, rebased: ws.rebased };
 }
@@ -154,12 +222,26 @@ export async function discardDraft(ws: DraftWorkspace): Promise<void> {
 
 /** Context for anyone (pi, or the interactive chat) revising the draft. */
 export function reviseContext(tree: Tree, ws: DraftWorkspace): string {
-  const siblings = ws.skill.parentId !== undefined ? tree.children(ws.skill.parentId).map((c) => ({ ...c, children: [], nuggets: [], forgotten: [] })) : [];
+  const siblings =
+    ws.skill.parentId !== undefined
+      ? tree
+          .children(ws.skill.parentId)
+          .map((c) => ({ ...c, children: [], nuggets: [], forgotten: [] }))
+      : [];
   return [
-    buildDraftPrompt(ws.skill, ws.proposal.kind, ws.target, siblings, ws.proposal.draftedAt, reviewFeedbackPrompt(tree, ws.skill)).replace(/\nWrite the files now, then call report_draft\.$/, ""),
+    buildDraftPrompt(
+      ws.skill,
+      ws.proposal.kind,
+      ws.target,
+      siblings,
+      ws.proposal.draftedAt,
+      reviewFeedbackPrompt(tree, ws.skill),
+    ).replace(/\nWrite the files now, then call report_draft\.$/, ""),
     "",
     "A draft already exists: the files in the current directory ARE the current draft. Revise them; don't start over unless asked.",
-    ...(ws.proposal.summary ? [`The drafter's note on it: ${ws.proposal.summary}`] : []),
+    ...(ws.proposal.summary
+      ? [`The drafter's note on it: ${ws.proposal.summary}`]
+      : []),
     ...droppedNote(tree, ws),
     ...rebaseNote(ws),
   ].join("\n");
@@ -173,7 +255,13 @@ export interface ReviseResult extends CloseResult {
 }
 
 /** One-shot revise: pi redrafts the stored draft with my feedback. Nothing is stored if verification fails. */
-export async function reviseProposal(tree: Tree, runner: PiRunner, cfg: Config, id: number, feedback: string): Promise<ReviseResult> {
+export async function reviseProposal(
+  tree: Tree,
+  runner: PiRunner,
+  cfg: Config,
+  id: number,
+  feedback: string,
+): Promise<ReviseResult> {
   const ws = await openDraft(tree, id);
   const prompt = `${reviseContext(tree, ws)}\n\nFeedback from the engineer (apply it):\n${feedback}\n\nRevise the files now, then call report_draft.`;
   // What I asked for is review feedback for this skill, whatever the redraft's outcome.
@@ -185,13 +273,29 @@ export async function reviseProposal(tree: Tree, runner: PiRunner, cfg: Config, 
       prompt,
       tools: [...GUARDED_TOOLS],
       fileGuard: { root: ws.scratch, writable: ws.target.writable },
-      resultTool: { name: "report_draft", description: "Report the revised draft.", parameters: ReportDraftSchema },
+      resultTool: {
+        name: "report_draft",
+        description: "Report the revised draft.",
+        parameters: ReportDraftSchema,
+      },
     });
-    const closed = await closeDraft(tree, cfg, ws, { summary: res.value.summary, usage: res.usage, refreshEvidence: true });
+    const closed = await closeDraft(tree, cfg, ws, {
+      summary: res.value.summary,
+      usage: res.usage,
+      refreshEvidence: true,
+    });
     let usage = res.usage;
     let excluded: Rehomed[] = [];
     if (!closed.problems.length && res.value.excluded?.length) {
-      const ex = await applyExclusions(tree, runner, cfg, ws.proposal.id, ws.skill, res.value.excluded, "drafter");
+      const ex = await applyExclusions(
+        tree,
+        runner,
+        cfg,
+        ws.proposal.id,
+        ws.skill,
+        res.value.excluded,
+        "drafter",
+      );
       excluded = ex.items;
       if (ex.usage) usage = addUsage(usage, ex.usage);
     }
@@ -208,7 +312,10 @@ function droppedNote(tree: Tree, ws: DraftWorkspace): string[] {
   return [
     "",
     "The engineer removed these knowledge items from this skill after the draft was written (off-topic). Take out any content, including in the description, that came only from them:",
-    ...dropped.map((e) => `- #${e.nuggetId} ${tree.db.getNugget(e.nuggetId)?.title ?? ""} (${e.reason})`),
+    ...dropped.map(
+      (e) =>
+        `- #${e.nuggetId} ${tree.db.getNugget(e.nuggetId)?.title ?? ""} (${e.reason})`,
+    ),
   ];
 }
 
@@ -221,8 +328,14 @@ function rebaseNote(ws: DraftWorkspace): string[] {
       "",
       `${r.path} changed on disk since the draft (the engineer edited it). The file in the current directory is the CURRENT version: keep those edits. Re-apply the draft's changes onto it:`,
     );
-    if (r.how === "conflict") out.push("```diff", r.draftPatch!.trimEnd(), "```");
-    else out.push(r.draftContent === null ? "(the draft deleted this file)" : `The earlier draft of the whole file was:\n\`\`\`\n${(r.draftContent ?? "").trimEnd()}\n\`\`\``);
+    if (r.how === "conflict")
+      out.push("```diff", r.draftPatch!.trimEnd(), "```");
+    else
+      out.push(
+        r.draftContent === null
+          ? "(the draft deleted this file)"
+          : `The earlier draft of the whole file was:\n\`\`\`\n${(r.draftContent ?? "").trimEnd()}\n\`\`\``,
+      );
   }
   return out;
 }

@@ -1,36 +1,78 @@
 #!/usr/bin/env node
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createInterface } from "node:readline/promises";
 import { parseArgs } from "node:util";
 import { CONFIG_PATH, loadConfig } from "./config.ts";
-import { piDefaults } from "./pi/run-pi.ts";
+import { init, renderInit } from "./init.ts";
+import {
+  promptFile,
+  promptSnippets,
+  writePromptStatus,
+} from "./notify/prompt.ts";
 import { modelRunner } from "./pi/run-claude.ts";
+import { piDefaults } from "./pi/run-pi.ts";
+import {
+  acceptProposal,
+  commitTargetFor,
+  newSinceDraft,
+  proposalDiff,
+  proposalView,
+  rejectProposal,
+} from "./pipeline/accept.ts";
+import { commitTemplate, renderCommit, runCommit } from "./pipeline/commit.ts";
 import * as curate from "./pipeline/curate.ts";
-import { processSessions, type ProcessOptions, type SessionOutcome } from "./pipeline/process.ts";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { ALL_AGENTS, defaultAdapters, scan, type AgentId, type Transcript } from "./sources/index.ts";
+import { dropEvidence } from "./pipeline/drop.ts";
+import {
+  chatRevise,
+  editProposal,
+  type InteractiveResult,
+} from "./pipeline/interactive.ts";
+import {
+  type ProcessOptions,
+  processSessions,
+  type SessionOutcome,
+} from "./pipeline/process.ts";
+import type { Rebased } from "./pipeline/revise.ts";
+import { reviseProposal } from "./pipeline/revise.ts";
+import { exitCode, runPipeline, STAGES, type Stage } from "./pipeline/run.ts";
+import { type SyncReport, syncTree } from "./pipeline/sync.ts";
+import { scoreTree, type TreeScoreResult } from "./pipeline/treescore.ts";
+import {
+  installedExecStart,
+  installedExtraPath,
+  installService,
+  invokedEntry,
+  uninstallService,
+} from "./service.ts";
+import {
+  type AgentId,
+  ALL_AGENTS,
+  defaultAdapters,
+  scan,
+  type Transcript,
+} from "./sources/index.ts";
 import { StateDb } from "./state/db.ts";
+import { Feedback } from "./state/feedback.ts";
+import {
+  PROPOSAL_STATUSES,
+  type ProposalRow,
+  type ProposalStatus,
+  Proposals,
+} from "./state/proposals.ts";
+import {
+  assertKind,
+  isExpired,
+  MEMORY_STATUSES,
+  type MemoryRow,
+  type MemoryStatus,
+  Rejections,
+} from "./state/rejections.ts";
+import { subtreeNuggets, Tree, type TreeNode } from "./state/tree.ts";
 import { acquireLock } from "./util/lock.ts";
 import { truncate } from "./util/text.ts";
-import { subtreeNuggets, Tree, type TreeNode } from "./state/tree.ts";
-import { syncTree, type SyncReport } from "./pipeline/sync.ts";
-import { scoreTree, type TreeScoreResult } from "./pipeline/treescore.ts";
-import { dropEvidence } from "./pipeline/drop.ts";
-import type { Rebased } from "./pipeline/revise.ts";
-import { exitCode, runPipeline, STAGES, type Stage } from "./pipeline/run.ts";
-import { promptFile, promptSnippets, writePromptStatus } from "./notify/prompt.ts";
-import { commitTemplate, renderCommit, runCommit } from "./pipeline/commit.ts";
-import { init, renderInit } from "./init.ts";
-import { installedExecStart, installedExtraPath, installService, invokedEntry, uninstallService } from "./service.ts";
-import { acceptProposal, commitTargetFor, newSinceDraft, proposalDiff, proposalView, rejectProposal } from "./pipeline/accept.ts";
-import { reviseProposal } from "./pipeline/revise.ts";
-import { chatRevise, editProposal, type InteractiveResult } from "./pipeline/interactive.ts";
-import { createInterface } from "node:readline/promises";
-import { Feedback } from "./state/feedback.ts";
-import { PROPOSAL_STATUSES, Proposals, type ProposalRow, type ProposalStatus } from "./state/proposals.ts";
-import { assertKind, isExpired, MEMORY_STATUSES, Rejections, type MemoryRow, type MemoryStatus } from "./state/rejections.ts";
 import { parseDuration, parseSince } from "./util/time.ts";
 
 const USAGE = `lbg (laobaigan 老白干) — distill repeated explanations from agent sessions into skills
@@ -119,16 +161,27 @@ Config: ~/.config/laobaigan/config.json (override with LBG_CONFIG)
 
 async function main(argv: string[]): Promise<number> {
   const gone: Record<string, string> = {
-    extract: "lbg run --stages extract (prompt tuning on one session: lbg run --dry-run --fresh --stages extract --session <agent>:<id>)",
+    extract:
+      "lbg run --stages extract (prompt tuning on one session: lbg run --dry-run --fresh --stages extract --session <agent>:<id>)",
     cluster: "lbg run --stages sync,insert,score",
     draft: "lbg run --only <skill-id>... (drafts them now)",
   };
   // Checked before parsing, so old flags (e.g. tree insert --all) still get the pointer.
   const [a0, a1] = argv.filter((x) => !x.startsWith("-"));
-  const goneKey = a0 === "tree" && a1 === "insert" ? "tree insert" : a0 && gone[a0] ? a0 : undefined;
+  const goneKey =
+    a0 === "tree" && a1 === "insert"
+      ? "tree insert"
+      : a0 && gone[a0]
+        ? a0
+        : undefined;
   if (goneKey) {
-    const instead = goneKey === "tree insert" ? "lbg run --stages sync,insert,score (on a db copy: add --dry-run)" : gone[goneKey]!;
-    process.stderr.write(`\`lbg ${goneKey}\` is gone: only \`lbg run\` calls models now. Use: ${instead}\n`);
+    const instead =
+      goneKey === "tree insert"
+        ? "lbg run --stages sync,insert,score (on a db copy: add --dry-run)"
+        : gone[goneKey]!;
+    process.stderr.write(
+      `\`lbg ${goneKey}\` is gone: only \`lbg run\` calls models now. Use: ${instead}\n`,
+    );
     return 1;
   }
   const { positionals, values } = parseArgs({
@@ -156,7 +209,7 @@ async function main(argv: string[]): Promise<number> {
       kind: { type: "string" },
       skill: { type: "string" },
       before: { type: "string" },
-      "forget": { type: "boolean", default: false },
+      forget: { type: "boolean", default: false },
       rule: { type: "string" },
       to: { type: "string" },
       revise: { type: "boolean", default: false },
@@ -171,9 +224,10 @@ async function main(argv: string[]): Promise<number> {
     return cmd || values.help ? 0 : 1;
   }
 
-
   if (cmd === "topics" || cmd === "clusters") {
-    process.stderr.write(`\`lbg ${cmd}\` is gone: topics and clusters became the knowledge tree. Use \`lbg tree\` (see lbg --help).\n`);
+    process.stderr.write(
+      `\`lbg ${cmd}\` is gone: topics and clusters became the knowledge tree. Use \`lbg tree\` (see lbg --help).\n`,
+    );
     return 1;
   }
   const agents = values.agent ? parseAgents(values.agent) : undefined;
@@ -193,11 +247,13 @@ async function main(argv: string[]): Promise<number> {
         try {
           rows.push(summarize(await adapter.load(ref)));
         } catch (err) {
-          process.stderr.write(`warn: failed to load ${ref.agent}:${ref.sessionId}: ${String(err)}\n`);
+          process.stderr.write(
+            `warn: failed to load ${ref.agent}:${ref.sessionId}: ${String(err)}\n`,
+          );
         }
       }
       rows.sort((a, b) => a.updatedAt.localeCompare(b.updatedAt));
-      if (values.json) return json(rows), 0;
+      if (values.json) return (json(rows), 0);
       for (const r of rows) {
         out(
           `${r.updatedAt.slice(0, 16).replace("T", " ")}  ${r.agent.padEnd(8)} ${r.sessionId.slice(0, 12).padEnd(12)}  ` +
@@ -211,14 +267,18 @@ async function main(argv: string[]): Promise<number> {
 
     case "show": {
       const target = parseSessionTarget(rest[0]);
-      const found = (await scan(adapters, { agents: [target.agent] })).filter(({ ref }) =>
-        ref.sessionId.startsWith(target.idPrefix),
+      const found = (await scan(adapters, { agents: [target.agent] })).filter(
+        ({ ref }) => ref.sessionId.startsWith(target.idPrefix),
       );
-      if (found.length !== 1) throw new Error(`${found.length} sessions match ${rest[0]}`);
+      if (found.length !== 1)
+        throw new Error(`${found.length} sessions match ${rest[0]}`);
       const { ref, adapter } = found[0]!;
       const t = await adapter.load(ref);
-      if (values["user-only"]) t.turns = t.turns.filter((x) => x.role === "user");
-      out(values.json ? `${JSON.stringify(t, null, 2)}\n` : renderTranscript(t));
+      if (values["user-only"])
+        t.turns = t.turns.filter((x) => x.role === "user");
+      out(
+        values.json ? `${JSON.stringify(t, null, 2)}\n` : renderTranscript(t),
+      );
       return 0;
     }
 
@@ -229,19 +289,37 @@ async function main(argv: string[]): Promise<number> {
         const opts: ProcessOptions = {
           plan: true,
           fresh: values.fresh,
-          ...(values.since && values.since !== "all" ? { since: parseSince(values.since) } : {}),
+          ...(values.since && values.since !== "all"
+            ? { since: parseSince(values.since) }
+            : {}),
           ...(agents ? { agents } : {}),
-          ...(values.session ? { only: parseSessionTarget(values.session) } : {}),
-          ...(values["max-calls"] ? { maxCalls: Number(values["max-calls"]) } : {}),
-          ...(values.settle ? { settleMinutes: parseDuration(values.settle) / 60e3 } : {}),
+          ...(values.session
+            ? { only: parseSessionTarget(values.session) }
+            : {}),
+          ...(values["max-calls"]
+            ? { maxCalls: Number(values["max-calls"]) }
+            : {}),
+          ...(values.settle
+            ? { settleMinutes: parseDuration(values.settle) / 60e3 }
+            : {}),
           log: (m) => process.stderr.write(`${m}\n`),
         };
-        const res = await processSessions(adapters, db, modelRunner(cfg), cfg, opts);
-        if (values.json) return json(res), 0;
+        const res = await processSessions(
+          adapters,
+          db,
+          modelRunner(cfg),
+          cfg,
+          opts,
+        );
+        if (values.json) return (json(res), 0);
         renderOutcomes(res.outcomes, out);
         if (values.excerpt) {
           for (const o of res.outcomes) {
-            o.excerptText?.forEach((c, i) => out(`\n===== excerpt chunk ${i + 1}/${o.excerptText!.length} =====\n${c}`));
+            o.excerptText?.forEach((c, i) =>
+              out(
+                `\n===== excerpt chunk ${i + 1}/${o.excerptText!.length} =====\n${c}`,
+              ),
+            );
           }
         }
         return res.outcomes.some((o) => o.status === "error") ? 2 : 0;
@@ -253,15 +331,31 @@ async function main(argv: string[]): Promise<number> {
     case "run": {
       const cfg = loadConfig();
       const dry = values["dry-run"];
-      if (values.fresh && !dry) throw new Error("--fresh needs --dry-run (it would re-extract everything into the real db)");
-      const stages = values.stages?.split(",").map((x) => x.trim()) as Stage[] | undefined;
-      for (const st of stages ?? []) if (!STAGES.includes(st)) throw new Error(`Unknown stage ${st} (expected ${STAGES.join(", ")})`);
-      const only = values.only?.flatMap((x) => x.split(",")).map((x) => Number(x.trim().replace(/^#/, "")));
-      if (only?.some((x) => !Number.isInteger(x) || x <= 0)) throw new Error("--only expects skill ids");
-      const session = values.session ? parseSessionTarget(values.session) : undefined;
+      if (values.fresh && !dry)
+        throw new Error(
+          "--fresh needs --dry-run (it would re-extract everything into the real db)",
+        );
+      const stages = values.stages?.split(",").map((x) => x.trim()) as
+        | Stage[]
+        | undefined;
+      for (const st of stages ?? [])
+        if (!STAGES.includes(st))
+          throw new Error(
+            `Unknown stage ${st} (expected ${STAGES.join(", ")})`,
+          );
+      const only = values.only
+        ?.flatMap((x) => x.split(","))
+        .map((x) => Number(x.trim().replace(/^#/, "")));
+      if (only?.some((x) => !Number.isInteger(x) || x <= 0))
+        throw new Error("--only expects skill ids");
+      const session = values.session
+        ? parseSessionTarget(values.session)
+        : undefined;
 
       // A dry run works on a copy (no lock needed: the real db isn't written).
-      const release = dry ? () => {} : acquireLock(join(cfg.stateDir, "run.lock"));
+      const release = dry
+        ? () => {}
+        : acquireLock(join(cfg.stateDir, "run.lock"));
       if (!release) {
         process.stderr.write("another run is in progress; skipping\n");
         return 75; // EX_TEMPFAIL
@@ -271,27 +365,56 @@ async function main(argv: string[]): Promise<number> {
       const db = tmp ? real.snapshotTo(join(tmp, "state.db")) : real;
       try {
         const r = await runPipeline(
-          { adapters, db, runner: modelRunner(cfg), cfg: tmp ? { ...cfg, stateDir: tmp } : cfg, log: (m) => out(`  ${m}\n`) },
           {
-            ...(stages ? { stages } : only ? { stages: ["sync", "score", "draft"] as Stage[] } : {}),
-            ...(values["max-calls"] ? { maxExtractCalls: Number(values["max-calls"]) } : {}),
+            adapters,
+            db,
+            runner: modelRunner(cfg),
+            cfg: tmp ? { ...cfg, stateDir: tmp } : cfg,
+            log: (m) => out(`  ${m}\n`),
+          },
+          {
+            ...(stages
+              ? { stages }
+              : only
+                ? { stages: ["sync", "score", "draft"] as Stage[] }
+                : {}),
+            ...(values["max-calls"]
+              ? { maxExtractCalls: Number(values["max-calls"]) }
+              : {}),
             ...(only ? { only } : {}),
             ...(session ? { session } : {}),
             ...(values.fresh ? { fresh: true } : {}),
           },
         );
-        if (values.json) return json(r), exitCode(r);
-        if (r.waiting && !dry) out(`${r.waiting} proposal(s) waiting for review — lbg proposals\n`);
+        if (values.json) return (json(r), exitCode(r));
+        if (r.waiting && !dry)
+          out(`${r.waiting} proposal(s) waiting for review — lbg proposals\n`);
         // One line per stage, then one per new proposal: journald-friendly.
         for (const st of r.stages) {
-          out(`${st.stage.padEnd(7)} ${st.status === "ok" ? "" : `[${st.status}] `}${st.summary}${st.calls ? ` (${st.calls} call(s), $${st.usage.cost.toFixed(4)})` : ""}\n`);
+          out(
+            `${st.stage.padEnd(7)} ${st.status === "ok" ? "" : `[${st.status}] `}${st.summary}${st.calls ? ` (${st.calls} call(s), $${st.usage.cost.toFixed(4)})` : ""}\n`,
+          );
         }
-        if ((session || dry) && r.extracted.length) renderOutcomes(r.extracted, out);
-        if (only) for (const k of r.skipped) out(`skipped #${k.nodeId} ${k.skill}: ${k.reason}\n`);
-        for (const c of r.rejections) out(`rejection #${c.id} classified: ${c.kind}${c.target ? ` (→ ${c.target})` : ""} → ${c.rule} — check: lbg rejections\n`);
-        for (const p of r.proposals) out(`new proposal #${p.id}: ${p.skill} (${p.files} file(s))${dry ? "" : ` — review with: lbg proposal show ${p.id}`}\n`);
-        out(`run #${r.runId} finished in ${Math.round(r.ms / 1000)}s: ${r.calls} model call(s), cost≈$${r.usage.cost.toFixed(4)}${dry ? "  (dry run: nothing kept)" : ""}\n`);
-        if (r.abortedReason) process.stderr.write(`run aborted: ${r.abortedReason}\n(if this is a credentials error, refresh your model provider's credentials)\n`);
+        if ((session || dry) && r.extracted.length)
+          renderOutcomes(r.extracted, out);
+        if (only)
+          for (const k of r.skipped)
+            out(`skipped #${k.nodeId} ${k.skill}: ${k.reason}\n`);
+        for (const c of r.rejections)
+          out(
+            `rejection #${c.id} classified: ${c.kind}${c.target ? ` (→ ${c.target})` : ""} → ${c.rule} — check: lbg rejections\n`,
+          );
+        for (const p of r.proposals)
+          out(
+            `new proposal #${p.id}: ${p.skill} (${p.files} file(s))${dry ? "" : ` — review with: lbg proposal show ${p.id}`}\n`,
+          );
+        out(
+          `run #${r.runId} finished in ${Math.round(r.ms / 1000)}s: ${r.calls} model call(s), cost≈$${r.usage.cost.toFixed(4)}${dry ? "  (dry run: nothing kept)" : ""}\n`,
+        );
+        if (r.abortedReason)
+          process.stderr.write(
+            `run aborted: ${r.abortedReason}\n(if this is a credentials error, refresh your model provider's credentials)\n`,
+          );
         return exitCode(r);
       } finally {
         if (tmp) {
@@ -306,13 +429,16 @@ async function main(argv: string[]): Promise<number> {
     case "tree": {
       const cfg = loadConfig();
       const real = new StateDb(join(cfg.stateDir, "state.db"));
-      const tmp = values["dry-run"] ? mkdtempSync(join(tmpdir(), "lbg-dry-")) : undefined;
+      const tmp = values["dry-run"]
+        ? mkdtempSync(join(tmpdir(), "lbg-dry-"))
+        : undefined;
       const db = tmp ? real.snapshotTo(join(tmp, "state.db")) : real;
       try {
         const tree = new Tree(db);
         const num = (x: string | undefined, what: string) => {
           const n = Number((x ?? "").replace(/^#/, ""));
-          if (!Number.isInteger(n) || n <= 0) throw new Error(`Expected ${what} id, got ${JSON.stringify(x)}`);
+          if (!Number.isInteger(n) || n <= 0)
+            throw new Error(`Expected ${what} id, got ${JSON.stringify(x)}`);
           return n;
         };
         /** After a hand edit: re-score (no model calls) and show the affected skill. */
@@ -320,7 +446,10 @@ async function main(argv: string[]): Promise<number> {
           const scored = scoreTree(tree, cfg.score);
           out(`${msg}${tmp ? "  (dry run: nothing persisted)" : ""}\n`);
           renderScore(scored, out);
-          const skill = id !== undefined ? tree.path(id).find((p) => p.depth === 1) : undefined;
+          const skill =
+            id !== undefined
+              ? tree.path(id).find((p) => p.depth === 1)
+              : undefined;
           const s = skill && tree.subtree(skill.id);
           if (s) renderSkill(s, out);
           return 0;
@@ -329,16 +458,29 @@ async function main(argv: string[]): Promise<number> {
           case "merge": {
             const into = num(rest[1], "skill");
             const from = rest.slice(2).map((x) => num(x, "skill"));
-            if (!from.length) throw new Error("tree merge expects <into> <from>...");
+            if (!from.length)
+              throw new Error("tree merge expects <into> <from>...");
             const r = curate.mergeSkills(tree, into, from);
-            return after(into, `merged ${from.map((x) => `#${x}`).join(", ")} into #${into}: ${r.sections} section(s), ${r.nuggets} nugget(s) moved`);
+            return after(
+              into,
+              `merged ${from.map((x) => `#${x}`).join(", ")} into #${into}: ${r.sections} section(s), ${r.nuggets} nugget(s) moved`,
+            );
           }
           case "split": {
             const skill = num(rest[1], "skill");
             const sections = rest.slice(2).map((x) => num(x, "section"));
-            if (!sections.length) throw new Error("tree split expects <skill> <section>...");
-            const created = curate.splitSkill(tree, skill, sections, values.title);
-            after(skill, `split ${sections.map((x) => `#${x}`).join(", ")} out of #${skill} into new skill #${created}`);
+            if (!sections.length)
+              throw new Error("tree split expects <skill> <section>...");
+            const created = curate.splitSkill(
+              tree,
+              skill,
+              sections,
+              values.title,
+            );
+            after(
+              skill,
+              `split ${sections.map((x) => `#${x}`).join(", ")} out of #${skill} into new skill #${created}`,
+            );
             renderSkill(tree.subtree(created)!, out);
             return 0;
           }
@@ -350,8 +492,12 @@ async function main(argv: string[]): Promise<number> {
           }
           case "rename": {
             const id = num(rest[1], "node");
-            if (!values.title && !values.name) throw new Error("tree rename expects --title and/or --name");
-            curate.renameNode(tree, id, { ...(values.title ? { title: values.title } : {}), ...(values.name ? { name: values.name } : {}) });
+            if (!values.title && !values.name)
+              throw new Error("tree rename expects --title and/or --name");
+            curate.renameNode(tree, id, {
+              ...(values.title ? { title: values.title } : {}),
+              ...(values.name ? { name: values.name } : {}),
+            });
             return after(id, `renamed #${id}`);
           }
           case "unlock": {
@@ -362,9 +508,11 @@ async function main(argv: string[]): Promise<number> {
         }
         if (rest[0] === "score") {
           const scored = scoreTree(tree, cfg.score);
-          if (values.json) return json(scored), 0;
+          if (values.json) return (json(scored), 0);
           renderScore(scored, out);
-          out(`${scored.scored} skill(s) scored${tmp ? "  (dry run: nothing persisted)" : ""}\n`);
+          out(
+            `${scored.scored} skill(s) scored${tmp ? "  (dry run: nothing persisted)" : ""}\n`,
+          );
           return 0;
         }
         if (rest[0] === "sync") {
@@ -372,10 +520,11 @@ async function main(argv: string[]): Promise<number> {
             skillsDir: cfg.skillsDir,
             declared: cfg.topics,
           });
-          if (values.json) return json(r), 0;
+          if (values.json) return (json(r), 0);
           const line = (label: string, x: SyncReport) => {
             const parts = [
-              x.created.length && `created ${x.created.length} (${x.created.join(", ")})`,
+              x.created.length &&
+                `created ${x.created.length} (${x.created.join(", ")})`,
               x.updated.length && `updated ${x.updated.join(", ")}`,
               x.adopted.length && `adopted ${x.adopted.join(", ")}`,
               x.removed.length && `removed ${x.removed.join(", ")}`,
@@ -384,7 +533,8 @@ async function main(argv: string[]): Promise<number> {
             out(`${label}: ${parts.join("; ") || "nothing"}\n`);
           };
           line("global skills", r.global);
-          for (const [repo, x] of Object.entries(r.repos)) line(`repo ${shortPath(repo)}`, x);
+          for (const [repo, x] of Object.entries(r.repos))
+            line(`repo ${shortPath(repo)}`, x);
           line("declared topics", r.declared);
           if (tmp) out("(dry run: nothing persisted)\n");
           return 0;
@@ -392,20 +542,29 @@ async function main(argv: string[]): Promise<number> {
         if (rest[0] === "show") {
           const n = tree.subtree(Number(rest[1]));
           if (!n) throw new Error(`No node ${rest[1]}`);
-          if (values.json) return json(n), 0;
-          out(renderNodeDetail(n, tree.path(n.id).map((p) => p.title)));
+          if (values.json) return (json(n), 0);
+          out(
+            renderNodeDetail(
+              n,
+              tree.path(n.id).map((p) => p.title),
+            ),
+          );
           return 0;
         }
-        if (rest[0]) throw new Error(`Unknown tree subcommand: ${rest[0]} (show)`);
+        if (rest[0])
+          throw new Error(`Unknown tree subcommand: ${rest[0]} (show)`);
         const roots = tree.trees();
-        if (values.json) return json(roots), 0;
+        if (values.json) return (json(roots), 0);
         const statuses = values.status?.split(",");
         for (const r of roots) {
-          if (statuses && !r.children.some((c) => statuses.includes(c.status))) continue;
+          if (statuses && !r.children.some((c) => statuses.includes(c.status)))
+            continue;
           renderTree(r, out, statuses ? { statuses } : {});
         }
         const unplaced = tree.unplacedNuggets().length;
-        out(`\n${unplaced ? `${unplaced} nugget(s) not placed yet. ` : ""}s=sessions n=nuggets. Details: lbg tree show <id>\n`);
+        out(
+          `\n${unplaced ? `${unplaced} nugget(s) not placed yet. ` : ""}s=sessions n=nuggets. Details: lbg tree show <id>\n`,
+        );
         return 0;
       } finally {
         if (tmp) {
@@ -417,9 +576,11 @@ async function main(argv: string[]): Promise<number> {
     }
 
     case "init": {
-      const configured = existsSync(CONFIG_PATH) ? { skillsDir: loadConfig().skillsDir } : {};
+      const configured = existsSync(CONFIG_PATH)
+        ? { skillsDir: loadConfig().skillsDir }
+        : {};
       const r = await init({ adapters, piDefaults, ...configured });
-      if (values.json) return json(r), 0;
+      if (values.json) return (json(r), 0);
       out(renderInit(r));
       return 0;
     }
@@ -429,30 +590,50 @@ async function main(argv: string[]): Promise<number> {
       if (sub === "install") {
         const extraPath = values.path ?? installedExtraPath();
         // Run the timer through the same `lbg` I invoked (npm link / npm install -g), if that's how I ran it.
-        const r = installService({ cli: invokedEntry(process.argv[1]), ...(extraPath !== undefined ? { extraPath } : {}) });
-        out(`installed ${r.servicePath}\n          ${r.timerPath}\nruns: ${r.node} ${r.cli} run (hourly)\n`);
+        const r = installService({
+          cli: invokedEntry(process.argv[1]),
+          ...(extraPath !== undefined ? { extraPath } : {}),
+        });
+        out(
+          `installed ${r.servicePath}\n          ${r.timerPath}\nruns: ${r.node} ${r.cli} run (hourly)\n`,
+        );
         if (extraPath) out(`extra PATH: ${extraPath}\n`);
         for (const w of r.warnings) out(`\nwarning: ${w}\n`);
-        if (r.lingerOff) out(`\nnote: lingering is off, so the timer only runs while you're logged in. Enable with: loginctl enable-linger ${process.env.USER ?? "$USER"}\n`);
+        if (r.lingerOff)
+          out(
+            `\nnote: lingering is off, so the timer only runs while you're logged in. Enable with: loginctl enable-linger ${process.env.USER ?? "$USER"}\n`,
+          );
         return 0;
       }
       if (sub === "uninstall") {
         const removed = uninstallService();
-        out(removed.length ? `removed ${removed.join(", ")}\nstate is kept in ${loadConfig().stateDir}\n` : "not installed\n");
+        out(
+          removed.length
+            ? `removed ${removed.join(", ")}\nstate is kept in ${loadConfig().stateDir}\n`
+            : "not installed\n",
+        );
         return 0;
       }
       if (sub === "status") {
         const exec = installedExecStart();
-        if (!exec) return out("not installed (lbg service install)\n"), 0;
+        if (!exec) return (out("not installed (lbg service install)\n"), 0);
         out(`runs: ${exec}\n`);
         try {
-          out(execFileSync("systemctl", ["--user", "list-timers", "laobaigan.timer", "--no-pager"], { encoding: "utf8" }));
+          out(
+            execFileSync(
+              "systemctl",
+              ["--user", "list-timers", "laobaigan.timer", "--no-pager"],
+              { encoding: "utf8" },
+            ),
+          );
         } catch {
           // systemctl unavailable
         }
         return 0;
       }
-      throw new Error(`Unknown service subcommand: ${sub} (install | uninstall | status)`);
+      throw new Error(
+        `Unknown service subcommand: ${sub} (install | uninstall | status)`,
+      );
     }
 
     case "prompt": {
@@ -461,10 +642,14 @@ async function main(argv: string[]): Promise<number> {
       try {
         const n = writePromptStatus(db, cfg.stateDir);
         const path = promptFile(cfg.stateDir);
-        if (values.json) return json({ waiting: n, path }), 0;
+        if (values.json) return (json({ waiting: n, path }), 0);
         const { starship, zsh } = promptSnippets(path);
-        out(`${n ? `${n} proposal(s) waiting for review` : "nothing waiting"} (${path})\n\n`);
-        out(`Show it in your prompt (lbg never edits your dotfiles):\n\n${starship}\n\n${zsh}\n`);
+        out(
+          `${n ? `${n} proposal(s) waiting for review` : "nothing waiting"} (${path})\n\n`,
+        );
+        out(
+          `Show it in your prompt (lbg never edits your dotfiles):\n\n${starship}\n\n${zsh}\n`,
+        );
         return 0;
       } finally {
         db.close();
@@ -476,35 +661,64 @@ async function main(argv: string[]): Promise<number> {
       const db = new StateDb(join(cfg.stateDir, "state.db"));
       try {
         const tree = new Tree(db);
-        const mem = new Rejections(db, { expireDays: cfg.rejections.expireDays });
+        const mem = new Rejections(db, {
+          expireDays: cfg.rejections.expireDays,
+        });
         const [sub, idArg] = rest;
         const num = (x: string | undefined, what: string) => {
           const n = Number((x ?? "").replace(/^#/, ""));
-          if (!Number.isInteger(n) || n <= 0) throw new Error(`Expected ${what} id, got ${JSON.stringify(x)}`);
+          if (!Number.isInteger(n) || n <= 0)
+            throw new Error(`Expected ${what} id, got ${JSON.stringify(x)}`);
           return n;
         };
         if (!sub) {
-          const statuses = (values.status?.split(",") ?? ["pending", "active"]) as MemoryStatus[];
-          for (const st of statuses) if (!MEMORY_STATUSES.includes(st)) throw new Error(`Bad status ${st}`);
+          const statuses = (values.status?.split(",") ?? [
+            "pending",
+            "active",
+          ]) as MemoryStatus[];
+          for (const st of statuses)
+            if (!MEMORY_STATUSES.includes(st))
+              throw new Error(`Bad status ${st}`);
           const list = mem.list(statuses);
-          if (values.json) return json(list), 0;
+          if (values.json) return (json(list), 0);
           for (const m of list) out(renderMemory(m, tree));
-          out(`\n${list.length} rejection memor${list.length === 1 ? "y" : "ies"}. Correct one: lbg rejections edit <id> --kind … --rule "…"\n`);
+          out(
+            `\n${list.length} rejection memor${list.length === 1 ? "y" : "ies"}. Correct one: lbg rejections edit <id> --kind … --rule "…"\n`,
+          );
           return 0;
         }
         if (sub === "edit") {
           const id = num(idArg, "rejection memory");
-          if (values.kind === undefined && values.rule === undefined && values.to === undefined) throw new Error("rejections edit expects --kind, --rule and/or --to");
-          const kind = values.kind !== undefined ? assertKind(values.kind) : undefined;
+          if (
+            values.kind === undefined &&
+            values.rule === undefined &&
+            values.to === undefined
+          )
+            throw new Error(
+              "rejections edit expects --kind, --rule and/or --to",
+            );
+          const kind =
+            values.kind !== undefined ? assertKind(values.kind) : undefined;
           let target: number | undefined;
           if (values.to !== undefined) {
             target = num(values.to, "skill");
             const m = mem.mustGet(id);
             const t = tree.getNode(target);
-            if (!t || t.depth !== 1 || t.scope !== m.scope || (t.repo ?? undefined) !== (m.repo ?? undefined)) throw new Error(`--to ${target}: not a skill in the same scope`);
-            if ((kind ?? m.kind) !== "wrong-place") throw new Error("--to only goes with --kind wrong-place");
+            if (
+              !t ||
+              t.depth !== 1 ||
+              t.scope !== m.scope ||
+              (t.repo ?? undefined) !== (m.repo ?? undefined)
+            )
+              throw new Error(`--to ${target}: not a skill in the same scope`);
+            if ((kind ?? m.kind) !== "wrong-place")
+              throw new Error("--to only goes with --kind wrong-place");
           }
-          const m = mem.edit(id, { ...(kind ? { kind } : {}), ...(values.rule !== undefined ? { rule: values.rule } : {}), ...(target !== undefined ? { targetNodeId: target } : {}) });
+          const m = mem.edit(id, {
+            ...(kind ? { kind } : {}),
+            ...(values.rule !== undefined ? { rule: values.rule } : {}),
+            ...(target !== undefined ? { targetNodeId: target } : {}),
+          });
           out(renderMemory(m, tree));
           return 0;
         }
@@ -519,7 +733,9 @@ async function main(argv: string[]): Promise<number> {
           out(`rejection memory #${id} forgotten: lbg no longer uses it.\n`);
           return 0;
         }
-        throw new Error(`Unknown rejections subcommand: ${sub} (edit | keep | forget)`);
+        throw new Error(
+          `Unknown rejections subcommand: ${sub} (edit | keep | forget)`,
+        );
       } finally {
         db.close();
       }
@@ -533,61 +749,97 @@ async function main(argv: string[]): Promise<number> {
         const tree = new Tree(db);
         const props = new Proposals(db);
         const sub = cmd === "proposals" ? "list" : (rest[0] ?? "list");
-        const id = Number((cmd === "proposals" ? "" : (rest[1] ?? "")).replace(/^#/, ""));
-        for (const r of props.recoverInterrupted()) process.stderr.write(`proposal #${r}: drafting was interrupted earlier (lbg exited); marked failed\n`);
+        const id = Number(
+          (cmd === "proposals" ? "" : (rest[1] ?? "")).replace(/^#/, ""),
+        );
+        for (const r of props.recoverInterrupted())
+          process.stderr.write(
+            `proposal #${r}: drafting was interrupted earlier (lbg exited); marked failed\n`,
+          );
         if (sub === "list") {
-          const statuses = (values.status?.split(",") ?? ["open", "drafting"]) as ProposalStatus[];
-          for (const st of statuses) if (!PROPOSAL_STATUSES.includes(st)) throw new Error(`Bad status ${st}`);
+          const statuses = (values.status?.split(",") ?? [
+            "open",
+            "drafting",
+          ]) as ProposalStatus[];
+          for (const st of statuses)
+            if (!PROPOSAL_STATUSES.includes(st))
+              throw new Error(`Bad status ${st}`);
           const list = props.list(statuses);
-          if (values.json) return json(list), 0;
+          if (values.json) return (json(list), 0);
           for (const p of list) out(renderProposalLine(p, tree));
-          out(`\n${list.length} proposal(s). Details: lbg proposal show <id>\n`);
+          out(
+            `\n${list.length} proposal(s). Details: lbg proposal show <id>\n`,
+          );
           return 0;
         }
-        if (!Number.isInteger(id) || id <= 0) throw new Error(`proposal ${sub} expects <id>`);
+        if (!Number.isInteger(id) || id <= 0)
+          throw new Error(`proposal ${sub} expects <id>`);
         if (sub === "diff") {
           // Just the git-style diff: pipe it into delta, diff-so-fancy, etc.
           const diff = await proposalDiff(props.mustGet(id));
-          return (await page(diff, values["no-pager"])), 0;
+          return (await page(diff, values["no-pager"]), 0);
         }
         if (sub === "show") {
           const p = props.mustGet(id);
-          if (values.json) return json(p), 0;
+          if (values.json) return (json(p), 0);
           const buf: string[] = [];
           const out = (s: string) => void buf.push(s);
           out(renderProposalLine(p, tree));
           out(`target: ${p.targetRoot}   writable: ${p.writable.join(", ")}\n`);
           if (p.summary) out(`\n${p.summary}\n`);
-          if (p.detail) out(`\n${p.status === "failed" ? "error" : "note"}: ${p.detail}\n`);
+          if (p.detail)
+            out(`\n${p.status === "failed" ? "error" : "note"}: ${p.detail}\n`);
           if (p.excluded.length) {
             out(`\nLeft out as off-topic (${p.excluded.length}):\n`);
             for (const e of p.excluded) {
               const n = db.getNugget(e.nuggetId);
-              const now = n?.nodeId !== undefined ? tree.path(n.nodeId).slice(1).map((x) => x.name ?? x.title).join(" › ") : "unplaced (the next run files it)";
-              out(`  - #${e.nuggetId} ${n?.title ?? "?"}  (${e.by}: ${e.reason})\n      now in: ${now}\n`);
+              const now =
+                n?.nodeId !== undefined
+                  ? tree
+                      .path(n.nodeId)
+                      .slice(1)
+                      .map((x) => x.name ?? x.title)
+                      .join(" › ")
+                  : "unplaced (the next run files it)";
+              out(
+                `  - #${e.nuggetId} ${n?.title ?? "?"}  (${e.by}: ${e.reason})\n      now in: ${now}\n`,
+              );
             }
           }
-          const evidence = db.nuggets().filter((n) => p.nuggetIds.includes(n.id));
+          const evidence = db
+            .nuggets()
+            .filter((n) => p.nuggetIds.includes(n.id));
           const fresh = p.status === "open" ? newSinceDraft(tree, p) : [];
           if (fresh.length) {
-            out(`\nNew since this draft (${fresh.length}; not in the files yet — lbg proposal revise ${p.id} to add them):\n`);
+            out(
+              `\nNew since this draft (${fresh.length}; not in the files yet — lbg proposal revise ${p.id} to add them):\n`,
+            );
             for (const n of fresh) {
               const e = n.evidence[0];
-              out(`  + ${n.agent}:${n.sessionId.slice(0, 8)}${e?.ts ? ` ${e.ts.slice(0, 10)}` : ""} ${n.title}${e ? `\n      "${truncate(e.quote, 160)}"` : ""}\n`);
+              out(
+                `  + ${n.agent}:${n.sessionId.slice(0, 8)}${e?.ts ? ` ${e.ts.slice(0, 10)}` : ""} ${n.title}${e ? `\n      "${truncate(e.quote, 160)}"` : ""}\n`,
+              );
             }
           }
           if (evidence.length) {
             out(`\nEvidence (${evidence.length}):\n`);
             for (const n of evidence) {
               const e = n.evidence[0];
-              out(`  - #${n.id} ${n.agent}:${n.sessionId.slice(0, 8)}${e?.ts ? ` ${e.ts.slice(0, 10)}` : ""} ${n.title}${n.forgottenAt ? `  (forgotten: ${n.forgottenReason ?? ""})` : ""}${e ? `\n      "${truncate(e.quote, 160)}"` : ""}\n`);
+              out(
+                `  - #${n.id} ${n.agent}:${n.sessionId.slice(0, 8)}${e?.ts ? ` ${e.ts.slice(0, 10)}` : ""} ${n.title}${n.forgottenAt ? `  (forgotten: ${n.forgottenReason ?? ""})` : ""}${e ? `\n      "${truncate(e.quote, 160)}"` : ""}\n`,
+              );
             }
           }
           const feedback = new Feedback(db).forNode(p.nodeId);
           if (feedback.length) {
-            out(`\nYour review feedback on this skill (${feedback.length}; drafting sees it):\n`);
+            out(
+              `\nYour review feedback on this skill (${feedback.length}; drafting sees it):\n`,
+            );
             for (const f of feedback) {
-              const where = f.proposalId === p.id ? "this proposal" : `proposal #${f.proposalId} (${f.proposalStatus})`;
+              const where =
+                f.proposalId === p.id
+                  ? "this proposal"
+                  : `proposal #${f.proposalId} (${f.proposalStatus})`;
               const what =
                 f.kind === "reject"
                   ? `rejected${f.text ? `: "${truncate(f.text, 160)}"` : " (no reason)"}`
@@ -596,31 +848,58 @@ async function main(argv: string[]): Promise<number> {
                     : f.kind === "edit"
                       ? f.text
                       : `revise: "${truncate(f.text, 160)}"`;
-              out(`  - ${f.createdAt.toISOString().slice(0, 16).replace("T", " ")} ${where}: ${what}\n`);
+              out(
+                `  - ${f.createdAt.toISOString().slice(0, 16).replace("T", " ")} ${where}: ${what}\n`,
+              );
             }
           }
           if (p.files.length) {
             const view = await proposalView(p);
-            const stale = p.status === "open" ? view.files.filter((f) => f.stale) : [];
+            const stale =
+              p.status === "open" ? view.files.filter((f) => f.stale) : [];
             if (stale.length) {
               const own = stale.filter((f) => f.against === "draft-base");
-              out(`\n⚠ stale: ${stale.map((f) => f.path).join(", ")} changed on disk since this draft.\n`);
-              if (own.length) out(`  The diff below is the draft's own change, against the version it was drafted from (not a revert of your newer edits).\n`);
-              if (own.length < stale.length) out(`  (${stale.filter((f) => f.against === "current").map((f) => f.path).join(", ")}: drafted before lbg kept originals, so this diff is against the file as it is now and shows your newer edits as removed.)\n`);
-              out(`  lbg proposal revise ${id} rebases it onto the current files; accept refuses it until then (or use --force).\n`);
+              out(
+                `\n⚠ stale: ${stale.map((f) => f.path).join(", ")} changed on disk since this draft.\n`,
+              );
+              if (own.length)
+                out(
+                  `  The diff below is the draft's own change, against the version it was drafted from (not a revert of your newer edits).\n`,
+                );
+              if (own.length < stale.length)
+                out(
+                  `  (${stale
+                    .filter((f) => f.against === "current")
+                    .map((f) => f.path)
+                    .join(
+                      ", ",
+                    )}: drafted before lbg kept originals, so this diff is against the file as it is now and shows your newer edits as removed.)\n`,
+                );
+              out(
+                `  lbg proposal revise ${id} rebases it onto the current files; accept refuses it until then (or use --force).\n`,
+              );
             }
-            const dropped = p.status === "open" ? props.droppedSinceDraft(p) : [];
-            if (dropped.length) out(`\n⚠ evidence dropped after this draft (${dropped.map((e) => `#${e.nuggetId}`).join(", ")}): the files may still contain it. Run: lbg proposal revise ${id}\n`);
+            const dropped =
+              p.status === "open" ? props.droppedSinceDraft(p) : [];
+            if (dropped.length)
+              out(
+                `\n⚠ evidence dropped after this draft (${dropped.map((e) => `#${e.nuggetId}`).join(", ")}): the files may still contain it. Run: lbg proposal revise ${id}\n`,
+              );
             out(`\n${view.diff}`);
             const disk = stale.filter((f) => f.onDisk);
-            if (disk.length) out(`\n── changed on disk since the draft (not part of the proposal) ──\n${disk.map((f) => f.onDisk).join("")}`);
+            if (disk.length)
+              out(
+                `\n── changed on disk since the draft (not part of the proposal) ──\n${disk.map((f) => f.onDisk).join("")}`,
+              );
           }
-          return (await page(buf.join(""), values["no-pager"])), 0;
+          return (await page(buf.join(""), values["no-pager"]), 0);
         }
         if (sub === "accept") {
           // --commit: check the command before writing anything.
           const before = props.mustGet(id);
-          const template = values.commit ? commitTemplate(cfg, before.scope) : undefined;
+          const template = values.commit
+            ? commitTemplate(cfg, before.scope)
+            : undefined;
           if (values.commit) {
             if (!template) {
               throw new Error(
@@ -628,30 +907,46 @@ async function main(argv: string[]): Promise<number> {
                   `  "commitCommand": "git -C \${target_root} add -- \${updated_files} && git -C \${target_root} commit -m \${draft_note} -- \${updated_files}"`,
               );
             }
-            renderCommit(template, { updatedFiles: [], draftNote: "", targetRoot: "", skill: "", proposalId: id }); // validates placeholders
+            renderCommit(template, {
+              updatedFiles: [],
+              draftNote: "",
+              targetRoot: "",
+              skill: "",
+              proposalId: id,
+            }); // validates placeholders
           }
           let r: { paths: string[]; commitMessage: string };
           if (before.status === "accepted" && template) {
             // Accepted earlier without --commit: just commit its files now.
             const t = await commitTargetFor(tree, before);
             if (t.changedSince.length) {
-              out(`note: changed since #${id} was accepted (your edits are committed as they are now): ${t.changedSince.join(", ")}\n`);
+              out(
+                `note: changed since #${id} was accepted (your edits are committed as they are now): ${t.changedSince.join(", ")}\n`,
+              );
             }
             out(`#${id} was already accepted; committing its files\n`);
             r = t;
           } else {
             const dropped = props.droppedSinceDraft(before);
             if (dropped.length) {
-              out(`⚠ evidence was dropped after this draft (${dropped.map((e) => `#${e.nuggetId}`).join(", ")}); the files may still contain it (lbg proposal revise ${id} would take it out)\n`);
+              out(
+                `⚠ evidence was dropped after this draft (${dropped.map((e) => `#${e.nuggetId}`).join(", ")}); the files may still contain it (lbg proposal revise ${id} would take it out)\n`,
+              );
             }
-            const a = await acceptProposal(tree, cfg, id, { force: values.force });
+            const a = await acceptProposal(tree, cfg, id, {
+              force: values.force,
+            });
             scoreTree(tree, cfg.score);
-            out(`accepted #${id}: wrote ${a.written.length} file(s)${a.deleted.length ? `, deleted ${a.deleted.length}` : ""}\n`);
+            out(
+              `accepted #${id}: wrote ${a.written.length} file(s)${a.deleted.length ? `, deleted ${a.deleted.length}` : ""}\n`,
+            );
             for (const p of a.paths) out(`  ${p}\n`);
             r = a;
           }
           if (!template) {
-            out(`\nlbg doesn't run git. To commit, for example:\n  git add -- <paths above> && git commit -F - <<'MSG'\n${r.commitMessage}\nMSG\n`);
+            out(
+              `\nlbg doesn't run git. To commit, for example:\n  git add -- <paths above> && git commit -F - <<'MSG'\n${r.commitMessage}\nMSG\n`,
+            );
             out(`(or set commitCommand in ${CONFIG_PATH} and use --commit)\n`);
             return 0;
           }
@@ -666,7 +961,9 @@ async function main(argv: string[]): Promise<number> {
           out(`\n$ ${command}\n`);
           const c = runCommit(command, p.targetRoot);
           if (c.status !== 0) {
-            process.stderr.write(`commit command failed (exit ${c.status}). The proposal is accepted and its files are written; commit them yourself.\n`);
+            process.stderr.write(
+              `commit command failed (exit ${c.status}). The proposal is accepted and its files are written; commit them yourself.\n`,
+            );
             return 2;
           }
           return 0;
@@ -674,9 +971,16 @@ async function main(argv: string[]): Promise<number> {
         if (sub === "revise" || sub === "edit") {
           const feedback = rest.slice(2).join(" ").trim();
           // With problems nothing was stored: one-shot verification failed, or I chose to keep the previous draft.
-          const report = (r: Pick<InteractiveResult, "problems" | "changed" | "files"> & { warnings?: string[]; rebased?: Rebased[] }) => {
+          const report = (
+            r: Pick<InteractiveResult, "problems" | "changed" | "files"> & {
+              warnings?: string[];
+              rebased?: Rebased[];
+            },
+          ) => {
             if (r.problems.length) {
-              out(`not stored; the previous draft is kept:\n${r.problems.map((p) => `  - ${p}`).join("\n")}\n`);
+              out(
+                `not stored; the previous draft is kept:\n${r.problems.map((p) => `  - ${p}`).join("\n")}\n`,
+              );
               return 2;
             }
             for (const w of r.warnings ?? []) out(`⚠ ${w}\n`);
@@ -687,21 +991,41 @@ async function main(argv: string[]): Promise<number> {
                   : `rebased ${b.path}: your newer edits were kept and the draft's change re-applied by hand${b.how === "legacy" ? " (old draft)" : ""}; check it in lbg proposal show ${id}\n`,
               );
             }
-            out(r.changed ? `proposal #${id} updated (${r.files.length} file(s)). Review: lbg proposal show ${id}\n` : `no changes to proposal #${id}\n`);
+            out(
+              r.changed
+                ? `proposal #${id} updated (${r.files.length} file(s)). Review: lbg proposal show ${id}\n`
+                : `no changes to proposal #${id}\n`,
+            );
             return 0;
           };
           if (sub === "revise" && feedback) {
-            const r = await reviseProposal(tree, modelRunner(cfg), cfg, id, feedback);
+            const r = await reviseProposal(
+              tree,
+              modelRunner(cfg),
+              cfg,
+              id,
+              feedback,
+            );
             if (!r.problems.length) out(`${r.summary}\n`);
-            for (const e of r.excluded) out(`left out (off-topic): #${e.nuggetId} ${e.title} → ${e.now?.path ?? "unplaced, next run files it"}\n`);
+            for (const e of r.excluded)
+              out(
+                `left out (off-topic): #${e.nuggetId} ${e.title} → ${e.now?.path ?? "unplaced, next run files it"}\n`,
+              );
             out(`cost≈$${r.usage.cost.toFixed(4)}\n`);
             return report(r);
           }
           if (!process.stdin.isTTY || !process.stdout.isTTY) {
-            throw new Error(sub === "edit" ? "lbg proposal edit needs a terminal" : `interactive revise needs a terminal; for a one-shot revise: lbg proposal revise ${id} "feedback"`);
+            throw new Error(
+              sub === "edit"
+                ? "lbg proposal edit needs a terminal"
+                : `interactive revise needs a terminal; for a one-shot revise: lbg proposal revise ${id} "feedback"`,
+            );
           }
           const ask = async (q: string) => {
-            const rl = createInterface({ input: process.stdin, output: process.stdout });
+            const rl = createInterface({
+              input: process.stdin,
+              output: process.stdout,
+            });
             try {
               return !/^n/i.test((await rl.question(`${q} [Y/n] `)).trim());
             } finally {
@@ -709,41 +1033,87 @@ async function main(argv: string[]): Promise<number> {
             }
           };
           const log = (m: string) => out(`${m}\n`);
-          const r = sub === "edit" ? await editProposal(tree, cfg, id, { ask, log }) : await chatRevise(tree, cfg, id, { ask, log });
+          const r =
+            sub === "edit"
+              ? await editProposal(tree, cfg, id, { ask, log })
+              : await chatRevise(tree, cfg, id, { ask, log });
           return report(r);
         }
         if (sub === "drop") {
           const nuggets = rest.slice(2).map((x) => Number(x.replace(/^#/, "")));
-          if (!nuggets.length || nuggets.some((x) => !Number.isInteger(x) || x <= 0)) throw new Error(`proposal drop expects <id> <nugget>... (nugget ids: lbg proposal show ${id})`);
-          const to = values.to !== undefined ? Number(values.to.replace(/^#/, "")) : undefined;
-          if (to !== undefined && (!Number.isInteger(to) || to <= 0)) throw new Error(`--to expects a node id, got ${values.to}`);
-          const r = await dropEvidence(tree, modelRunner(cfg), cfg, id, nuggets, {
-            ...(values.reason ? { reason: values.reason } : {}),
-            ...(to !== undefined ? { to } : {}),
-            revise: values.revise,
-            log: (m) => process.stderr.write(`${m}\n`),
-          });
-          for (const d of r.dropped) out(`dropped #${d.nuggetId} ${d.title} → ${d.now?.path ?? "unplaced (the next run files it)"}\n`);
+          if (
+            !nuggets.length ||
+            nuggets.some((x) => !Number.isInteger(x) || x <= 0)
+          )
+            throw new Error(
+              `proposal drop expects <id> <nugget>... (nugget ids: lbg proposal show ${id})`,
+            );
+          const to =
+            values.to !== undefined
+              ? Number(values.to.replace(/^#/, ""))
+              : undefined;
+          if (to !== undefined && (!Number.isInteger(to) || to <= 0))
+            throw new Error(`--to expects a node id, got ${values.to}`);
+          const r = await dropEvidence(
+            tree,
+            modelRunner(cfg),
+            cfg,
+            id,
+            nuggets,
+            {
+              ...(values.reason ? { reason: values.reason } : {}),
+              ...(to !== undefined ? { to } : {}),
+              revise: values.revise,
+              log: (m) => process.stderr.write(`${m}\n`),
+            },
+          );
+          for (const d of r.dropped)
+            out(
+              `dropped #${d.nuggetId} ${d.title} → ${d.now?.path ?? "unplaced (the next run files it)"}\n`,
+            );
           if (r.revised) {
-            if (r.revised.problems.length) out(`revise not stored; the previous draft is kept:\n${r.revised.problems.map((p) => `  - ${p}`).join("\n")}\n`);
+            if (r.revised.problems.length)
+              out(
+                `revise not stored; the previous draft is kept:\n${r.revised.problems.map((p) => `  - ${p}`).join("\n")}\n`,
+              );
             else {
               for (const w of r.revised.warnings) out(`⚠ ${w}\n`);
-              out(`${r.revised.summary}\nproposal #${id} revised. Review: lbg proposal show ${id}\n`);
+              out(
+                `${r.revised.summary}\nproposal #${id} revised. Review: lbg proposal show ${id}\n`,
+              );
             }
           } else {
-            out(`The draft may still contain their content: lbg proposal revise ${id} (or drop with --revise)\n`);
+            out(
+              `The draft may still contain their content: lbg proposal revise ${id} (or drop with --revise)\n`,
+            );
           }
           if (r.usage.cost) out(`cost≈$${r.usage.cost.toFixed(4)}\n`);
-          if (!props.mustGet(id).nuggetIds.length) out(`No evidence is left on proposal #${id}. If nothing in it is worth keeping: lbg proposal reject ${id}\n`);
+          if (!props.mustGet(id).nuggetIds.length)
+            out(
+              `No evidence is left on proposal #${id}. If nothing in it is worth keeping: lbg proposal reject ${id}\n`,
+            );
           return r.revised?.problems.length ? 2 : 0;
         }
         if (sub === "reject") {
-          const kind = values.kind !== undefined ? assertKind(values.kind) : undefined;
-          const to = values.to !== undefined ? Number(values.to.replace(/^#/, "")) : undefined;
-          if (to !== undefined && !Number.isInteger(to)) throw new Error(`--to expects a skill id, got ${values.to}`);
-          const r = rejectProposal(tree, id, values.reason, { ...(kind ? { kind } : {}), ...(to !== undefined ? { targetNodeId: to } : {}), forget: values.forget, expireDays: cfg.rejections.expireDays });
+          const kind =
+            values.kind !== undefined ? assertKind(values.kind) : undefined;
+          const to =
+            values.to !== undefined
+              ? Number(values.to.replace(/^#/, ""))
+              : undefined;
+          if (to !== undefined && !Number.isInteger(to))
+            throw new Error(`--to expects a skill id, got ${values.to}`);
+          const r = rejectProposal(tree, id, values.reason, {
+            ...(kind ? { kind } : {}),
+            ...(to !== undefined ? { targetNodeId: to } : {}),
+            forget: values.forget,
+            expireDays: cfg.rejections.expireDays,
+          });
           out(`rejected #${id}${values.reason ? `: ${values.reason}` : ""}.\n`);
-          if (r.forgotten) out(`${r.forgotten} evidence item(s) forgotten: they no longer count.\n`);
+          if (r.forgotten)
+            out(
+              `${r.forgotten} evidence item(s) forgotten: they no longer count.\n`,
+            );
           out(
             r.status === "pending"
               ? `Rejection memory #${r.memoryId} is pending: the next lbg run classifies it. Check with: lbg rejections\n`
@@ -751,7 +1121,9 @@ async function main(argv: string[]): Promise<number> {
           );
           return 0;
         }
-        throw new Error(`Unknown proposal subcommand: ${sub} (show | accept | revise | edit | drop | reject)`);
+        throw new Error(
+          `Unknown proposal subcommand: ${sub} (show | accept | revise | edit | drop | reject)`,
+        );
       } finally {
         try {
           writePromptStatus(db, cfg.stateDir); // keep the prompt segment current
@@ -768,18 +1140,29 @@ async function main(argv: string[]): Promise<number> {
       try {
         const tree = new Tree(db);
         if (rest[0] === "move") {
-          const [n, node] = rest.slice(1, 3).map((x) => Number((x ?? "").replace(/^#/, "")));
-          if (!Number.isInteger(n) || !Number.isInteger(node)) throw new Error("nuggets move expects <nugget> <node>");
+          const [n, node] = rest
+            .slice(1, 3)
+            .map((x) => Number((x ?? "").replace(/^#/, "")));
+          if (!Number.isInteger(n) || !Number.isInteger(node))
+            throw new Error("nuggets move expects <nugget> <node>");
           curate.moveNugget(tree, n!, node!);
           renderScore(scoreTree(tree, cfg.score), out);
-          out(`nugget #${n} → ${tree.path(node!).slice(1).map((p) => `#${p.id} ${p.title}`).join(" › ")}\n`);
+          out(
+            `nugget #${n} → ${tree
+              .path(node!)
+              .slice(1)
+              .map((p) => `#${p.id} ${p.title}`)
+              .join(" › ")}\n`,
+          );
           return 0;
         }
         if (rest[0] === "forget" || rest[0] === "unforget") {
           const ids = rest.slice(1).map((x) => Number(x.replace(/^#/, "")));
-          if (ids.some((x) => !Number.isInteger(x) || x <= 0)) throw new Error(`nuggets ${rest[0]} expects nugget ids`);
+          if (ids.some((x) => !Number.isInteger(x) || x <= 0))
+            throw new Error(`nuggets ${rest[0]} expects nugget ids`);
           if (rest[0] === "unforget") {
-            if (!ids.length) throw new Error("nuggets unforget expects nugget ids");
+            if (!ids.length)
+              throw new Error("nuggets unforget expects nugget ids");
             const n = tree.unforgetNuggets({ ids });
             renderScore(scoreTree(tree, cfg.score), out);
             out(`${n} nugget(s) count again.\n`);
@@ -787,24 +1170,46 @@ async function main(argv: string[]): Promise<number> {
           }
           let targets = ids;
           if (values.skill !== undefined || values.before !== undefined) {
-            if (ids.length) throw new Error("give nugget ids, or --skill with --before, not both");
-            if (values.skill === undefined || values.before === undefined) throw new Error("--skill and --before go together");
+            if (ids.length)
+              throw new Error(
+                "give nugget ids, or --skill with --before, not both",
+              );
+            if (values.skill === undefined || values.before === undefined)
+              throw new Error("--skill and --before go together");
             const skill = tree.subtree(Number(values.skill.replace(/^#/, "")));
-            if (!skill || skill.depth !== 1) throw new Error(`--skill ${values.skill}: not a skill`);
+            if (!skill || skill.depth !== 1)
+              throw new Error(`--skill ${values.skill}: not a skill`);
             const before = parseSince(values.before);
-            targets = subtreeNuggets(skill).filter((g) => evidenceTime(g) < before.getTime()).map((g) => g.id);
+            targets = subtreeNuggets(skill)
+              .filter((g) => evidenceTime(g) < before.getTime())
+              .map((g) => g.id);
           }
           if (!targets.length) throw new Error("nothing to forget");
-          const n = tree.forgetNuggets(targets, values.reason?.trim() || "forgotten by hand");
+          const n = tree.forgetNuggets(
+            targets,
+            values.reason?.trim() || "forgotten by hand",
+          );
           renderScore(scoreTree(tree, cfg.score), out);
-          out(`${n} nugget(s) forgotten: they no longer count or go into drafts (lbg nuggets unforget <id> to undo).\n`);
+          out(
+            `${n} nugget(s) forgotten: they no longer count or go into drafts (lbg nuggets unforget <id> to undo).\n`,
+          );
           return 0;
         }
-        if (rest[0]) throw new Error(`Unknown nuggets subcommand: ${rest[0]} (move | forget | unforget)`);
+        if (rest[0])
+          throw new Error(
+            `Unknown nuggets subcommand: ${rest[0]} (move | forget | unforget)`,
+          );
         const rows = db.nuggets();
-        if (values.json) return json(rows), 0;
+        if (values.json) return (json(rows), 0);
         for (const r of rows) {
-          const where = r.nodeId !== undefined ? tree.path(r.nodeId).slice(1).map((p) => p.name ?? p.title).join(" › ") : "(not placed)";
+          const where =
+            r.nodeId !== undefined
+              ? tree
+                  .path(r.nodeId)
+                  .slice(1)
+                  .map((p) => p.name ?? p.title)
+                  .join(" › ")
+              : "(not placed)";
           out(
             `#${r.id} [${r.kind}/${r.scope}] ${r.title}  (${r.agent}:${r.sessionId.slice(0, 12)}, conf ${r.confidence})\n` +
               `    in: ${where}${r.coveredNodeId !== undefined ? "  (already covered by the live text)" : ""}` +
@@ -824,8 +1229,13 @@ async function main(argv: string[]): Promise<number> {
       try {
         out(`state: ${join(cfg.stateDir, "state.db")}\n`);
         out(`${JSON.stringify(db.counts())}\n\nrecent runs:\n`);
-        const runs = db.db.prepare("SELECT * FROM run ORDER BY id DESC LIMIT 5").all() as Record<string, unknown>[];
-        for (const r of runs) out(`  #${r.id} ${new Date(Number(r.started_at)).toISOString()} ${r.kind} ${r.stats ?? "(unfinished)"}\n`);
+        const runs = db.db
+          .prepare("SELECT * FROM run ORDER BY id DESC LIMIT 5")
+          .all() as Record<string, unknown>[];
+        for (const r of runs)
+          out(
+            `  #${r.id} ${new Date(Number(r.started_at)).toISOString()} ${r.kind} ${r.stats ?? "(unfinished)"}\n`,
+          );
         return 0;
       } finally {
         db.close();
@@ -841,18 +1251,27 @@ async function main(argv: string[]): Promise<number> {
 function parseAgents(s: string): AgentId[] {
   return s.split(",").map((a) => {
     const id = a.trim() as AgentId;
-    if (!ALL_AGENTS.includes(id)) throw new Error(`Unknown agent: ${a} (expected ${ALL_AGENTS.join(", ")})`);
+    if (!ALL_AGENTS.includes(id))
+      throw new Error(
+        `Unknown agent: ${a} (expected ${ALL_AGENTS.join(", ")})`,
+      );
     return id;
   });
 }
 
-function parseSessionTarget(s: string | undefined): { agent: AgentId; idPrefix: string } {
+function parseSessionTarget(s: string | undefined): {
+  agent: AgentId;
+  idPrefix: string;
+} {
   const m = s && /^([a-z]+):(.+)$/.exec(s);
   if (!m) throw new Error("expected <agent>:<sessionId>");
   return { agent: parseAgents(m[1]!)[0]!, idPrefix: m[2]! };
 }
 
-function renderOutcomes(outcomes: SessionOutcome[], out: (s: string) => void): void {
+function renderOutcomes(
+  outcomes: SessionOutcome[],
+  out: (s: string) => void,
+): void {
   const counts: Record<string, number> = {};
   for (const o of outcomes) {
     counts[o.status] = (counts[o.status] ?? 0) + 1;
@@ -873,17 +1292,24 @@ function renderOutcomes(outcomes: SessionOutcome[], out: (s: string) => void): v
       );
     }
   }
-  out(`\n${Object.entries(counts).map(([k, v]) => `${k}=${v}`).join(" ")}\n`);
+  out(
+    `\n${Object.entries(counts)
+      .map(([k, v]) => `${k}=${v}`)
+      .join(" ")}\n`,
+  );
 }
 
 function shortPath(p: string | undefined): string {
   if (!p) return "?";
   const home = process.env.HOME ?? "";
-  return home && p.startsWith(home) ? `~${p.slice(home.length)}` : p.replace(/^\/local\/home\/[^/]+/, "~");
+  return home && p.startsWith(home)
+    ? `~${p.slice(home.length)}`
+    : p.replace(/^\/local\/home\/[^/]+/, "~");
 }
 
 function sessionsOf(n: TreeNode): number {
-  return new Set(subtreeNuggets(n).map((m) => `${m.agent}:${m.sessionId}`)).size;
+  return new Set(subtreeNuggets(n).map((m) => `${m.agent}:${m.sessionId}`))
+    .size;
 }
 
 /** Page `text` on a terminal ($LBG_PAGER → delta → less -R); plain stdout when piped. */
@@ -891,11 +1317,17 @@ async function page(text: string, noPager: boolean): Promise<void> {
   const write = () => void process.stdout.write(text);
   if (noPager || !process.stdout.isTTY) return write();
   const { spawn, spawnSync } = await import("node:child_process");
-  const has = (bin: string) => spawnSync("sh", ["-c", `command -v ${bin}`], { stdio: "ignore" }).status === 0;
-  const cmd = process.env.LBG_PAGER ?? (has("delta") ? "delta" : has("less") ? "less -R" : "");
+  const has = (bin: string) =>
+    spawnSync("sh", ["-c", `command -v ${bin}`], { stdio: "ignore" }).status ===
+    0;
+  const cmd =
+    process.env.LBG_PAGER ??
+    (has("delta") ? "delta" : has("less") ? "less -R" : "");
   if (!cmd) return write();
   await new Promise<void>((resolve) => {
-    const child = spawn("sh", ["-c", cmd], { stdio: ["pipe", "inherit", "inherit"] });
+    const child = spawn("sh", ["-c", cmd], {
+      stdio: ["pipe", "inherit", "inherit"],
+    });
     child.on("error", () => (write(), resolve()));
     child.on("close", () => resolve());
     child.stdin.on("error", () => {}); // pager quit early
@@ -905,23 +1337,39 @@ async function page(text: string, noPager: boolean): Promise<void> {
 
 function renderMemory(m: MemoryRow, tree: Tree): string {
   const skill = m.topic.name ?? m.topic.title;
-  const target = m.targetNodeId !== undefined ? tree.getNode(m.targetNodeId) : undefined;
-  const age = Math.max(0, Math.round((Date.now() - m.createdAt.getTime()) / 86400e3));
+  const target =
+    m.targetNodeId !== undefined ? tree.getNode(m.targetNodeId) : undefined;
+  const age = Math.max(
+    0,
+    Math.round((Date.now() - m.createdAt.getTime()) / 86400e3),
+  );
   const head =
     `#${String(m.id).padEnd(3)} ${m.status.padEnd(7)} ${(m.kind ?? "?").padEnd(11)} ${skill}  ` +
     `[${m.scope === "global" ? "global" : `repo ${shortPath(m.repo)}`}] proposal #${m.proposalId}, ${age}d${m.locked ? ", edited" : ""}` +
     `${m.caught ? `, caught ${m.caught}` : ""}${m.extractUses ? `, in ${m.extractUses} extraction call(s)` : ""}` +
     `${m.expiresAt ? (isExpired(m) ? `, EXPIRED ${m.expiresAt.toISOString().slice(0, 10)} (lbg rejections keep ${m.id})` : `, expires ${m.expiresAt.toISOString().slice(0, 10)}`) : ""}\n`;
   const lines = [head];
-  if (m.rule) lines.push(`      rule: ${m.rule}${target ? ` (→ #${target.id} ${target.name ?? target.title})` : ""}\n`);
-  if (m.reason) lines.push(`      reason: ${truncate(m.reason.replace(/\s+/g, " "), 160)}\n`);
-  if (m.status === "pending") lines.push(`      ${m.error ? `last try failed: ${m.error}` : "classified by the next lbg run"}\n`);
+  if (m.rule)
+    lines.push(
+      `      rule: ${m.rule}${target ? ` (→ #${target.id} ${target.name ?? target.title})` : ""}\n`,
+    );
+  if (m.reason)
+    lines.push(
+      `      reason: ${truncate(m.reason.replace(/\s+/g, " "), 160)}\n`,
+    );
+  if (m.status === "pending")
+    lines.push(
+      `      ${m.error ? `last try failed: ${m.error}` : "classified by the next lbg run"}\n`,
+    );
   return lines.join("");
 }
 
 function renderProposalLine(p: ProposalRow, tree: Tree): string {
   const fresh = p.status === "open" ? newSinceDraft(tree, p).length : 0;
-  const dropped = p.status === "open" ? new Proposals(tree.db).droppedSinceDraft(p).length : 0;
+  const dropped =
+    p.status === "open"
+      ? new Proposals(tree.db).droppedSinceDraft(p).length
+      : 0;
   const node = tree.getNode(p.nodeId);
   const where = p.scope === "global" ? "global" : `repo ${shortPath(p.repo)}`;
   const cost = (p.usage as { cost?: number } | undefined)?.cost;
@@ -933,9 +1381,14 @@ function renderProposalLine(p: ProposalRow, tree: Tree): string {
 }
 
 function renderScore(r: TreeScoreResult, out: (s: string) => void): void {
-  for (const p of r.promoted) out(`candidate: #${p.id} ${p.title} → ${p.kind} (score ${p.score})\n`);
-  for (const d of r.demoted) out(`no longer a candidate: #${d.id} ${d.title}\n`);
-  if (r.moved) out(`${r.moved} nugget(s) moved out of wrong-place rejected skills to their targets\n`);
+  for (const p of r.promoted)
+    out(`candidate: #${p.id} ${p.title} → ${p.kind} (score ${p.score})\n`);
+  for (const d of r.demoted)
+    out(`no longer a candidate: #${d.id} ${d.title}\n`);
+  if (r.moved)
+    out(
+      `${r.moved} nugget(s) moved out of wrong-place rejected skills to their targets\n`,
+    );
 }
 
 /** One skill line plus its sections (a live skill's own sections only when they hold evidence). */
@@ -946,17 +1399,33 @@ function renderSkill(s: TreeNode, out: (s: string) => void): void {
       `${s.origin === "file" && s.children.length ? `  [${s.children.length} section(s)]` : ""}\n`,
   );
   for (const c of s.children) {
-    if (s.origin === "file" && c.origin === "file" && subtreeNuggets(c).length === 0) continue;
-    out(`        · #${c.id} ${c.origin === "file" ? "" : `${c.origin} `}${c.title} (n=${subtreeNuggets(c).length})${c.locked ? " (locked)" : ""}\n`);
+    if (
+      s.origin === "file" &&
+      c.origin === "file" &&
+      subtreeNuggets(c).length === 0
+    )
+      continue;
+    out(
+      `        · #${c.id} ${c.origin === "file" ? "" : `${c.origin} `}${c.title} (n=${subtreeNuggets(c).length})${c.locked ? " (locked)" : ""}\n`,
+    );
   }
 }
 
-function renderTree(root: TreeNode, out: (s: string) => void, opts: { onlyWithEvidence?: boolean; statuses?: string[] } = {}): void {
-  out(`\n${root.scope === "global" ? "Global skills" : `repo ${shortPath(root.repo)}`}  (root #${root.id}, ${root.children.length} skill(s))\n`);
+function renderTree(
+  root: TreeNode,
+  out: (s: string) => void,
+  opts: { onlyWithEvidence?: boolean; statuses?: string[] } = {},
+): void {
+  out(
+    `\n${root.scope === "global" ? "Global skills" : `repo ${shortPath(root.repo)}`}  (root #${root.id}, ${root.children.length} skill(s))\n`,
+  );
   const skills = [...root.children]
     .filter((s) => !opts.onlyWithEvidence || subtreeNuggets(s).length > 0)
     .filter((s) => !opts.statuses || opts.statuses.includes(s.status))
-    .sort((a, b) => sessionsOf(b) - sessionsOf(a) || b.score - a.score || a.id - b.id);
+    .sort(
+      (a, b) =>
+        sessionsOf(b) - sessionsOf(a) || b.score - a.score || a.id - b.id,
+    );
   for (const s of skills) renderSkill(s, out);
 }
 
@@ -971,8 +1440,14 @@ function renderNodeDetail(n: TreeNode, path: string[]): string {
   if (n.summary) lines.push("", "## Summary", n.summary);
   const nuggetLines = (ns: TreeNode["nuggets"], pad: string) => {
     for (const m of ns) {
-      lines.push("", `${pad}#${m.id} [${m.kind}] ${m.title}  (${m.agent}:${m.sessionId.slice(0, 12)}, conf ${m.confidence}${m.coveredBy ? `, covered by ${m.coveredBy}` : ""})`);
-      for (const e of m.evidence) lines.push(`${pad}    ${e.label}${e.ts ? ` ${e.ts.slice(0, 16).replace("T", " ")}` : ""}: "${e.quote}"`);
+      lines.push(
+        "",
+        `${pad}#${m.id} [${m.kind}] ${m.title}  (${m.agent}:${m.sessionId.slice(0, 12)}, conf ${m.confidence}${m.coveredBy ? `, covered by ${m.coveredBy}` : ""})`,
+      );
+      for (const e of m.evidence)
+        lines.push(
+          `${pad}    ${e.label}${e.ts ? ` ${e.ts.slice(0, 16).replace("T", " ")}` : ""}: "${e.quote}"`,
+        );
     }
   };
   if (n.nuggets.length) {
@@ -986,20 +1461,34 @@ function renderNodeDetail(n: TreeNode, path: string[]): string {
   }
   const forgotten = [n, ...n.children].flatMap((x) => x.forgotten);
   if (forgotten.length) {
-    lines.push("", `## Forgotten (${forgotten.length}; not counted, not drafted)`);
-    for (const m of forgotten) lines.push(`  #${m.id} ${m.title}  (${m.forgottenReason ?? "forgotten"}, ${m.forgottenAt!.toISOString().slice(0, 10)})`);
+    lines.push(
+      "",
+      `## Forgotten (${forgotten.length}; not counted, not drafted)`,
+    );
+    for (const m of forgotten)
+      lines.push(
+        `  #${m.id} ${m.title}  (${m.forgottenReason ?? "forgotten"}, ${m.forgottenAt!.toISOString().slice(0, 10)})`,
+      );
   }
   return `${lines.join("\n")}\n`;
 }
 
 /** When a nugget's evidence was said (first evidence timestamp), else when it was extracted. */
-function evidenceTime(n: { evidence: { ts?: string }[]; createdAt: Date }): number {
-  const ts = n.evidence.map((e) => e.ts).filter((x): x is string => !!x).sort()[0];
+function evidenceTime(n: {
+  evidence: { ts?: string }[];
+  createdAt: Date;
+}): number {
+  const ts = n.evidence
+    .map((e) => e.ts)
+    .filter((x): x is string => !!x)
+    .sort()[0];
   return ts ? Date.parse(ts) : n.createdAt.getTime();
 }
 
 function summarize(t: Transcript) {
-  const user = t.turns.filter((x) => x.role === "user" && x.origin !== "command");
+  const user = t.turns.filter(
+    (x) => x.role === "user" && x.origin !== "command",
+  );
   return {
     agent: t.agent,
     sessionId: t.sessionId,
@@ -1024,14 +1513,23 @@ function renderTranscript(t: Transcript): string {
   for (const turn of t.turns) {
     const ts = `${turn.ts ? turn.ts.toISOString().slice(11, 19) : "--:--:--"}${turn.offBranch ? " off-branch" : ""}`;
     if (turn.role === "user") {
-      lines.push(`[${ts}] USER${turn.origin && turn.origin !== "prompt" ? ` (${turn.origin})` : ""}:`, indent(turn.text), "");
+      lines.push(
+        `[${ts}] USER${turn.origin && turn.origin !== "prompt" ? ` (${turn.origin})` : ""}:`,
+        indent(turn.text),
+        "",
+      );
     } else if (turn.role === "assistant") {
       lines.push(`[${ts}] ASSISTANT:`);
       if (turn.text) lines.push(indent(turn.text));
-      for (const c of turn.toolCalls ?? []) lines.push(`    → ${c.name} ${c.input}`);
+      for (const c of turn.toolCalls ?? [])
+        lines.push(`    → ${c.name} ${c.input}`);
       lines.push("");
     } else {
-      lines.push(`[${ts}] TOOL ${turn.toolName}${turn.isError ? " (error)" : ""}:`, indent(truncate(turn.text, 400)), "");
+      lines.push(
+        `[${ts}] TOOL ${turn.toolName}${turn.isError ? " (error)" : ""}:`,
+        indent(truncate(turn.text, 400)),
+        "",
+      );
     }
   }
   return `${lines.join("\n")}\n`;
@@ -1056,7 +1554,9 @@ main(process.argv.slice(2)).then(
     process.exitCode = code;
   },
   (err: unknown) => {
-    process.stderr.write(`error: ${err instanceof Error ? err.message : String(err)}\n`);
+    process.stderr.write(
+      `error: ${err instanceof Error ? err.message : String(err)}\n`,
+    );
     process.exitCode = 1;
   },
 );

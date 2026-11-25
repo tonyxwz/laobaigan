@@ -4,10 +4,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Static, TSchema } from "typebox";
 import { describe, expect, it } from "vitest";
-import { DEFAULT_CONFIG, type Config } from "../src/config.ts";
+import { type Config, DEFAULT_CONFIG } from "../src/config.ts";
 import type { PiRequest, PiResult, PiRunner } from "../src/pi/run-pi.ts";
 import { exitCode, runPipeline } from "../src/pipeline/run.ts";
-import type { SessionRef, SourceAdapter, Transcript, Turn } from "../src/sources/types.ts";
+import type {
+  SessionRef,
+  SourceAdapter,
+  Transcript,
+  Turn,
+} from "../src/sources/types.ts";
 import { StateDb } from "../src/state/db.ts";
 import { Proposals } from "../src/state/proposals.ts";
 import { Tree } from "../src/state/tree.ts";
@@ -19,10 +24,26 @@ class FakeAdapter implements SourceAdapter {
   sessions = new Map<string, Turn[]>();
   available = async () => true;
   async *list(): AsyncIterable<SessionRef> {
-    for (const [id] of this.sessions) yield { agent: "pi", sessionId: id, location: `/fake/${id}`, cwd: "/nonexistent", updatedAt: ts(0), version: "1" };
+    for (const [id] of this.sessions)
+      yield {
+        agent: "pi",
+        sessionId: id,
+        location: `/fake/${id}`,
+        cwd: "/nonexistent",
+        updatedAt: ts(0),
+        version: "1",
+      };
   }
   async load(ref: SessionRef): Promise<Transcript> {
-    return { agent: "pi", sessionId: ref.sessionId, location: ref.location, cwd: "/nonexistent", startedAt: ts(0), updatedAt: ts(0), turns: this.sessions.get(ref.sessionId)! };
+    return {
+      agent: "pi",
+      sessionId: ref.sessionId,
+      location: ref.location,
+      cwd: "/nonexistent",
+      startedAt: ts(0),
+      updatedAt: ts(0),
+      turns: this.sessions.get(ref.sessionId)!,
+    };
   }
 }
 
@@ -35,24 +56,54 @@ const usage = { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: 0.01 };
 class StageRunner implements PiRunner {
   calls: string[] = [];
   failOn = new Set<string>();
-  async run<S extends TSchema>(req: PiRequest<S>): Promise<PiResult<Static<S>>> {
+  async run<S extends TSchema>(
+    req: PiRequest<S>,
+  ): Promise<PiResult<Static<S>>> {
     const tool = req.resultTool.name;
     this.calls.push(tool);
     if (this.failOn.has(tool)) throw new Error(`${tool}: model unavailable`);
-    const ids = [...req.prompt.matchAll(/<nugget id="(\d+)"/g)].map((m) => Number(m[1]));
+    const ids = [...req.prompt.matchAll(/<nugget id="(\d+)"/g)].map((m) =>
+      Number(m[1]),
+    );
     let value: unknown;
     if (tool === "report_knowledge") {
       value = {
-        nuggets: [{ kind: "fact", title: "tmux config", knowledge: "tmux config lives in ~/.tmux.conf.local", triggers: ["tmux"], scope: "global", evidence: [{ label: "U1", quote: "tmux.conf.local" }], confidence: 0.9 }],
+        nuggets: [
+          {
+            kind: "fact",
+            title: "tmux config",
+            knowledge: "tmux config lives in ~/.tmux.conf.local",
+            triggers: ["tmux"],
+            scope: "global",
+            evidence: [{ label: "U1", quote: "tmux.conf.local" }],
+            confidence: 0.9,
+          },
+        ],
       };
     } else if (tool === "route_to_skills") {
-      value = { newSkills: [{ key: "t", title: "tmux configuration", name: "tmux-config", description: "Use when editing tmux config." }], placements: ids.map((nuggetId) => ({ nuggetId, newSkillKey: "t" })) };
+      value = {
+        newSkills: [
+          {
+            key: "t",
+            title: "tmux configuration",
+            name: "tmux-config",
+            description: "Use when editing tmux config.",
+          },
+        ],
+        placements: ids.map((nuggetId) => ({ nuggetId, newSkillKey: "t" })),
+      };
     } else if (tool === "route_to_sections") {
-      value = { newSections: [], placements: ids.map((nuggetId) => ({ nuggetId, body: true })) };
+      value = {
+        newSections: [],
+        placements: ids.map((nuggetId) => ({ nuggetId, body: true })),
+      };
     } else if (tool === "report_draft") {
       const dir = join(req.fileGuard!.root, "tmux-config");
       await mkdir(dir, { recursive: true });
-      await writeFile(join(dir, "SKILL.md"), "---\nname: tmux-config\ndescription: Use when editing tmux config.\n---\n\n# tmux\n\nConfig lives in ~/.tmux.conf.local.\n");
+      await writeFile(
+        join(dir, "SKILL.md"),
+        "---\nname: tmux-config\ndescription: Use when editing tmux config.\n---\n\n# tmux\n\nConfig lives in ~/.tmux.conf.local.\n",
+      );
       value = { summary: "New tmux skill." };
     } else throw new Error(`unexpected tool ${tool}`);
     return { value: value as Static<S>, usage };
@@ -62,14 +113,35 @@ class StageRunner implements PiRunner {
 async function setup() {
   const skillsDir = realpathSync(await mkdtemp(join(tmpdir(), "lbg-skills-")));
   const stateDir = realpathSync(await mkdtemp(join(tmpdir(), "lbg-state-")));
-  const cfg: Config = { ...DEFAULT_CONFIG, skillsDir, stateDir, settleMinutes: 0 };
+  const cfg: Config = {
+    ...DEFAULT_CONFIG,
+    skillsDir,
+    stateDir,
+    settleMinutes: 0,
+  };
   const adapter = new FakeAdapter();
-  for (const id of ["a", "b", "c"]) adapter.sessions.set(id, [{ role: "user", text: `my tmux config is in ~/.tmux.conf.local, remember that (${id})`, ts: ts(1), origin: "prompt" }]);
+  for (const id of ["a", "b", "c"])
+    adapter.sessions.set(id, [
+      {
+        role: "user",
+        text: `my tmux config is in ~/.tmux.conf.local, remember that (${id})`,
+        ts: ts(1),
+        origin: "prompt",
+      },
+    ]);
   const db = new StateDb(":memory:");
   const runner = new StageRunner();
   let clock = new Date(); // proposals record real close times; the backoff compares against them
   const deps = { adapters: [adapter], db, runner, cfg, now: () => clock };
-  return { skillsDir, cfg, adapter, db, runner, deps, advance: (h: number) => (clock = new Date(clock.getTime() + h * 3600e3)) };
+  return {
+    skillsDir,
+    cfg,
+    adapter,
+    db,
+    runner,
+    deps,
+    advance: (h: number) => (clock = new Date(clock.getTime() + h * 3600e3)),
+  };
 }
 
 describe("runPipeline", () => {
@@ -83,8 +155,23 @@ describe("runPipeline", () => {
       ["score", "ok"],
       ["draft", "ok"],
     ]);
-    expect(runner.calls).toEqual(["report_knowledge", "report_knowledge", "report_knowledge", "route_to_skills", "route_to_sections", "report_draft"]);
-    expect(r.proposals).toEqual([{ id: 1, nodeId: expect.any(Number), skill: "tmux-config", files: 1, cost: 0.01 }]);
+    expect(runner.calls).toEqual([
+      "report_knowledge",
+      "report_knowledge",
+      "report_knowledge",
+      "route_to_skills",
+      "route_to_sections",
+      "report_draft",
+    ]);
+    expect(r.proposals).toEqual([
+      {
+        id: 1,
+        nodeId: expect.any(Number),
+        skill: "tmux-config",
+        files: 1,
+        cost: 0.01,
+      },
+    ]);
     expect(r.calls).toBe(6);
     expect(r.usage.cost).toBeCloseTo(0.06);
     expect(exitCode(r)).toBe(0);
@@ -93,9 +180,16 @@ describe("runPipeline", () => {
     expect(readFileSync(join(deps.cfg.stateDir, "prompt"), "utf8")).toBe("1");
 
     // the run log has one row with every stage
-    const row = db.db.prepare("SELECT kind, stats FROM run").all() as { kind: string; stats: string }[];
+    const row = db.db.prepare("SELECT kind, stats FROM run").all() as {
+      kind: string;
+      stats: string;
+    }[];
     expect(row.map((x) => x.kind)).toEqual(["run"]);
-    expect(JSON.parse(row[0]!.stats).stages.map((s: { stage: string; calls: number }) => [s.stage, s.calls])).toEqual([
+    expect(
+      JSON.parse(row[0]!.stats).stages.map(
+        (s: { stage: string; calls: number }) => [s.stage, s.calls],
+      ),
+    ).toEqual([
       ["sync", 0],
       ["extract", 3],
       ["insert", 2],
@@ -108,7 +202,9 @@ describe("runPipeline", () => {
     const again = await runPipeline(deps);
     expect(runner.calls).toEqual([]);
     expect(again.calls).toBe(0);
-    expect(again.stages.find((s) => s.stage === "draft")!.summary).toBe("no candidates to draft");
+    expect(again.stages.find((s) => s.stage === "draft")!.summary).toBe(
+      "no candidates to draft",
+    );
   });
 
   it("skips the remaining model stages after repeated model errors (exit 3)", async () => {
@@ -130,7 +226,10 @@ describe("runPipeline", () => {
     const { runner, deps, db, advance } = await setup();
     runner.failOn.add("report_draft");
     const r = await runPipeline(deps);
-    expect(r.stages.find((s) => s.stage === "draft")).toMatchObject({ status: "error", error: expect.stringMatching(/tmux-config: .*model unavailable/) });
+    expect(r.stages.find((s) => s.stage === "draft")).toMatchObject({
+      status: "error",
+      error: expect.stringMatching(/tmux-config: .*model unavailable/),
+    });
     expect(exitCode(r)).toBe(2);
     expect(new Proposals(db).list(["failed"])).toHaveLength(1);
 
@@ -148,10 +247,17 @@ describe("runPipeline", () => {
 
   it("runs only the requested stages and respects the insert budget", async () => {
     const { runner, deps, db } = await setup();
-    const r = await runPipeline({ ...deps, cfg: { ...deps.cfg, insert: { maxCallsPerRun: 0 } } }, { stages: ["extract", "insert"] });
+    const r = await runPipeline(
+      { ...deps, cfg: { ...deps.cfg, insert: { maxCallsPerRun: 0 } } },
+      { stages: ["extract", "insert"] },
+    );
     expect(r.stages.map((s) => s.stage)).toEqual(["extract", "insert"]);
     expect(r.stages[1]!.summary).toMatch(/3 deferred/);
-    expect(runner.calls).toEqual(["report_knowledge", "report_knowledge", "report_knowledge"]);
+    expect(runner.calls).toEqual([
+      "report_knowledge",
+      "report_knowledge",
+      "report_knowledge",
+    ]);
     expect(new Tree(db).unplacedNuggets()).toHaveLength(3);
   });
 });
@@ -164,15 +270,22 @@ describe("runPipeline with an unreadable source", () => {
       available: async () => true,
       // eslint-disable-next-line require-yield
       async *list() {
-        throw new Error("opencode.db uses the opencode 1.x schema (no session_v2 table). Upgrade opencode to 2.x.");
+        throw new Error(
+          "opencode.db uses the opencode 1.x schema (no session_v2 table). Upgrade opencode to 2.x.",
+        );
       },
       load: async () => {
         throw new Error("unused");
       },
     };
-    const r = await runPipeline({ ...deps, adapters: [...deps.adapters, broken] }, { stages: ["extract"] });
+    const r = await runPipeline(
+      { ...deps, adapters: [...deps.adapters, broken] },
+      { stages: ["extract"] },
+    );
     expect(r.stages[0]).toMatchObject({ stage: "extract", status: "ok" });
-    expect(r.stages[0]!.summary).toMatch(/^3 session\(s\) extracted.*skipped opencode: opencode\.db uses the opencode 1\.x schema/);
+    expect(r.stages[0]!.summary).toMatch(
+      /^3 session\(s\) extracted.*skipped opencode: opencode\.db uses the opencode 1\.x schema/,
+    );
     expect(runner.calls).toHaveLength(3);
     expect(exitCode(r)).toBe(0);
   });
@@ -181,21 +294,39 @@ describe("runPipeline with an unreadable source", () => {
 describe("runPipeline options (lbg run --session / --fresh / --only)", () => {
   it("--session extracts only that session and leaves rejections alone; --fresh re-reads it", async () => {
     const { runner, deps } = await setup();
-    const r = await runPipeline(deps, { stages: ["extract"], session: { agent: "pi", idPrefix: "b" } });
+    const r = await runPipeline(deps, {
+      stages: ["extract"],
+      session: { agent: "pi", idPrefix: "b" },
+    });
     expect(runner.calls).toEqual(["report_knowledge"]);
-    expect(r.extracted.map((o) => [o.ref.sessionId, o.status])).toEqual([["b", "extracted"]]);
+    expect(r.extracted.map((o) => [o.ref.sessionId, o.status])).toEqual([
+      ["b", "extracted"],
+    ]);
 
     runner.calls = [];
-    await runPipeline(deps, { stages: ["extract"], session: { agent: "pi", idPrefix: "b" } });
+    await runPipeline(deps, {
+      stages: ["extract"],
+      session: { agent: "pi", idPrefix: "b" },
+    });
     expect(runner.calls).toEqual([]); // already seen
-    await runPipeline(deps, { stages: ["extract"], session: { agent: "pi", idPrefix: "b" }, fresh: true });
+    await runPipeline(deps, {
+      stages: ["extract"],
+      session: { agent: "pi", idPrefix: "b" },
+      fresh: true,
+    });
     expect(runner.calls).toEqual(["report_knowledge"]);
 
     // named sessions are read even inside the settle window (still active)
-    const active = await runPipeline({ ...deps, cfg: { ...deps.cfg, settleMinutes: 1e9 } }, { stages: ["extract"], session: { agent: "pi", idPrefix: "a" } });
+    const active = await runPipeline(
+      { ...deps, cfg: { ...deps.cfg, settleMinutes: 1e9 } },
+      { stages: ["extract"], session: { agent: "pi", idPrefix: "a" } },
+    );
     expect(active.extracted.map((o) => o.ref.sessionId)).toEqual(["a"]);
 
-    const none = await runPipeline(deps, { stages: ["extract"], session: { agent: "pi", idPrefix: "zzz" } });
+    const none = await runPipeline(deps, {
+      stages: ["extract"],
+      session: { agent: "pi", idPrefix: "zzz" },
+    });
     expect(none.stages[0]!.summary).toMatch(/no session matches pi:zzz/);
   });
 
@@ -204,15 +335,26 @@ describe("runPipeline options (lbg run --session / --fresh / --only)", () => {
     runner.failOn.add("report_draft");
     await runPipeline(deps); // the draft fails → backoff
     const tree = new Tree(db);
-    const skill = tree.trees()[0]!.children.find((c) => c.name === "tmux-config")!;
+    const skill = tree
+      .trees()[0]!
+      .children.find((c) => c.name === "tmux-config")!;
     runner.failOn.clear();
     runner.calls = [];
     await runPipeline(deps, { stages: ["sync", "score", "draft"] });
     expect(runner.calls).toEqual([]); // a normal run still waits
 
-    const r = await runPipeline(deps, { stages: ["sync", "score", "draft"], only: [skill.id, tree.trees()[0]!.id] });
+    const r = await runPipeline(deps, {
+      stages: ["sync", "score", "draft"],
+      only: [skill.id, tree.trees()[0]!.id],
+    });
     expect(runner.calls).toEqual(["report_draft"]);
     expect(r.proposals.map((p) => p.skill)).toEqual(["tmux-config"]);
-    expect(r.skipped).toEqual([{ nodeId: tree.trees()[0]!.id, skill: expect.any(String), reason: "not a skill" }]);
+    expect(r.skipped).toEqual([
+      {
+        nodeId: tree.trees()[0]!.id,
+        skill: expect.any(String),
+        reason: "not a skill",
+      },
+    ]);
   });
 });
