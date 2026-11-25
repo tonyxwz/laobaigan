@@ -5,7 +5,7 @@ import type { PiRequest, PiResult, PiRunner } from "../src/pi/run-pi.ts";
 import { rejectProposal } from "../src/pipeline/accept.ts";
 import { buildSkillPrompt, insertNuggets } from "../src/pipeline/insert.ts";
 import { Rejections } from "../src/state/rejections.ts";
-import { setup as proposalSetup } from "./proposals.test.ts";
+import { proposalSetup } from "./helpers/proposals.ts";
 
 const nugget = (title: string) => ({
   runId: 1,

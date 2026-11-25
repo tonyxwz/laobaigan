@@ -1,3 +1,4 @@
+import type { Dirent } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { DEFAULT_LIMITS } from "../config.ts";
@@ -9,7 +10,7 @@ import { readJsonl } from "../util/fs.ts";
 import { isRecord, truncate } from "../util/text.ts";
 
 async function jsonlFiles(dir: string): Promise<string[]> {
-  let entries;
+  let entries: Dirent[];
   try {
     entries = await readdir(dir, { withFileTypes: true });
   } catch {

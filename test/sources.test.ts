@@ -484,7 +484,7 @@ describe("unreadable sources", () => {
     const broken: SourceAdapter = {
       agent: "claude",
       available: async () => true,
-      // eslint-disable-next-line require-yield
+      // biome-ignore lint/correctness/useYield: simulate a source failing on its first iteration.
       async *list() {
         throw new Error("EACCES: permission denied, scandir '/x'");
       },

@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, type Stats } from "node:fs";
 import {
   cp,
   mkdir,
@@ -129,7 +129,7 @@ export async function resolveTarget(
 /** All files under `rel` (a file or a directory) inside `root`, relative to `root`. */
 async function filesUnder(root: string, rel: string): Promise<string[]> {
   const abs = join(root, rel);
-  let st;
+  let st: Stats;
   try {
     st = await stat(abs);
   } catch {

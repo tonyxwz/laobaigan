@@ -268,7 +268,7 @@ describe("runPipeline with an unreadable source", () => {
     const broken: SourceAdapter = {
       agent: "opencode",
       available: async () => true,
-      // eslint-disable-next-line require-yield
+      // biome-ignore lint/correctness/useYield: simulate a source failing on its first iteration.
       async *list() {
         throw new Error(
           "opencode.db uses the opencode 1.x schema (no session_v2 table). Upgrade opencode to 2.x.",

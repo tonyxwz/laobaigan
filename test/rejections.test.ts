@@ -13,7 +13,7 @@ import { exitCode, runPipeline } from "../src/pipeline/run.ts";
 import { MIGRATIONS, StateDb } from "../src/state/db.ts";
 import { Feedback } from "../src/state/feedback.ts";
 import { Rejections } from "../src/state/rejections.ts";
-import { setup as proposalSetup } from "./proposals.test.ts";
+import { proposalSetup } from "./helpers/proposals.ts";
 
 /** A runner that must never be called. */
 const noCalls: PiRunner = {
@@ -308,8 +308,9 @@ describe("repeated classification errors", () => {
     const adapter = {
       agent: "pi" as const,
       available: async () => true,
-      async *list() {
+      list() {
         sessionsListed = true;
+        throw new Error("sessions should not be listed after an abort");
       },
       load: async () => {
         throw new Error("unused");

@@ -10,7 +10,7 @@ import type {
   Transcript,
 } from "../src/sources/types.ts";
 import { Rejections } from "../src/state/rejections.ts";
-import { setup as proposalSetup } from "./proposals.test.ts";
+import { proposalSetup } from "./helpers/proposals.ts";
 
 function adapter(cwd: string, id = "s1"): SourceAdapter {
   return {

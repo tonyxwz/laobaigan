@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { rejectProposal } from "../src/pipeline/accept.ts";
 import { reviewFeedbackPrompt } from "../src/pipeline/review.ts";
 import { Rejections } from "../src/state/rejections.ts";
-import { setup as proposalSetup } from "./proposals.test.ts";
+import { proposalSetup } from "./helpers/proposals.ts";
 
 describe("drafting sees rejection rules", () => {
   it("the skill's own rule, and siblings' rules instead of their raw reasons", () => {

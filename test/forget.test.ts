@@ -14,7 +14,7 @@ import type {
 } from "../src/sources/types.ts";
 import { Rejections } from "../src/state/rejections.ts";
 import { Tree } from "../src/state/tree.ts";
-import { setup as proposalSetup } from "./proposals.test.ts";
+import { proposalSetup } from "./helpers/proposals.ts";
 
 function setup() {
   const s = proposalSetup(); // latent "dotfiles-management" with 3 nuggets from 3 sessions → candidate

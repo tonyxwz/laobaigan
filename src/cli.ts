@@ -315,11 +315,11 @@ async function main(argv: string[]): Promise<number> {
         renderOutcomes(res.outcomes, out);
         if (values.excerpt) {
           for (const o of res.outcomes) {
-            o.excerptText?.forEach((c, i) =>
+            o.excerptText?.forEach((c, i, chunks) => {
               out(
-                `\n===== excerpt chunk ${i + 1}/${o.excerptText!.length} =====\n${c}`,
-              ),
-            );
+                `\n===== excerpt chunk ${i + 1}/${chunks.length} =====\n${c}`,
+              );
+            });
           }
         }
         return res.outcomes.some((o) => o.status === "error") ? 2 : 0;

@@ -3,7 +3,7 @@ import { DEFAULT_CONFIG } from "../src/config.ts";
 import { rejectProposal } from "../src/pipeline/accept.ts";
 import { scoreTree } from "../src/pipeline/treescore.ts";
 import { isExpired, Rejections } from "../src/state/rejections.ts";
-import { setup as proposalSetup } from "./proposals.test.ts";
+import { proposalSetup } from "./helpers/proposals.ts";
 
 const DAY = 86400e3;
 

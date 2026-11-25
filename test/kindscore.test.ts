@@ -4,7 +4,7 @@ import { rejectProposal } from "../src/pipeline/accept.ts";
 import { scoreTree } from "../src/pipeline/treescore.ts";
 import type { RejectionKind } from "../src/state/rejections.ts";
 import { Rejections } from "../src/state/rejections.ts";
-import { setup as proposalSetup } from "./proposals.test.ts";
+import { proposalSetup } from "./helpers/proposals.ts";
 
 const S = DEFAULT_CONFIG.score;
 
