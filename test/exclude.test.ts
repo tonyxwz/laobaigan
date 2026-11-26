@@ -11,12 +11,12 @@ import type {
   AgentRunner,
 } from "../src/agents/types.ts";
 import { type Config, DEFAULT_CONFIG } from "../src/config.ts";
-import { buildDraftPrompt } from "../src/pipeline/draft-prompt.ts";
-import { insertNuggets } from "../src/pipeline/insert.ts";
-import { draftSkill } from "../src/pipeline/render.ts";
-import { reviseProposal } from "../src/pipeline/revise.ts";
-import { syncTree } from "../src/pipeline/sync.ts";
-import { scoreTree } from "../src/pipeline/treescore.ts";
+import { buildDraftPrompt } from "../src/pipeline/draft/draft-prompt.ts";
+import { draftSkill } from "../src/pipeline/draft/render.ts";
+import { reviseProposal } from "../src/pipeline/review/revise.ts";
+import { insertNuggets } from "../src/pipeline/tree/insert.ts";
+import { syncTree } from "../src/pipeline/tree/sync.ts";
+import { scoreTree } from "../src/pipeline/tree/treescore.ts";
 import { type NuggetInsert, StateDb } from "../src/state/db.ts";
 import { Proposals } from "../src/state/proposals.ts";
 import { subtreeNuggets, Tree } from "../src/state/tree.ts";

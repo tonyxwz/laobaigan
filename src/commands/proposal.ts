@@ -3,29 +3,32 @@ import { createInterface } from "node:readline/promises";
 import { modelRunner } from "../agents/run-claude.ts";
 import { CONFIG_PATH, type Config, loadConfig } from "../config.ts";
 import { writePromptStatus } from "../notify/prompt.ts";
+import { privateProblems } from "../pipeline/draft/privacy.ts";
 import {
   acceptProposal,
   newSinceDraft,
   privateHitsFor,
-} from "../pipeline/accept.ts";
+} from "../pipeline/review/accept.ts";
 import {
   commitTargetFor,
   commitTemplate,
   renderCommit,
   runCommit,
-} from "../pipeline/commit.ts";
-import { dropEvidence } from "../pipeline/drop.ts";
+} from "../pipeline/review/commit.ts";
+import { dropEvidence } from "../pipeline/review/drop.ts";
 import {
   chatRevise,
   editProposal,
   type InteractiveResult,
-} from "../pipeline/interactive.ts";
-import { privateProblems } from "../pipeline/privacy.ts";
-import { proposalDiff, proposalView } from "../pipeline/proposal-view.ts";
-import { rejectProposal } from "../pipeline/reject.ts";
-import type { Rebased } from "../pipeline/revise.ts";
-import { reviseProposal } from "../pipeline/revise.ts";
-import { scoreTree } from "../pipeline/treescore.ts";
+} from "../pipeline/review/interactive.ts";
+import {
+  proposalDiff,
+  proposalView,
+} from "../pipeline/review/proposal-view.ts";
+import { rejectProposal } from "../pipeline/review/reject.ts";
+import type { Rebased } from "../pipeline/review/revise.ts";
+import { reviseProposal } from "../pipeline/review/revise.ts";
+import { scoreTree } from "../pipeline/tree/treescore.ts";
 import { StateDb } from "../state/db.ts";
 import { Feedback } from "../state/feedback.ts";
 import {

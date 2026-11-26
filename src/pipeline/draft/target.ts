@@ -1,18 +1,18 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import type { FileGuard } from "../agents/guard.ts";
-import type { Config } from "../config.ts";
+import type { FileGuard } from "../../agents/guard.ts";
+import type { Config } from "../../config.ts";
 import {
   AGENT_FILES,
   AGENT_RULE_DIRS,
   AGENT_SKILL_DIRS,
   distinctExisting,
-} from "../skills/layout.ts";
-import { isValidSkillName } from "../skills/name.ts";
-import { resolveRepo } from "../skills/repo.ts";
-import { subtreeNuggets, type TreeNode } from "../state/tree.ts";
+} from "../../skills/layout.ts";
+import { isValidSkillName } from "../../skills/name.ts";
+import { resolveRepo } from "../../skills/repo.ts";
+import { subtreeNuggets, type TreeNode } from "../../state/tree.ts";
+import { evidenceText, skillName } from "../tree/stats.ts";
 import { HOMES, homeOf, type RepoPlace } from "./homes.ts";
-import { evidenceText, skillName } from "./stats.ts";
 
 /**
  * Where a draft goes (paths relative to the target root). For a repo this is the PRIMARY target: what the

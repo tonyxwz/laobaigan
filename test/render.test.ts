@@ -9,23 +9,23 @@ import {
 } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import { type Config, DEFAULT_CONFIG } from "../src/config.ts";
+import { draftCandidates, draftSkill } from "../src/pipeline/draft/render.ts";
 import {
   acceptProposal,
   conflicts,
   newSinceDraft,
-} from "../src/pipeline/accept.ts";
-import { commitTargetFor } from "../src/pipeline/commit.ts";
-import { proposalDiff } from "../src/pipeline/proposal-view.ts";
-import { rejectProposal } from "../src/pipeline/reject.ts";
-import { draftCandidates, draftSkill } from "../src/pipeline/render.ts";
+} from "../src/pipeline/review/accept.ts";
+import { commitTargetFor } from "../src/pipeline/review/commit.ts";
+import { proposalDiff } from "../src/pipeline/review/proposal-view.ts";
+import { rejectProposal } from "../src/pipeline/review/reject.ts";
 import {
   closeDraft,
   discardDraft,
   openDraft,
   reviseProposal,
-} from "../src/pipeline/revise.ts";
-import { syncTree } from "../src/pipeline/sync.ts";
-import { scoreTree, skillStats } from "../src/pipeline/treescore.ts";
+} from "../src/pipeline/review/revise.ts";
+import { syncTree } from "../src/pipeline/tree/sync.ts";
+import { scoreTree, skillStats } from "../src/pipeline/tree/treescore.ts";
 import { type NuggetInsert, StateDb } from "../src/state/db.ts";
 import { Proposals } from "../src/state/proposals.ts";
 import { Tree } from "../src/state/tree.ts";
@@ -567,7 +567,9 @@ describe("committing an already-accepted proposal", () => {
 
 describe("proposalView (stale proposals)", () => {
   it("shows the draft's own change against its base, plus what changed on disk, instead of reverting newer edits", async () => {
-    const { proposalView } = await import("../src/pipeline/proposal-view.ts");
+    const { proposalView } = await import(
+      "../src/pipeline/review/proposal-view.ts"
+    );
     const { hashContent } = await import("../src/state/proposals.ts");
     const root = realpathSync(await mkdtemp(join(tmpdir(), "lbg-stale-")));
     await mkdir(join(root, "s"));
@@ -622,7 +624,7 @@ describe("proposalView (stale proposals)", () => {
   });
 
   it("drafts store the original content of each changed file", async () => {
-    const { diffSnapshot } = await import("../src/pipeline/scratch.ts");
+    const { diffSnapshot } = await import("../src/pipeline/draft/scratch.ts");
     const scratch = realpathSync(await mkdtemp(join(tmpdir(), "lbg-snap-")));
     await mkdir(join(scratch, "s"));
     await writeFile(join(scratch, "s", "SKILL.md"), "new\n");
@@ -648,7 +650,7 @@ describe("openDraft rebases a stale draft onto newer edits", () => {
     draftFile: (base: string) => { content: string; baseContent?: string },
   ) {
     const { openDraft, discardDraft, reviseContext } = await import(
-      "../src/pipeline/revise.ts"
+      "../src/pipeline/review/revise.ts"
     );
     const { hashContent } = await import("../src/state/proposals.ts");
     const { cfg, db, tree, dot, skillsDir } = await globalSetup();

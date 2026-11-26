@@ -1,10 +1,10 @@
 import { spawnSync } from "node:child_process";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { Config } from "../config.ts";
-import type { ProposalRow } from "../state/proposals.ts";
-import type { Tree } from "../state/tree.ts";
-import { isPublicRepo, privateTermsIn } from "./privacy.ts";
+import type { Config } from "../../config.ts";
+import type { ProposalRow } from "../../state/proposals.ts";
+import type { Tree } from "../../state/tree.ts";
+import { isPublicRepo, privateTermsIn } from "../draft/privacy.ts";
 
 import { currentFile } from "./proposal-view.ts";
 

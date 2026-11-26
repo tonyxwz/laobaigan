@@ -11,8 +11,8 @@ import type {
   AgentRunner,
 } from "../src/agents/types.ts";
 import { type Config, DEFAULT_CONFIG } from "../src/config.ts";
-import { buildClassifyPrompt } from "../src/pipeline/classify.ts";
-import { rejectProposal } from "../src/pipeline/reject.ts";
+import { buildClassifyPrompt } from "../src/pipeline/extract/classify.ts";
+import { rejectProposal } from "../src/pipeline/review/reject.ts";
 import { exitCode, runPipeline } from "../src/pipeline/run.ts";
 import { MIGRATIONS, StateDb } from "../src/state/db.ts";
 import { Feedback } from "../src/state/feedback.ts";

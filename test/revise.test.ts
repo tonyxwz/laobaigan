@@ -11,16 +11,16 @@ import { join } from "node:path";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import { type Config, DEFAULT_CONFIG } from "../src/config.ts";
-import { acceptProposal } from "../src/pipeline/accept.ts";
+import { draftSkill } from "../src/pipeline/draft/render.ts";
+import { acceptProposal } from "../src/pipeline/review/accept.ts";
 import {
   chatRevise,
   editProposal,
   type Launcher,
-} from "../src/pipeline/interactive.ts";
-import { draftSkill } from "../src/pipeline/render.ts";
-import { reviseProposal } from "../src/pipeline/revise.ts";
-import { syncTree } from "../src/pipeline/sync.ts";
-import { scoreTree } from "../src/pipeline/treescore.ts";
+} from "../src/pipeline/review/interactive.ts";
+import { reviseProposal } from "../src/pipeline/review/revise.ts";
+import { syncTree } from "../src/pipeline/tree/sync.ts";
+import { scoreTree } from "../src/pipeline/tree/treescore.ts";
 import { type NuggetInsert, StateDb } from "../src/state/db.ts";
 import { Feedback } from "../src/state/feedback.ts";
 import { Proposals } from "../src/state/proposals.ts";
@@ -435,14 +435,14 @@ function writeFileSyncish(p: string, c: string) {
 describe("guardExtensionPath", () => {
   it("resolves the extension next to the running module, in source and in dist", async () => {
     const { guardExtensionPath } = await import(
-      "../src/pipeline/interactive.ts"
-    );
-    expect(guardExtensionPath("file:///repo/src/pipeline/interactive.ts")).toBe(
-      "/repo/src/agents/guard-extension.ts",
+      "../src/pipeline/review/interactive.ts"
     );
     expect(
+      guardExtensionPath("file:///repo/src/pipeline/review/interactive.ts"),
+    ).toBe("/repo/src/agents/guard-extension.ts");
+    expect(
       guardExtensionPath(
-        "file:///usr/lib/node_modules/laobaigan/dist/pipeline/interactive.js",
+        "file:///usr/lib/node_modules/laobaigan/dist/pipeline/review/interactive.js",
       ),
     ).toBe("/usr/lib/node_modules/laobaigan/dist/agents/guard-extension.js");
     const { existsSync } = await import("node:fs");

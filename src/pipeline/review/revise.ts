@@ -1,34 +1,34 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { applyPatch, createPatch } from "diff";
-import { GUARDED_TOOLS } from "../agents/guard.ts";
+import { GUARDED_TOOLS } from "../../agents/guard.ts";
 import {
   type AgentRunner,
   addUsage,
   type Usage,
   ZERO_USAGE,
-} from "../agents/types.ts";
-import { agentModel, type Config } from "../config.ts";
-import { Feedback } from "../state/feedback.ts";
+} from "../../agents/types.ts";
+import { agentModel, type Config } from "../../config.ts";
+import { Feedback } from "../../state/feedback.ts";
 import {
   type DraftFile,
   hashContent,
   type ProposalRow,
   Proposals,
-} from "../state/proposals.ts";
-import { subtreeNuggets, type Tree, type TreeNode } from "../state/tree.ts";
+} from "../../state/proposals.ts";
+import { subtreeNuggets, type Tree, type TreeNode } from "../../state/tree.ts";
 import {
   buildDraftPrompt,
   DRAFT_SYSTEM_PROMPT,
   ReportDraftSchema,
-} from "./draft-prompt.ts";
-import { applyExclusions, type Rehomed } from "./exclude.ts";
-import { homeOf } from "./homes.ts";
-import { reviewFeedbackPrompt } from "./review.ts";
-import { checkScope, scopeProblem } from "./scope.ts";
-import { diffSnapshot, makeScratch, snapshot } from "./scratch.ts";
-import { guardFor, type RenderTarget } from "./target.ts";
-import { verifyDraft } from "./verify.ts";
+} from "../draft/draft-prompt.ts";
+import { applyExclusions, type Rehomed } from "../draft/exclude.ts";
+import { homeOf } from "../draft/homes.ts";
+import { reviewFeedbackPrompt } from "../draft/review.ts";
+import { checkScope, scopeProblem } from "../draft/scope.ts";
+import { diffSnapshot, makeScratch, snapshot } from "../draft/scratch.ts";
+import { guardFor, type RenderTarget } from "../draft/target.ts";
+import { verifyDraft } from "../draft/verify.ts";
 
 /**
  * Change an open proposal: one-shot `revise "feedback"`, an interactive pi chat, or

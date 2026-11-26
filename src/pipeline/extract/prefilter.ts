@@ -1,5 +1,5 @@
-import type { Transcript, Turn } from "../sources/types.ts";
-import { indent, truncate } from "../util/text.ts";
+import type { Transcript, Turn } from "../../sources/types.ts";
+import { indent, truncate } from "../../util/text.ts";
 import { isHumanTurn } from "./fingerprint.ts";
 import { redact } from "./redact.ts";
 

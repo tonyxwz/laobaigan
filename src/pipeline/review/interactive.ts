@@ -5,25 +5,26 @@ import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { claudeToolsFor } from "../agents/claude-guard.ts";
-import { GUARDED_TOOLS } from "../agents/guard.ts";
+import { claudeToolsFor } from "../../agents/claude-guard.ts";
+import { GUARDED_TOOLS } from "../../agents/guard.ts";
 import {
   CLAUDE_CONTEXT_ENV,
   CLAUDE_CONTEXT_SETTINGS,
   claudeEffort,
   claudeSettings,
-} from "../agents/run-claude.ts";
+} from "../../agents/run-claude.ts";
 import {
   type AgentKind,
   agentModel,
   type Config,
   DEFAULT_PATHS,
-} from "../config.ts";
-import type { Turn } from "../state/feedback.ts";
-import { Feedback } from "../state/feedback.ts";
-import type { Tree } from "../state/tree.ts";
+} from "../../config.ts";
+import type { Turn } from "../../state/feedback.ts";
+import { Feedback } from "../../state/feedback.ts";
+import type { Tree } from "../../state/tree.ts";
+import { DRAFT_SYSTEM_PROMPT } from "../draft/draft-prompt.ts";
+import { guardFor } from "../draft/target.ts";
 import { readChatTurns, readClaudeChatTurns } from "./chatlog.ts";
-import { DRAFT_SYSTEM_PROMPT } from "./draft-prompt.ts";
 import { editDiff } from "./proposal-view.ts";
 import {
   type CloseResult,
@@ -33,7 +34,6 @@ import {
   openDraft,
   reviseContext,
 } from "./revise.ts";
-import { guardFor } from "./target.ts";
 
 /**
  * Interactive changes to an open proposal, in my own terminal:
@@ -61,7 +61,13 @@ export function guardExtensionPath(
   moduleUrl: string = import.meta.url,
 ): string {
   const here = fileURLToPath(moduleUrl);
-  return join(dirname(here), "..", "agents", `guard-extension${extname(here)}`);
+  return join(
+    dirname(here),
+    "..",
+    "..",
+    "agents",
+    `guard-extension${extname(here)}`,
+  );
 }
 
 const EXTENSION = guardExtensionPath();
@@ -71,6 +77,7 @@ export function claudeHookPath(moduleUrl: string = import.meta.url): string {
   const here = fileURLToPath(moduleUrl);
   return join(
     dirname(here),
+    "..",
     "..",
     "agents",
     `claude-guard-hook${extname(here)}`,

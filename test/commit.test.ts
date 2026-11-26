@@ -11,7 +11,7 @@ import {
   renderCommit,
   runCommit,
   shQuote,
-} from "../src/pipeline/commit.ts";
+} from "../src/pipeline/review/commit.ts";
 
 const vars = {
   updatedFiles: [

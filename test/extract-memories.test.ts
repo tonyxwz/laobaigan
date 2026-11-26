@@ -6,8 +6,8 @@ import type {
   AgentRunner,
 } from "../src/agents/types.ts";
 import { type Config, DEFAULT_CONFIG } from "../src/config.ts";
-import { processSessions } from "../src/pipeline/process.ts";
-import { rejectProposal } from "../src/pipeline/reject.ts";
+import { processSessions } from "../src/pipeline/extract/process.ts";
+import { rejectProposal } from "../src/pipeline/review/reject.ts";
 import type {
   SessionRef,
   SourceAdapter,

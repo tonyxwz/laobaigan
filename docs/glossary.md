@@ -49,7 +49,7 @@ sessions ─extract─▶ nuggets ─insert─▶ knowledge tree ─score─▶ 
 : Secrets (keys, tokens, passwords, cookies) are replaced by `[REDACTED…]` before any text reaches a model.
 
 **Extract**
-: The model call that reads an excerpt and reports nuggets (`src/pipeline/extract.ts`).
+: The model call that reads an excerpt and reports nuggets (`src/pipeline/extract/extract.ts`).
 
 **Nugget**
 : One piece of knowledge **you taught an agent** in a session, written so a future agent can act on it without that session. The unit everything else is built from. Fields:
@@ -111,10 +111,10 @@ depth 2  section  a "##" section of SKILL.md or of a document, a references/*.md
 - **rejected**: you rejected its proposal; returns only with evidence from new sessions
 
 **Sync**
-: Reading the skill files back into the tree at the start of every run (`src/pipeline/sync.ts`). Your hand edits and accepted proposals show up as live nodes; removed files never drop evidence.
+: Reading the skill files back into the tree at the start of every run (`src/pipeline/tree/sync.ts`). Your hand edits and accepted proposals show up as live nodes; removed files never drop evidence.
 
 **Insert**
-: Routing new nuggets down the tree, one batched model call per level: root → which skill (or a new latent one) → which section (or the skill body) (`src/pipeline/insert.ts`).
+: Routing new nuggets down the tree, one batched model call per level: root → which skill (or a new latent one) → which section (or the skill body) (`src/pipeline/tree/insert.ts`).
 
 **Render time** (`renderedAt`)
 : When a live skill's files last changed (your edit, or an accepted proposal). Evidence attached before it counts as already absorbed into the file.
@@ -126,7 +126,7 @@ depth 2  section  a "##" section of SKILL.md or of a document, a references/*.md
 : For a live skill: something you explained even though the skill already says it. A sign the skill's description doesn't trigger; for a document, that nothing points agents to it. `AGENTS.md` is always loaded, so covered evidence there earns nothing.
 
 **Score**
-: A number that orders skills (sessions, extra agents, extra days, corrections, minus coverage). It only ranks candidates; promotion is decided by readable session thresholds (`src/pipeline/treescore.ts`).
+: A number that orders skills (sessions, extra agents, extra days, corrections, minus coverage). It only ranks candidates; promotion is decided by readable session thresholds (`src/pipeline/tree/treescore.ts`).
 
 **Promotion**
 : A skill becoming a candidate:
@@ -141,7 +141,7 @@ depth 2  section  a "##" section of SKILL.md or of a document, a references/*.md
 ## Proposals
 
 **Draft**
-: pi writing one candidate skill's files (`src/pipeline/render.ts`), in a **scratch dir**: a temporary copy of the paths it may change. Your real files are never touched while drafting.
+: pi writing one candidate skill's files (`src/pipeline/draft/render.ts`), in a **scratch dir**: a temporary copy of the paths it may change. Your real files are never touched while drafting.
 
 **Guarded tools**
 : The file tools the drafting model gets (`read`, `ls`, `find`, `grep`, `write`, `edit`). Writes go only to the proposal's writable paths, in the scratch dir. Reads are allowed there and, for a repo, anywhere in the live repository. No bash (`src/agents/guard.ts`).
@@ -153,7 +153,7 @@ depth 2  section  a "##" section of SKILL.md or of a document, a references/*.md
 : Checks on a draft before it's stored: only writable paths changed, every touched skill has a `name` matching its folder and a description that fits, `SKILL.md` isn't too long, generated blocks (`<!-- BEGIN … -->`) are untouched, nothing outside the target skill is deleted, no secrets, no private terms added to a public repo.
 
 **Private terms**
-: Words listed in `privacy.privateTerms` that must never be added to a repository listed in `privacy.publicRepos`. A keyword gate (`src/pipeline/privacy.ts`): drafts, revisions and accepts that add one are refused.
+: Words listed in `privacy.privateTerms` that must never be added to a repository listed in `privacy.publicRepos`. A keyword gate (`src/pipeline/draft/privacy.ts`): drafts, revisions and accepts that add one are refused.
 
 **Proposal**
 : One drafted change to one skill, stored in lbg's database: the changed files (path, hash of the original, new content), a summary for you, the evidence, and the cost. lbg doesn't use git.

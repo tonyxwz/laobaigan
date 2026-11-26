@@ -1,17 +1,17 @@
-import type { DeclaredTopic } from "../config.ts";
+import type { DeclaredTopic } from "../../config.ts";
 import type {
   ParsedAgentsMd,
   ParsedSection,
   ParsedSkill,
-} from "../skills/parse.ts";
-import { fileNodeKind, parseRepo, parseSkillsDir } from "../skills/parse.ts";
+} from "../../skills/parse.ts";
+import { fileNodeKind, parseRepo, parseSkillsDir } from "../../skills/parse.ts";
 import {
   type NodeRow,
   type Scope,
   subtreeNuggets,
   type Tree,
   type TreeNode,
-} from "../state/tree.ts";
+} from "../../state/tree.ts";
 
 /**
  * Keep the tree in sync with files. Files are the source of truth for `file`

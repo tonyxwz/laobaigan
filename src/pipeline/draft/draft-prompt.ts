@@ -1,11 +1,11 @@
 import { Type } from "typebox";
-import type { NuggetRow } from "../state/db.ts";
+import type { NuggetRow } from "../../state/db.ts";
 import {
   type ProposalKind,
   subtreeNuggets,
   type TreeNode,
-} from "../state/tree.ts";
-import { truncate } from "../util/text.ts";
+} from "../../state/tree.ts";
+import { truncate } from "../../util/text.ts";
 import { homeOfTarget } from "./homes.ts";
 import type { RenderTarget } from "./target.ts";
 

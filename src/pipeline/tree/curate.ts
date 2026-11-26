@@ -1,10 +1,10 @@
-import { isValidSkillName } from "../skills/name.ts";
+import { isValidSkillName } from "../../skills/name.ts";
 import {
   type NodeRow,
   subtreeNuggets,
   type Tree,
   type TreeNode,
-} from "../state/tree.ts";
+} from "../../state/tree.ts";
 
 /**
  * Hand curation of the knowledge tree. Every edit locks what it touches, so

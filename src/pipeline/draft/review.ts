@@ -1,7 +1,7 @@
-import { Feedback, type FeedbackWithProposal } from "../state/feedback.ts";
-import { Rejections } from "../state/rejections.ts";
-import type { NodeRow, Tree } from "../state/tree.ts";
-import { truncate } from "../util/text.ts";
+import { Feedback, type FeedbackWithProposal } from "../../state/feedback.ts";
+import { Rejections } from "../../state/rejections.ts";
+import type { NodeRow, Tree } from "../../state/tree.ts";
+import { truncate } from "../../util/text.ts";
 
 /**
  * What drafting sees of my earlier reviews: the feedback on this skill (all its

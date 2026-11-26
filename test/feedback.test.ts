@@ -5,18 +5,18 @@ import { join } from "node:path";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import { type Config, DEFAULT_CONFIG } from "../src/config.ts";
-import { readChatTurns } from "../src/pipeline/chatlog.ts";
+import { draftSkill } from "../src/pipeline/draft/render.ts";
+import { reviewFeedbackPrompt } from "../src/pipeline/draft/review.ts";
+import { readChatTurns } from "../src/pipeline/review/chatlog.ts";
 import {
   chatRevise,
   editProposal,
   type Launcher,
-} from "../src/pipeline/interactive.ts";
-import { rejectProposal } from "../src/pipeline/reject.ts";
-import { draftSkill } from "../src/pipeline/render.ts";
-import { reviewFeedbackPrompt } from "../src/pipeline/review.ts";
-import { reviseProposal } from "../src/pipeline/revise.ts";
-import { syncTree } from "../src/pipeline/sync.ts";
-import { scoreTree } from "../src/pipeline/treescore.ts";
+} from "../src/pipeline/review/interactive.ts";
+import { rejectProposal } from "../src/pipeline/review/reject.ts";
+import { reviseProposal } from "../src/pipeline/review/revise.ts";
+import { syncTree } from "../src/pipeline/tree/sync.ts";
+import { scoreTree } from "../src/pipeline/tree/treescore.ts";
 import { type NuggetInsert, StateDb } from "../src/state/db.ts";
 import { Feedback } from "../src/state/feedback.ts";
 import { Proposals } from "../src/state/proposals.ts";

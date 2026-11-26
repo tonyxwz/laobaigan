@@ -1,5 +1,5 @@
-import type { ScoreConfig } from "../config.ts";
-import type { NuggetRow } from "../state/db.ts";
+import type { ScoreConfig } from "../../config.ts";
+import type { NuggetRow } from "../../state/db.ts";
 
 /** Recurrence over a set of nuggets (a skill's subtree, or a section). */
 export interface EvidenceStats {

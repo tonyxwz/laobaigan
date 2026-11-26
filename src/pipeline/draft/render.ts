@@ -2,12 +2,13 @@ import { existsSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { Static } from "typebox";
-import { GUARDED_TOOLS } from "../agents/guard.ts";
-import type { AgentRunner, Usage } from "../agents/types.ts";
-import { addUsage, ZERO_USAGE } from "../agents/types.ts";
-import { agentModel, type Config } from "../config.ts";
-import { type DraftFile, Proposals } from "../state/proposals.ts";
-import { subtreeNuggets, type Tree } from "../state/tree.ts";
+import { GUARDED_TOOLS } from "../../agents/guard.ts";
+import type { AgentRunner, Usage } from "../../agents/types.ts";
+import { addUsage, ZERO_USAGE } from "../../agents/types.ts";
+import { agentModel, type Config } from "../../config.ts";
+import { type DraftFile, Proposals } from "../../state/proposals.ts";
+import { subtreeNuggets, type Tree } from "../../state/tree.ts";
+import { skillStats } from "../tree/treescore.ts";
 import {
   buildDraftPrompt,
   DRAFT_SYSTEM_PROMPT,
@@ -33,7 +34,6 @@ import {
   resolveTarget,
   SkipError,
 } from "./target.ts";
-import { skillStats } from "./treescore.ts";
 import { draftPrivateHits, verifyDraft } from "./verify.ts";
 
 /**

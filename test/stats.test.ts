@@ -6,7 +6,7 @@ import {
   meetsPromotion,
   scoreOf,
   skillName,
-} from "../src/pipeline/stats.ts";
+} from "../src/pipeline/tree/stats.ts";
 import type { NuggetRow } from "../src/state/db.ts";
 
 const S = DEFAULT_CONFIG.score;

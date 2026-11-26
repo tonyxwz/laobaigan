@@ -103,11 +103,11 @@ interface Turn {
 - **Trivial sessions are skipped:** no human prompts, or only greetings and acknowledgements.
 - **Signals** are stored for ranking and debugging: long explanatory messages, correction phrases ("no,", "actually", "as I said", "don't", "always", …), rewinds, and the user stepping in after a tool error.
 - **Chunking** keeps each extract call within `extract.chunkTokens`.
-- **Redaction** (`src/pipeline/redact.ts`) runs before any text leaves the process. It covers AWS keys and secrets, bearer tokens, JWTs, private keys, `password=` / `token=` / `apiKey:` assignments and cookie headers, plus `redact.extraPatterns` from the config.
+- **Redaction** (`src/pipeline/extract/redact.ts`) runs before any text leaves the process. It covers AWS keys and secrets, bearer tokens, JWTs, private keys, `password=` / `token=` / `apiKey:` assignments and cookie headers, plus `redact.extraPatterns` from the config.
 
 ## 4. Extract nuggets (pi, one call per chunk)
 
-A headless pi session reads one excerpt and reports **nuggets**, the knowledge the user taught the agent (`src/pipeline/extract.ts`):
+A headless pi session reads one excerpt and reports **nuggets**, the knowledge the user taught the agent (`src/pipeline/extract/extract.ts`):
 
 ```ts
 interface Nugget {
@@ -146,7 +146,7 @@ Depth is capped at 2 below the root. Agents don't reliably follow deeper chains 
 - **declared:** skills asked for in `config.topics`, which exist before they have evidence.
 - **latent:** grown by lbg while inserting; invisible to agents until proposed and accepted.
 
-**Sync** (`src/pipeline/sync.ts`) parses:
+**Sync** (`src/pipeline/tree/sync.ts`) parses:
 
 - each skill folder in the global skills dir: `SKILL.md` frontmatter, `##` sections, `references/*.md`, with symlinked folders followed
 - for every repo the tree knows, its `AGENTS.md` (`##` → depth 1, `###` → depth 2; a `CLAUDE.md` that only points at `AGENTS.md` is ignored) and the skills in every agent's skills directory (`AGENT_SKILL_DIRS` in `src/skills/parse.ts`: `.agents/skills`, `.claude/skills`, `.pi/skills`, …), each real directory once
@@ -157,14 +157,14 @@ Documents are mirrored because a project that has `docs/` keeps its knowledge th
 
 Nodes are matched first by source path, then by name or title, which is how a latent node becomes live once its proposal is accepted. Removing a file never drops evidence: a section's nuggets move up to its skill, and a skill that still holds nuggets turns latent.
 
-**Insert** (`src/pipeline/insert.ts`) routes new nuggets down the tree, one batched model call per level:
+**Insert** (`src/pipeline/tree/insert.ts`) routes new nuggets down the tree, one batched model call per level:
 
 - **Level 1**, per scope root: the prompt lists the root's skills (id, live/declared/latent, name, title, description, section titles), never their full content. Each nugget goes to a skill, or to a new latent skill.
 - **Level 2**, per touched skill that has sections, is a non-file skill receiving several nuggets, or is live text without sections (an `AGENTS.md` section, a short document): each nugget goes to a section, a new section, or the skill body. Nuggets whose content the live text already states are flagged **covered**; only this call can tell, which is why live text always gets it.
 - Calls are skipped when there's nothing to decide, and invalid model output is repaired, so every nugget is placed exactly once.
 - Summaries are lazy: only marked stale, and rewritten when the subtree is drafted. The stable part of the prompt (the skill list) comes first so the provider can cache it.
 
-**Score** (`src/pipeline/treescore.ts`): each skill is scored over its whole subtree.
+**Score** (`src/pipeline/tree/treescore.ts`): each skill is scored over its whole subtree.
 
 | Skill              | Evidence that counts                                | Earns                                                                                  |
 | ------------------ | --------------------------------------------------- | -------------------------------------------------------------------------------------- |
@@ -180,7 +180,7 @@ The numeric score (sessions, extra agents, extra days, corrections, minus covera
 - A proposed skill is left to the proposal lifecycle.
 - A rejected skill returns only after evidence from new sessions.
 
-**Curation** (`src/pipeline/curate.ts`): `merge`, `split`, `move`, `rename`, `unlock` on nodes, and moving a nugget.
+**Curation** (`src/pipeline/tree/curate.ts`): `merge`, `split`, `move`, `rename`, `unlock` on nodes, and moving a nugget.
 
 - Every hand edit is locked, so automation never undoes it.
 - A live skill's own structure changes only through proposals.
@@ -190,7 +190,7 @@ The numeric score (sessions, extra agents, extra days, corrections, minus covera
 
 ## 6. Draft a proposal (pi, in a scratch copy)
 
-For each candidate, the draft stage of `lbg run` (at most `render.maxPerRun` per run; `lbg run --only <id>` for specific skills) does the following (`src/pipeline/render.ts`):
+For each candidate, the draft stage of `lbg run` (at most `render.maxPerRun` per run; `lbg run --only <id>` for specific skills) does the following (`src/pipeline/draft/render.ts`):
 
 1. **Resolves the target.**
    - Global: the skills dir → `<name>/`.
@@ -213,21 +213,21 @@ For each candidate, the draft stage of `lbg run` (at most `render.maxPerRun` per
    - no private terms added to a public repo (see [Private terms](#private-terms))
 4. **Stores the changed files on the proposal** (path, hash of the original, new content), deletes the scratch dir, and marks the proposal `open`. The live files are untouched.
    A draft whose only problem is private terms gets one retry in the same scratch copy, with the terms named, like the scope retry below.
-5. **Keeps a live skill's scope.** For an `update` of a live skill, the new description may only use words the skill already covers (its old description, `SKILL.md` and `references/`), allowing at most 2 new words for rewording (`src/pipeline/scope.ts`). If it takes on a new subject, the drafter gets one retry in the same scratch copy with the problem explained; if it still widens the scope, the draft fails with the new words listed. `fix-description` proposals are exempt. In one-shot or chat `revise` it's only a warning (you're steering); a hand `edit` isn't checked. If the drafter finds that none of the new evidence is on-topic, it changes nothing, every item is re-filed, and the proposal closes as "nothing on-topic to add" instead of failing.
-6. **Re-files off-topic evidence.** The drafter stays on the skill's topic and lists items that are only adjacent (they mention a related tool or word but are about something else) in `report_draft`'s `excluded`, with a reason. Each one is taken off the skill, remembered on the nugget (`excluded_from`), and re-inserted; insert never routes it back to a skill it was left out of. It lands in a better skill or starts a latent one, and no longer counts toward the skill it left. One-shot `revise` can exclude items the same way. `proposal show` lists them and where they went (`src/pipeline/exclude.ts`).
+5. **Keeps a live skill's scope.** For an `update` of a live skill, the new description may only use words the skill already covers (its old description, `SKILL.md` and `references/`), allowing at most 2 new words for rewording (`src/pipeline/draft/scope.ts`). If it takes on a new subject, the drafter gets one retry in the same scratch copy with the problem explained; if it still widens the scope, the draft fails with the new words listed. `fix-description` proposals are exempt. In one-shot or chat `revise` it's only a warning (you're steering); a hand `edit` isn't checked. If the drafter finds that none of the new evidence is on-topic, it changes nothing, every item is re-filed, and the proposal closes as "nothing on-topic to add" instead of failing.
+6. **Re-files off-topic evidence.** The drafter stays on the skill's topic and lists items that are only adjacent (they mention a related tool or word but are about something else) in `report_draft`'s `excluded`, with a reason. Each one is taken off the skill, remembered on the nugget (`excluded_from`), and re-inserted; insert never routes it back to a skill it was left out of. It lands in a better skill or starts a latent one, and no longer counts toward the skill it left. One-shot `revise` can exclude items the same way. `proposal show` lists them and where they went (`src/pipeline/draft/exclude.ts`).
 
 A failed draft becomes a `failed` proposal and the skill stays a candidate. `lbg run` waits `render.retryAfterHours` before trying it again; `lbg run --only <id>` retries right away.
 
-## 7. Review (`src/pipeline/accept.ts`, `reject.ts`, `proposal-view.ts`, `commit.ts`, `revise.ts`, `interactive.ts`)
+## 7. Review (`src/pipeline/review/accept.ts`, `reject.ts`, `proposal-view.ts`, `commit.ts`, `revise.ts`, `interactive.ts`)
 
 - **Who is working on a proposal:** each proposal records the pid of the lbg process drafting it, or running a `revise` / `edit` session on it (a chat can last hours; the proposal stays `open`). While that process is alive, other lbg commands refuse to accept, reject, revise or edit it. When it has died (crash, Ctrl-C, timer timeout), the next `lbg draft`, `lbg run` or `lbg proposals` recovers it: a `drafting` proposal becomes `failed` and its skill a candidate again; an `open` one is just released, its stored draft intact. lbg's state is per host, so pids are too.
 - **Stale drafts:** each drafted file stores the original it was drafted from (`baseContent`). When a target file changes on disk after the draft, `show` / `diff` diff the draft against that original and list the on-disk changes separately. `revise` / `edit` start from the current file with the draft's change merged on top (`applyPatch`); if that conflicts, the scratch has the current file and the reviser is given the draft's patch to re-apply. Drafts stored before originals were kept fall back to the current file plus the old draft as reference.
-- **Dropping evidence:** `lbg proposal drop <id> <nugget>...` takes off-topic evidence off an open proposal even though its skill is `proposed` (my deliberate call, unlike automatic curation). It's recorded on the proposal and the nugget (`excluded_from`), re-filed by insert (or put in `--to <node>` and locked), and never routed back. The draft's files may still hold its content: `proposals`, `show` and `accept` warn ("dropped since draft"), and every revise, chat or one-shot, is told which items were dropped since the draft; `--revise` redrafts right away (`src/pipeline/drop.ts`).
+- **Dropping evidence:** `lbg proposal drop <id> <nugget>...` takes off-topic evidence off an open proposal even though its skill is `proposed` (my deliberate call, unlike automatic curation). It's recorded on the proposal and the nugget (`excluded_from`), re-filed by insert (or put in `--to <node>` and locked), and never routed back. The draft's files may still hold its content: `proposals`, `show` and `accept` warn ("dropped since draft"), and every revise, chat or one-shot, is told which items were dropped since the draft; `--revise` redrafts right away (`src/pipeline/review/drop.ts`).
 - **Evidence while a proposal is open:** insert keeps routing nuggets into the proposed skill; the draft isn't redrafted automatically. Each proposal records `drafted_at`, when its evidence was taken (the draft, or the last AI revise; a hand `edit` doesn't change it). Nuggets attached after it are **new since the draft**: `lbg proposals` shows the count, `show` lists them, and revise marks them `(NEW SINCE THE DRAFT)` for pi and then adds them to the proposal's evidence.
 - **show / diff:** the stored files against what's on disk now, plus the evidence. A draft whose targets changed since drafting is **stale**.
 - **accept:** refuses a stale draft unless `--force`, and a draft that would add private terms to a public repo whatever the flags. Otherwise it writes the files into the target, marks the proposal accepted, and syncs, so the skill is live immediately. The live skill is dated to `drafted_at`, not to the accept: evidence the files contain counts as absorbed, and evidence that arrived while the proposal waited still counts as new (and can earn an `update`). A repo draft may also have changed files that other live nodes mirror (a pointer in `AGENTS.md`, a line in another document). Those nodes keep their render time, so evidence waiting on them isn't counted as absorbed by a draft that never saw it. It prints the paths and a suggested commit message; lbg never runs git.
 - **reject:** no model call. The skill becomes `rejected` and records its session count (it returns only with evidence from new sessions), the reason is stored as review feedback, and a **rejection memory** is written (`src/state/rejections.ts`): a snapshot of what was rejected (skill name, title, description, proposal kind, up to 12 evidence titles), so classifying it doesn't depend on the node surviving. It is `pending`; with `--kind` it is `active` and locked right away, the reason being the rule (`--to <skill>` sets a `wrong-place` target, same scope only). With no reason it is `later`, unlocked.
-- **classify (first part of lbg run's extract stage):** each pending, unlocked memory gets one call (extract model, `src/pipeline/classify.ts`) with the reason, the topic snapshot and the other skills of the scope; the answer is a kind, a one-line rule (redacted, ≤ 240 chars) and, for `wrong-place`, a target from that list (anything else is dropped). A failed call leaves the memory pending with the error; two failures in a row leave the rest for the next run. `lbg rejections edit` sets kind / rule / target and locks the memory; `forget` marks it `removed`. Memories follow their nodes when a node is replaced (`tree.removeNode`).
+- **classify (first part of lbg run's extract stage):** each pending, unlocked memory gets one call (extract model, `src/pipeline/extract/classify.ts`) with the reason, the topic snapshot and the other skills of the scope; the answer is a kind, a one-line rule (redacted, ≤ 240 chars) and, for `wrong-place`, a target from that list (anything else is dropped). A failed call leaves the memory pending with the error; two failures in a row leave the rest for the next run. `lbg rejections edit` sets kind / rule / target and locks the memory; `forget` marks it `removed`. Memories follow their nodes when a node is replaced (`tree.removeNode`).
 - **Rejection memories in effect** (active, not expired; the newest per skill decides) act at every stage:
 
   | Stage           | outdated                                                                                                                             | not-useful                                   | wrong-place                                                                        | later                                                |
@@ -251,11 +251,11 @@ A failed draft becomes a `failed` proposal and the skill stays a candidate. `lbg
 
   The guard extension (`src/agents/guard-extension.ts`) registers the same guarded tools from `LBG_GUARD`. `--no-approve` skips pi's trust prompt for the scratch dir, and the temp session dir keeps the chat out of `~/.pi/agent/sessions`. When the user exits, the result is verified and stored. If verification fails, the user can go back in or keep the previous draft.
 - **edit:** opens the drafted files in `$VISUAL` / `$EDITOR`, with the same verification loop.
-- **Review feedback** (`src/state/feedback.ts`, `src/pipeline/review.ts`): what I say while reviewing is kept, redacted, per proposal: my turns in a revise chat (read from pi's session file in the temp session dir before it's deleted, without lbg's opening message), the text of a one-shot revise, the diff of a hand edit against the AI draft (only if I changed something), and the reject reason. It is not session evidence: it isn't extracted, never counts toward promotion, and extraction still skips lbg's own draft and chat dirs. Every later draft or revise of the same skill gets it in the prompt (`<review_feedback>`, newest first, size-capped) as decisions to keep, and drafts of other skills in the same scope get the reasons for rejections there (`<rejected_nearby>`). Feedback belongs to its proposal, so it moves with the proposal's history when a skill's node is replaced. `lbg proposal show` lists it.
+- **Review feedback** (`src/state/feedback.ts`, `src/pipeline/draft/review.ts`): what I say while reviewing is kept, redacted, per proposal: my turns in a revise chat (read from pi's session file in the temp session dir before it's deleted, without lbg's opening message), the text of a one-shot revise, the diff of a hand edit against the AI draft (only if I changed something), and the reject reason. It is not session evidence: it isn't extracted, never counts toward promotion, and extraction still skips lbg's own draft and chat dirs. Every later draft or revise of the same skill gets it in the prompt (`<review_feedback>`, newest first, size-capped) as decisions to keep, and drafts of other skills in the same scope get the reasons for rejections there (`<rejected_nearby>`). Feedback belongs to its proposal, so it moves with the proposal's history when a skill's node is replaced. `lbg proposal show` lists it.
 
 ### Private terms
 
-`src/pipeline/privacy.ts` is a gate for repositories that are published (`config.privacy.publicRepos`). Knowledge about such a repo often names things that must not be published, and a rule like "never mention X here" can't be written into that repo without breaking itself. The gate is keyword-based, with no model in it:
+`src/pipeline/draft/privacy.ts` is a gate for repositories that are published (`config.privacy.publicRepos`). Knowledge about such a repo often names things that must not be published, and a rule like "never mention X here" can't be written into that repo without breaking itself. The gate is keyword-based, with no model in it:
 
 - `privateHits` finds the `config.privacy.privateTerms` (plain text, or `/regex/flags`) that a set of drafted files would **add**: lines the file on disk doesn't already have, and the path of a new file. Existing text never blocks an unrelated change.
 - `verifyDraft` reports them as problems, so drafts, one-shot and chat revisions and hand edits are all refused. During drafting the model gets one retry.
@@ -331,11 +331,13 @@ src/
   sources/                   one adapter per agent
   state/db.ts tree.ts proposals.ts
   pipeline/
-    fingerprint.ts prefilter.ts redact.ts process.ts extract.ts
-    sync.ts insert.ts treescore.ts stats.ts curate.ts
-    render.ts                drafting one candidate: target.ts (where it goes), homes.ts (what
-                             differs per kind of place), scratch.ts, draft-prompt.ts, verify.ts
-    accept.ts reject.ts proposal-view.ts commit.ts revise.ts interactive.ts privacy.ts
+    extract/                 fingerprint.ts prefilter.ts redact.ts process.ts extract.ts classify.ts
+    tree/                    sync.ts insert.ts treescore.ts stats.ts curate.ts
+    draft/                   render.ts (drafting one candidate), target.ts (where it goes),
+                             homes.ts (what differs per kind of place), scratch.ts,
+                             draft-prompt.ts, verify.ts, scope.ts, privacy.ts, exclude.ts, review.ts
+    review/                  accept.ts reject.ts proposal-view.ts commit.ts revise.ts
+                             interactive.ts chatlog.ts drop.ts
     run.ts                   the lbg run pass
   skills/                    parse SKILL.md / AGENTS.md / docs, where agents keep files (layout.ts), repo resolution
   agents/types.ts run-pi.ts run-claude.ts claude-guard.ts claude-guard-hook.ts guard.ts guard-extension.ts

@@ -9,12 +9,16 @@ import {
 } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import { type Config, DEFAULT_CONFIG } from "../src/config.ts";
-import { acceptProposal } from "../src/pipeline/accept.ts";
-import { draftSkill } from "../src/pipeline/render.ts";
-import { closeDraft, discardDraft, openDraft } from "../src/pipeline/revise.ts";
-import { syncTree } from "../src/pipeline/sync.ts";
-import { resolveTarget } from "../src/pipeline/target.ts";
-import { scoreTree, skillStats } from "../src/pipeline/treescore.ts";
+import { draftSkill } from "../src/pipeline/draft/render.ts";
+import { resolveTarget } from "../src/pipeline/draft/target.ts";
+import { acceptProposal } from "../src/pipeline/review/accept.ts";
+import {
+  closeDraft,
+  discardDraft,
+  openDraft,
+} from "../src/pipeline/review/revise.ts";
+import { syncTree } from "../src/pipeline/tree/sync.ts";
+import { scoreTree, skillStats } from "../src/pipeline/tree/treescore.ts";
 import { type NuggetInsert, StateDb } from "../src/state/db.ts";
 import { Tree } from "../src/state/tree.ts";
 import { fauxRunner, toolResults } from "./helpers/faux.ts";

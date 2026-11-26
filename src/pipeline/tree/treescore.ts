@@ -1,13 +1,13 @@
-import type { ScoreConfig } from "../config.ts";
-import type { NuggetRow } from "../state/db.ts";
-import { type MemoryRow, Rejections } from "../state/rejections.ts";
+import type { ScoreConfig } from "../../config.ts";
+import type { NuggetRow } from "../../state/db.ts";
+import { type MemoryRow, Rejections } from "../../state/rejections.ts";
 import {
   type ProposalKind,
   subtreeNuggets,
   type Tree,
   type TreeNode,
-} from "../state/tree.ts";
-import { homeOf } from "./homes.ts";
+} from "../../state/tree.ts";
+import { homeOf } from "../draft/homes.ts";
 import {
   type EvidenceStats,
   evidenceStats,

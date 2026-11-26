@@ -1,5 +1,5 @@
-import type { Transcript, Turn } from "../sources/types.ts";
-import { shortHash } from "../util/hash.ts";
+import type { Transcript, Turn } from "../../sources/types.ts";
+import { shortHash } from "../../util/hash.ts";
 
 /** Human-authored user turns: the ones that carry what I taught the agent. */
 export function isHumanTurn(t: Turn): boolean {

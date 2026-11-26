@@ -10,7 +10,7 @@ import {
   buildSkillPrompt,
   detachLatent,
   insertNuggets,
-} from "../src/pipeline/insert.ts";
+} from "../src/pipeline/tree/insert.ts";
 import { type NuggetInsert, StateDb } from "../src/state/db.ts";
 import { subtreeNuggets, Tree } from "../src/state/tree.ts";
 

@@ -5,18 +5,25 @@ import { join } from "node:path";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import { type Config, DEFAULT_CONFIG, loadConfig } from "../src/config.ts";
-import { acceptProposal, privateHitsFor } from "../src/pipeline/accept.ts";
-import { commitMessageFor } from "../src/pipeline/commit.ts";
 import {
   isPublicRepo,
   privateHits,
   privateProblems,
   privateTermsIn,
-} from "../src/pipeline/privacy.ts";
-import { draftSkill } from "../src/pipeline/render.ts";
-import { closeDraft, discardDraft, openDraft } from "../src/pipeline/revise.ts";
-import { syncTree } from "../src/pipeline/sync.ts";
-import { scoreTree } from "../src/pipeline/treescore.ts";
+} from "../src/pipeline/draft/privacy.ts";
+import { draftSkill } from "../src/pipeline/draft/render.ts";
+import {
+  acceptProposal,
+  privateHitsFor,
+} from "../src/pipeline/review/accept.ts";
+import { commitMessageFor } from "../src/pipeline/review/commit.ts";
+import {
+  closeDraft,
+  discardDraft,
+  openDraft,
+} from "../src/pipeline/review/revise.ts";
+import { syncTree } from "../src/pipeline/tree/sync.ts";
+import { scoreTree } from "../src/pipeline/tree/treescore.ts";
 import { type NuggetInsert, StateDb } from "../src/state/db.ts";
 import { Proposals } from "../src/state/proposals.ts";
 import { Tree } from "../src/state/tree.ts";

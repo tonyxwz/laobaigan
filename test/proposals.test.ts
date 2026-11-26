@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 import { DEFAULT_CONFIG } from "../src/config.ts";
-import { scoreTree } from "../src/pipeline/treescore.ts";
+import { scoreTree } from "../src/pipeline/tree/treescore.ts";
 import { MIGRATIONS, StateDb } from "../src/state/db.ts";
 import { Proposals } from "../src/state/proposals.ts";
 import { nugget, proposalSetup as setup } from "./helpers/proposals.ts";

@@ -2,13 +2,16 @@ import { describe, expect, it } from "vitest";
 import {
   fingerprintTranscript,
   fingerprintTurn,
-} from "../src/pipeline/fingerprint.ts";
-import { buildExcerpt, isTrivialPrompt } from "../src/pipeline/prefilter.ts";
+} from "../src/pipeline/extract/fingerprint.ts";
+import {
+  buildExcerpt,
+  isTrivialPrompt,
+} from "../src/pipeline/extract/prefilter.ts";
 import {
   containsSecrets,
   redact,
   setExtraPatterns,
-} from "../src/pipeline/redact.ts";
+} from "../src/pipeline/extract/redact.ts";
 import type { Transcript, Turn } from "../src/sources/types.ts";
 
 // Fake credentials, assembled at runtime so secret scanners don't flag the source.

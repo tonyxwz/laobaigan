@@ -1,7 +1,10 @@
 import { join } from "node:path";
 import { modelRunner } from "../agents/run-claude.ts";
 import { loadConfig } from "../config.ts";
-import { type ProcessOptions, processSessions } from "../pipeline/process.ts";
+import {
+  type ProcessOptions,
+  processSessions,
+} from "../pipeline/extract/process.ts";
 import { StateDb } from "../state/db.ts";
 import { parseDuration, parseSince } from "../util/time.ts";
 import type { Context } from "./context.ts";

@@ -1,8 +1,8 @@
 import { dirname, relative } from "node:path";
-import { AGENT_SKILL_DIRS, repoSkillDirs } from "../skills/layout.ts";
-import { type FileNodeKind, fileNodeKind } from "../skills/parse.ts";
-import type { ProposalRow } from "../state/proposals.ts";
-import type { ProposalKind, TreeNode } from "../state/tree.ts";
+import { AGENT_SKILL_DIRS, repoSkillDirs } from "../../skills/layout.ts";
+import { type FileNodeKind, fileNodeKind } from "../../skills/parse.ts";
+import type { ProposalRow } from "../../state/proposals.ts";
+import type { ProposalKind, TreeNode } from "../../state/tree.ts";
 import type { RenderTarget } from "./target.ts";
 
 /**

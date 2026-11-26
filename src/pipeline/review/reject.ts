@@ -1,11 +1,11 @@
-import { Feedback } from "../state/feedback.ts";
-import { Proposals } from "../state/proposals.ts";
+import { Feedback } from "../../state/feedback.ts";
+import { Proposals } from "../../state/proposals.ts";
 import {
   type RejectedTopic,
   type RejectionKind,
   Rejections,
-} from "../state/rejections.ts";
-import type { Tree } from "../state/tree.ts";
+} from "../../state/rejections.ts";
+import type { Tree } from "../../state/tree.ts";
 
 export interface RejectResult {
   memoryId: number;

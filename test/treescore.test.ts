@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_CONFIG } from "../src/config.ts";
-import { scoreTree, skillStats } from "../src/pipeline/treescore.ts";
+import { scoreTree, skillStats } from "../src/pipeline/tree/treescore.ts";
 import { type NuggetInsert, StateDb } from "../src/state/db.ts";
 import { Tree } from "../src/state/tree.ts";
 

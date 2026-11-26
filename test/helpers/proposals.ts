@@ -1,5 +1,5 @@
 import { DEFAULT_CONFIG } from "../../src/config.ts";
-import { scoreTree } from "../../src/pipeline/treescore.ts";
+import { scoreTree } from "../../src/pipeline/tree/treescore.ts";
 import { type NuggetInsert, StateDb } from "../../src/state/db.ts";
 import { type NewProposal, Proposals } from "../../src/state/proposals.ts";
 import { Tree } from "../../src/state/tree.ts";

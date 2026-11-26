@@ -1,7 +1,7 @@
 import { realpathSync } from "node:fs";
 import { sep } from "node:path";
-import type { Config } from "../config.ts";
-import type { DraftFile } from "../state/proposals.ts";
+import type { Config } from "../../config.ts";
+import type { DraftFile } from "../../state/proposals.ts";
 
 /**
  * The private-terms gate. Some repositories are published (config.privacy.publicRepos), and

@@ -1,6 +1,6 @@
-import { parseFrontmatter } from "../skills/index.ts";
-import type { DraftFile } from "../state/proposals.ts";
-import type { ProposalKind } from "../state/tree.ts";
+import { parseFrontmatter } from "../../skills/index.ts";
+import type { DraftFile } from "../../state/proposals.ts";
+import type { ProposalKind } from "../../state/tree.ts";
 import type { RenderTarget } from "./target.ts";
 
 /**

@@ -1,19 +1,23 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
-import type { Config } from "../config.ts";
-import type { NuggetRow } from "../state/db.ts";
+import type { Config } from "../../config.ts";
+import type { NuggetRow } from "../../state/db.ts";
 import {
   type DraftFile,
   hashContent,
   type ProposalRow,
   Proposals,
-} from "../state/proposals.ts";
-import { subtreeNuggets, type Tree } from "../state/tree.ts";
+} from "../../state/proposals.ts";
+import { subtreeNuggets, type Tree } from "../../state/tree.ts";
+import {
+  type PrivateHit,
+  privateHits,
+  privateProblems,
+} from "../draft/privacy.ts";
+import { isAllowed } from "../draft/target.ts";
+import { syncTree } from "../tree/sync.ts";
 import { commitMessageFor } from "./commit.ts";
-import { type PrivateHit, privateHits, privateProblems } from "./privacy.ts";
 import { currentFile } from "./proposal-view.ts";
-import { syncTree } from "./sync.ts";
-import { isAllowed } from "./target.ts";
 
 /**
  * Accept a proposal: write the drafted files into the target (the global skills dir, or

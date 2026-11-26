@@ -5,7 +5,7 @@ import {
   type DraftFile,
   hashContent,
   type ProposalRow,
-} from "../state/proposals.ts";
+} from "../../state/proposals.ts";
 
 /** How a proposal looks: its diff against the files on disk, and the diff of a hand edit. */
 

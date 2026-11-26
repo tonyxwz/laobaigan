@@ -1,7 +1,10 @@
 import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
-import { type ExtraPattern, setExtraPatterns } from "./pipeline/redact.ts";
+import {
+  type ExtraPattern,
+  setExtraPatterns,
+} from "./pipeline/extract/redact.ts";
 import { isValidSkillName } from "./skills/name.ts";
 import { expandHome } from "./util/path.ts";
 

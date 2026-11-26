@@ -7,9 +7,9 @@ import {
   renameNode,
   splitSkill,
   unlockNode,
-} from "../src/pipeline/curate.ts";
-import { detachLatent } from "../src/pipeline/insert.ts";
-import { scoreTree } from "../src/pipeline/treescore.ts";
+} from "../src/pipeline/tree/curate.ts";
+import { detachLatent } from "../src/pipeline/tree/insert.ts";
+import { scoreTree } from "../src/pipeline/tree/treescore.ts";
 import { type NuggetInsert, StateDb } from "../src/state/db.ts";
 import { subtreeNuggets, Tree } from "../src/state/tree.ts";
 

@@ -6,8 +6,11 @@ import type {
   AgentRunner,
 } from "../src/agents/types.ts";
 import { DEFAULT_CONFIG } from "../src/config.ts";
-import { buildSkillPrompt, insertNuggets } from "../src/pipeline/insert.ts";
-import { rejectProposal } from "../src/pipeline/reject.ts";
+import { rejectProposal } from "../src/pipeline/review/reject.ts";
+import {
+  buildSkillPrompt,
+  insertNuggets,
+} from "../src/pipeline/tree/insert.ts";
 import { Rejections } from "../src/state/rejections.ts";
 import { proposalSetup } from "./helpers/proposals.ts";
 

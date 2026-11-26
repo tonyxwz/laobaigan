@@ -29,7 +29,7 @@ src/cli.ts             entry point: option parsing, dispatch to a command
 src/commands/          one module per command; context.ts (options), format.ts (what they print)
 src/config.ts          defaults and ~/.config/laobaigan/config.json
 src/sources/           one adapter per agent (session listing and loading)
-src/pipeline/          the stages of lbg run, and proposal review (accept, revise, edit)
+src/pipeline/          run.ts (the lbg run pass) and its parts: extract/, tree/, draft/, review/
 src/state/             SQLite state: db.ts (schema, migrations), tree.ts, proposals.ts, rejections.ts
 src/skills/            parsing SKILL.md, AGENTS.md and repo docs; repo resolution
 src/agents/                model runners (pi SDK, Claude Code) and the file guard for drafting
