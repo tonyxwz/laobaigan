@@ -2,6 +2,7 @@ import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { type ExtraPattern, setExtraPatterns } from "./pipeline/redact.ts";
+import { isValidSkillName } from "./skills/name.ts";
 
 /** Truncation limits applied when normalizing transcripts. */
 export interface NormalizeLimits {
@@ -284,17 +285,10 @@ export const DEFAULT_CONFIG: Config = {
   clustering: { guidance: "" },
 };
 
-const SKILL_NAME = /^[a-z0-9]+(-[a-z0-9]+)*$/;
-
 function validateTopics(topics: DeclaredTopic[]): DeclaredTopic[] {
   const seen = new Set<string>();
   return topics.map((t, i) => {
-    if (
-      !t ||
-      typeof t.name !== "string" ||
-      !SKILL_NAME.test(t.name) ||
-      t.name.length > 64
-    ) {
+    if (!t || !isValidSkillName(t.name)) {
       throw new Error(
         `config.topics[${i}].name must be lowercase letters, digits and single hyphens (got ${JSON.stringify(t?.name)})`,
       );

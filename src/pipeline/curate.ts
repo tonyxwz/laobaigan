@@ -1,3 +1,4 @@
+import { isValidSkillName } from "../skills/name.ts";
 import {
   type NodeRow,
   subtreeNuggets,
@@ -13,8 +14,6 @@ import {
  * through proposals I merge, so these commands refuse to restructure them. They
  * can still *receive* latent sections and nuggets.
  */
-
-const SKILL_NAME = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 
 function node(tree: Tree, id: number): NodeRow {
   const n = tree.getNode(id);
@@ -160,7 +159,7 @@ export function renameNode(
   assertNotFile(n, "rename");
   if (patch.name !== undefined) {
     if (n.depth !== 1) throw new Error("Only skills have names");
-    if (!SKILL_NAME.test(patch.name) || patch.name.length > 64) {
+    if (!isValidSkillName(patch.name)) {
       throw new Error(
         `Skill name must be lowercase letters, digits and single hyphens (≤ 64): ${patch.name}`,
       );

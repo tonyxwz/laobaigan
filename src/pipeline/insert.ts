@@ -2,6 +2,7 @@ import { type Static, type TSchema, Type } from "typebox";
 import { agentModel, type Config } from "../config.ts";
 import type { PiRequest, PiRunner, Usage } from "../pi/run-pi.ts";
 import { addUsage, ZERO_USAGE } from "../pi/run-pi.ts";
+import { isValidSkillName } from "../skills/name.ts";
 import type { NuggetRow } from "../state/db.ts";
 import { type MemoryRow, Rejections } from "../state/rejections.ts";
 import {
@@ -243,8 +244,6 @@ export function buildSectionPrompt(
 
 // ---- validation -----------------------------------------------------------------
 
-const SKILL_NAME = /^[a-z0-9]+(-[a-z0-9]+)*$/;
-
 export interface SkillPlan {
   newSkills: {
     key: string;
@@ -272,10 +271,7 @@ export function validateSkillRoute(
       repairs.push(`duplicate new skill key ${s.key}`);
       continue;
     }
-    let name =
-      s.name && SKILL_NAME.test(s.name) && s.name.length <= 64
-        ? s.name
-        : skillName(s.title);
+    let name = isValidSkillName(s.name) ? s.name : skillName(s.title);
     if (taken.has(name)) name = `${name}-${byKey.size + 2}`;
     taken.add(name);
     byKey.set(s.key, {

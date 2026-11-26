@@ -16,6 +16,7 @@ import { type FileGuard, GUARDED_TOOLS } from "../pi/guard.ts";
 import type { PiRunner, Usage } from "../pi/run-pi.ts";
 import { addUsage } from "../pi/run-pi.ts";
 import { parseFrontmatter } from "../skills/index.ts";
+import { isValidSkillName } from "../skills/name.ts";
 import {
   AGENT_FILES,
   AGENT_RULE_DIRS,
@@ -60,8 +61,6 @@ import { skillStats } from "./treescore.ts";
  *   repo, live .agents skill      <repo>       ⟶  .agents/skills/<name>/
  *   repo, latent                  <repo>       ⟶  .agents/skills/<name>/ or a new AGENTS.md section
  */
-
-export const SKILL_NAME = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 
 export interface RenderTarget {
   /** Directory the paths are relative to: the global skills dir, or the repo root. */
@@ -124,10 +123,9 @@ export async function resolveTarget(
   skill: TreeNode,
   cfg: Config,
 ): Promise<RenderTarget> {
-  const name =
-    skill.name && SKILL_NAME.test(skill.name) && skill.name.length <= 64
-      ? skill.name
-      : skillName(skill.title);
+  const name = isValidSkillName(skill.name)
+    ? skill.name
+    : skillName(skill.title);
   if (skill.scope === "global")
     return {
       root: cfg.skillsDir,
