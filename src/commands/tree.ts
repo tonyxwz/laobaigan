@@ -93,7 +93,10 @@ export async function treeCommand(ctx: Context): Promise<number> {
     }
     if (rest[0] === "score") {
       const scored = scoreTree(tree, cfg.score);
-      if (values.json) return (json(scored), 0);
+      if (values.json) {
+        json(scored);
+        return 0;
+      }
       renderScore(scored, out);
       out(
         `${scored.scored} skill(s) scored${tmp ? "  (dry run: nothing persisted)" : ""}\n`,
@@ -106,7 +109,10 @@ export async function treeCommand(ctx: Context): Promise<number> {
         declared: cfg.topics,
         repoDocs: cfg.repoDocs,
       });
-      if (values.json) return (json(r), 0);
+      if (values.json) {
+        json(r);
+        return 0;
+      }
       const line = (label: string, x: SyncReport) => {
         const parts = [
           x.created.length &&
@@ -128,7 +134,10 @@ export async function treeCommand(ctx: Context): Promise<number> {
     if (rest[0] === "show") {
       const n = tree.subtree(Number(rest[1]));
       if (!n) throw new Error(`No node ${rest[1]}`);
-      if (values.json) return (json(n), 0);
+      if (values.json) {
+        json(n);
+        return 0;
+      }
       out(
         renderNodeDetail(
           n,
@@ -139,7 +148,10 @@ export async function treeCommand(ctx: Context): Promise<number> {
     }
     if (rest[0]) throw new Error(`Unknown tree subcommand: ${rest[0]} (show)`);
     const roots = tree.trees();
-    if (values.json) return (json(roots), 0);
+    if (values.json) {
+      json(roots);
+      return 0;
+    }
     const statuses = values.status?.split(",");
     for (const r of roots) {
       if (statuses && !r.children.some((c) => statuses.includes(c.status)))

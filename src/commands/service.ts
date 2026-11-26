@@ -42,7 +42,10 @@ export async function serviceCommand(ctx: Context): Promise<number> {
   }
   if (sub === "status") {
     const exec = installedExecStart();
-    if (!exec) return (out("not installed (lbg service install)\n"), 0);
+    if (!exec) {
+      out("not installed (lbg service install)\n");
+      return 0;
+    }
     out(`runs: ${exec}\n`);
     try {
       out(

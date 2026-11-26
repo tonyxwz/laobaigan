@@ -76,7 +76,10 @@ export async function nuggetsCommand(ctx: Context): Promise<number> {
         `Unknown nuggets subcommand: ${rest[0]} (move | forget | unforget)`,
       );
     const rows = db.nuggets();
-    if (values.json) return (json(rows), 0);
+    if (values.json) {
+      json(rows);
+      return 0;
+    }
     for (const r of rows) {
       const where =
         r.nodeId !== undefined

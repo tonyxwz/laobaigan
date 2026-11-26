@@ -367,7 +367,7 @@ describe("lbg rejections edit | forget", () => {
     const { memoryId } = rejectProposal(
       s.tree,
       s.proposalId,
-      "multi\nline token=abcdef123456 " + "x".repeat(400),
+      `multi\nline token=abcdef123456 ${"x".repeat(400)}`,
       { kind: "later" },
     );
     const rule = s.mem.mustGet(memoryId).rule!;

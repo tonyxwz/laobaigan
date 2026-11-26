@@ -10,7 +10,7 @@ import { PiAdapter } from "../src/sources/pi.ts";
 import type { SourceAdapter, Transcript } from "../src/sources/types.ts";
 
 const jsonl = (rows: unknown[]) =>
-  rows.map((r) => JSON.stringify(r)).join("\n") + "\n";
+  `${rows.map((r) => JSON.stringify(r)).join("\n")}\n`;
 
 async function loadOnly(adapter: SourceAdapter): Promise<Transcript> {
   const refs = [];

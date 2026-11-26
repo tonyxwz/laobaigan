@@ -22,7 +22,10 @@ export async function sessionsCommand(ctx: Context): Promise<number> {
     }
   }
   rows.sort((a, b) => a.updatedAt.localeCompare(b.updatedAt));
-  if (values.json) return (json(rows), 0);
+  if (values.json) {
+    json(rows);
+    return 0;
+  }
   for (const r of rows) {
     out(
       `${r.updatedAt.slice(0, 16).replace("T", " ")}  ${r.agent.padEnd(8)} ${r.sessionId.slice(0, 12).padEnd(12)}  ` +

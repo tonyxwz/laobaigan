@@ -11,7 +11,10 @@ export async function initCommand(ctx: Context): Promise<number> {
     ? { skillsDir: loadConfig().skillsDir }
     : {};
   const r = await init({ adapters, piDefaults, ...configured });
-  if (values.json) return (json(r), 0);
+  if (values.json) {
+    json(r);
+    return 0;
+  }
   out(renderInit(r));
   return 0;
 }

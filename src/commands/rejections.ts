@@ -36,7 +36,10 @@ export async function rejectionsCommand(ctx: Context): Promise<number> {
       for (const st of statuses)
         if (!MEMORY_STATUSES.includes(st)) throw new Error(`Bad status ${st}`);
       const list = mem.list(statuses);
-      if (values.json) return (json(list), 0);
+      if (values.json) {
+        json(list);
+        return 0;
+      }
       for (const m of list) out(renderMemory(m, tree));
       out(
         `\n${list.length} rejection memor${list.length === 1 ? "y" : "ies"}. Correct one: lbg rejections edit <id> --kind … --rule "…"\n`,

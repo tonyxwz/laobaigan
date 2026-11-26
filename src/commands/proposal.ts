@@ -52,7 +52,7 @@ interface ProposalContext extends Context {
 
 /** `lbg proposal list`. */
 async function listSub(pc: ProposalContext): Promise<number> {
-  const { tree, props, id, values, out, json } = pc;
+  const { tree, props, values, out, json } = pc;
   const statuses = (values.status?.split(",") ?? [
     "open",
     "drafting",
@@ -60,7 +60,10 @@ async function listSub(pc: ProposalContext): Promise<number> {
   for (const st of statuses)
     if (!PROPOSAL_STATUSES.includes(st)) throw new Error(`Bad status ${st}`);
   const list = props.list(statuses);
-  if (values.json) return (json(list), 0);
+  if (values.json) {
+    json(list);
+    return 0;
+  }
   for (const p of list) out(renderProposalLine(p, tree));
   out(`\n${list.length} proposal(s). Details: lbg proposal show <id>\n`);
   return 0;
@@ -71,14 +74,18 @@ async function diffSub(pc: ProposalContext): Promise<number> {
   const { props, id, values } = pc;
   // Just the git-style diff: pipe it into delta, diff-so-fancy, etc.
   const diff = await proposalDiff(props.mustGet(id));
-  return (await page(diff, values["no-pager"]), 0);
+  await page(diff, values["no-pager"]);
+  return 0;
 }
 
 /** `lbg proposal show`. */
 async function showSub(pc: ProposalContext): Promise<number> {
   const { cfg, db, tree, props, id, values, json } = pc;
   const p = props.mustGet(id);
-  if (values.json) return (json(p), 0);
+  if (values.json) {
+    json(p);
+    return 0;
+  }
   const buf: string[] = [];
   const out = (s: string) => void buf.push(s);
   out(renderProposalLine(p, tree));
@@ -196,7 +203,8 @@ async function showSub(pc: ProposalContext): Promise<number> {
         `\n── changed on disk since the draft (not part of the proposal) ──\n${disk.map((f) => f.onDisk).join("")}`,
       );
   }
-  return (await page(buf.join(""), values["no-pager"]), 0);
+  await page(buf.join(""), values["no-pager"]);
+  return 0;
 }
 
 /** `lbg proposal accept`. */
@@ -410,14 +418,14 @@ async function rejectSub(pc: ProposalContext): Promise<number> {
   out(
     r.status === "pending"
       ? `Rejection memory #${r.memoryId} is pending: the next lbg run classifies it. Check with: lbg rejections\n`
-      : `Rejection memory #${r.memoryId}: ${r.kind}${kind ? "" : " (no reason given; edit with lbg rejections edit " + r.memoryId + ")"}.\n`,
+      : `Rejection memory #${r.memoryId}: ${r.kind}${kind ? "" : ` (no reason given; edit with lbg rejections edit ${r.memoryId})`}.\n`,
   );
   return 0;
 }
 
 /** `lbg proposal`. */
 export async function proposalCommand(ctx: Context): Promise<number> {
-  const { cmd, rest, values, out, json } = ctx;
+  const { cmd, rest } = ctx;
   const cfg = loadConfig();
   const db = new StateDb(join(cfg.stateDir, "state.db"));
   try {

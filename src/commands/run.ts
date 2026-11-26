@@ -65,7 +65,10 @@ export async function runCommand(ctx: Context): Promise<number> {
         ...(values.fresh ? { fresh: true } : {}),
       },
     );
-    if (values.json) return (json(r), exitCode(r));
+    if (values.json) {
+      json(r);
+      return exitCode(r);
+    }
     if (r.waiting && !dry)
       out(`${r.waiting} proposal(s) waiting for review — lbg proposals\n`);
     // One line per stage, then one per new proposal: journald-friendly.

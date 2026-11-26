@@ -86,7 +86,10 @@ export async function page(text: string, noPager: boolean): Promise<void> {
     const child = spawn("sh", ["-c", cmd], {
       stdio: ["pipe", "inherit", "inherit"],
     });
-    child.on("error", () => (write(), resolve()));
+    child.on("error", () => {
+      write();
+      resolve();
+    });
     child.on("close", () => resolve());
     child.stdin.on("error", () => {}); // pager quit early
     child.stdin.end(text);

@@ -244,7 +244,7 @@ describe("insertNuggets", () => {
       }),
     ]);
     const res = await insertNuggets(tree, runner, DEFAULT_CONFIG);
-    expect(res.repairs).toContain("nugget " + a + ": invalid target 999");
+    expect(res.repairs).toContain(`nugget ${a}: invalid target 999`);
     expect(res.skillsCreated).toEqual(["alpha"]);
     expect(db.getNugget(b)).toMatchObject({ nodeId: latentSection });
     expect(db.getNugget(b)!.coveredNodeId).toBeUndefined();

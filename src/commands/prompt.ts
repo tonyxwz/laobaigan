@@ -16,7 +16,10 @@ export async function promptCommand(ctx: Context): Promise<number> {
   try {
     const n = writePromptStatus(db, cfg.stateDir);
     const path = promptFile(cfg.stateDir);
-    if (values.json) return (json({ waiting: n, path }), 0);
+    if (values.json) {
+      json({ waiting: n, path });
+      return 0;
+    }
     const { starship, zsh } = promptSnippets(path);
     out(
       `${n ? `${n} proposal(s) waiting for review` : "nothing waiting"} (${path})\n\n`,

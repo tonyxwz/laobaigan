@@ -34,7 +34,10 @@ export async function scanCommand(ctx: Context): Promise<number> {
       cfg,
       opts,
     );
-    if (values.json) return (json(res), 0);
+    if (values.json) {
+      json(res);
+      return 0;
+    }
     renderOutcomes(res.outcomes, out);
     if (values.excerpt) {
       for (const o of res.outcomes) {

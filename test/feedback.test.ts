@@ -111,7 +111,7 @@ function piSession(
   });
   writeFileSync(
     join(dir, "2026-11-05T10-00-00_s1.jsonl"),
-    lines.map((l) => JSON.stringify(l)).join("\n") + "\n",
+    `${lines.map((l) => JSON.stringify(l)).join("\n")}\n`,
   );
 }
 
@@ -230,12 +230,12 @@ describe("capture", () => {
   it("a chat where I said nothing stores nothing", async () => {
     const { draft, fb, tree, cfg } = await setup();
     const { proposalId } = await draft();
-    const launcher: Launcher = (_c, args) => (
+    const launcher: Launcher = (_c, args) => {
       piSession(args[args.indexOf("--session-dir") + 1]!, [
         { role: "user", text: args.at(-1)! },
-      ]),
-      0
-    );
+      ]);
+      return 0;
+    };
     await chatRevise(tree, cfg, proposalId, {
       launcher,
       ask: async () => false,
@@ -253,9 +253,10 @@ describe("capture", () => {
       editor: "true",
     });
     expect(fb.forProposal(proposalId)).toEqual([]);
-    const edit: Launcher = (_c, _a, opts) => (
-      writeFileSync(join(opts.cwd, PATH), md("Install with mise.")), 0
-    );
+    const edit: Launcher = (_c, _a, opts) => {
+      writeFileSync(join(opts.cwd, PATH), md("Install with mise."));
+      return 0;
+    };
     await editProposal(tree, cfg, proposalId, {
       launcher: edit,
       ask: async () => false,

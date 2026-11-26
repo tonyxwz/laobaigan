@@ -309,7 +309,11 @@ systemctl --user disable --now laobaigan.timer   # pause
   // A term is plain text (case-insensitive, matches anywhere) or a "/regex/flags".
   "privacy": {
     "publicRepos": ["~/src/my-open-source-tool"],
-    "privateTerms": ["corp-internal-tool", "/\\bwiki\\.corp\\b/", "me@corp.example"]
+    "privateTerms": [
+      "corp-internal-tool",
+      "/\\bwiki\\.corp\\b/",
+      "me@corp.example"
+    ]
   },
 
   // Optional steering: skills you want to exist, and a policy for how knowledge is grouped.

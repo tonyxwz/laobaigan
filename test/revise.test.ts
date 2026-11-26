@@ -144,7 +144,7 @@ describe("reviseProposal (one shot)", () => {
   });
 
   it("rebases a stale draft onto the live files", async () => {
-    const { skillsDir, cfg, tree, id, props } = await openProposal();
+    const { skillsDir, cfg, tree, id } = await openProposal();
     await mkdir(join(skillsDir, "dotfiles-management"));
     await writeFile(join(skillsDir, PATH), "written by hand meanwhile");
     await expect(acceptProposal(tree, cfg, id)).rejects.toThrow(/stale/);
@@ -290,7 +290,7 @@ describe("interactive (chat revise and edit)", () => {
           ];
           writeFileSync(
             join(dir, `${sessionId}.jsonl`),
-            lines.map((l) => JSON.stringify(l)).join("\n") + "\n",
+            `${lines.map((l) => JSON.stringify(l)).join("\n")}\n`,
           );
           writeFileSyncish(join(cwd, PATH), md("broken", "Bad Name"));
         },

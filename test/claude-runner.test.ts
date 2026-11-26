@@ -10,7 +10,7 @@ import {
   modelRunner,
 } from "../src/pi/run-claude.ts";
 import { PiConfigRunner } from "../src/pi/run-pi.ts";
-import type { PiRequest, PiRunner } from "../src/pi/types.ts";
+import type { PiRequest } from "../src/pi/types.ts";
 
 const schema = Type.Object({
   items: Type.Array(Type.String()),
