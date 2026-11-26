@@ -1,6 +1,10 @@
 import type { Static, TSchema } from "typebox";
 import { describe, expect, it } from "vitest";
-import type { PiRequest, PiResult, PiRunner } from "../src/agents/types.ts";
+import type {
+  AgentRequest,
+  AgentResult,
+  AgentRunner,
+} from "../src/agents/types.ts";
 import { type Config, DEFAULT_CONFIG } from "../src/config.ts";
 import { processSessions } from "../src/pipeline/process.ts";
 import { rejectProposal } from "../src/pipeline/reject.ts";
@@ -45,12 +49,12 @@ function adapter(cwd: string, id = "s1"): SourceAdapter {
   };
 }
 
-class Capture implements PiRunner {
+class Capture implements AgentRunner {
   prompts: string[] = [];
   system: string[] = [];
   async run<S extends TSchema>(
-    req: PiRequest<S>,
-  ): Promise<PiResult<Static<S>>> {
+    req: AgentRequest<S>,
+  ): Promise<AgentResult<Static<S>>> {
     this.prompts.push(req.prompt);
     this.system.push(req.systemPrompt);
     return {

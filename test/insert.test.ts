@@ -1,6 +1,10 @@
 import type { Static, TSchema } from "typebox";
 import { describe, expect, it } from "vitest";
-import type { PiRequest, PiResult, PiRunner } from "../src/agents/types.ts";
+import type {
+  AgentRequest,
+  AgentResult,
+  AgentRunner,
+} from "../src/agents/types.ts";
 import { DEFAULT_CONFIG } from "../src/config.ts";
 import {
   buildSkillPrompt,
@@ -28,21 +32,21 @@ const nugget = (
   ...over,
 });
 
-type Answer = (req: PiRequest<TSchema>) => unknown;
-class Scripted implements PiRunner {
-  calls: PiRequest<TSchema>[] = [];
+type Answer = (req: AgentRequest<TSchema>) => unknown;
+class Scripted implements AgentRunner {
+  calls: AgentRequest<TSchema>[] = [];
   private answers: Answer[];
   constructor(answers: Answer[]) {
     this.answers = answers;
   }
   async run<S extends TSchema>(
-    req: PiRequest<S>,
-  ): Promise<PiResult<Static<S>>> {
-    this.calls.push(req as unknown as PiRequest<TSchema>);
+    req: AgentRequest<S>,
+  ): Promise<AgentResult<Static<S>>> {
+    this.calls.push(req as unknown as AgentRequest<TSchema>);
     const next = this.answers.shift();
     if (!next) throw new Error(`unexpected call: ${req.resultTool.name}`);
     return {
-      value: next(req as unknown as PiRequest<TSchema>) as Static<S>,
+      value: next(req as unknown as AgentRequest<TSchema>) as Static<S>,
       usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: 0.001 },
     };
   }

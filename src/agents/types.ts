@@ -14,7 +14,7 @@ export interface ResultTool<S extends TSchema> {
   parameters: S;
 }
 
-export interface PiRequest<S extends TSchema> {
+export interface AgentRequest<S extends TSchema> {
   /** "provider/id", or an id of pi's default provider. Default: pi's default model. */
   model?: string | undefined;
   /** Default: pi's default thinking level (else "medium"). */
@@ -42,14 +42,14 @@ export interface Usage {
   cost: number;
 }
 
-export interface PiResult<T> {
+export interface AgentResult<T> {
   value: T;
   usage: Usage;
 }
 
-/** Abstraction over pi so pipeline stages can be tested without a model. */
-export interface PiRunner {
-  run<S extends TSchema>(req: PiRequest<S>): Promise<PiResult<Static<S>>>;
+/** One model call through the configured agent. Pipeline stages take this, so tests can script it. */
+export interface AgentRunner {
+  run<S extends TSchema>(req: AgentRequest<S>): Promise<AgentResult<Static<S>>>;
 }
 
 export function addUsage(a: Usage, b: Usage): Usage {

@@ -1,4 +1,4 @@
-import type { PiRunner, Usage } from "../agents/types.ts";
+import type { AgentRunner, Usage } from "../agents/types.ts";
 import { addUsage, ZERO_USAGE } from "../agents/types.ts";
 import type { Config } from "../config.ts";
 import { Proposals } from "../state/proposals.ts";
@@ -22,7 +22,7 @@ export interface DropResult {
 
 export async function dropEvidence(
   tree: Tree,
-  runner: PiRunner,
+  runner: AgentRunner,
   cfg: Config,
   proposalId: number,
   nuggetIds: number[],

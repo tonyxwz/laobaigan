@@ -4,7 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Static, TSchema } from "typebox";
 import { describe, expect, it } from "vitest";
-import type { PiRequest, PiResult, PiRunner } from "../src/agents/types.ts";
+import type {
+  AgentRequest,
+  AgentResult,
+  AgentRunner,
+} from "../src/agents/types.ts";
 import { type Config, DEFAULT_CONFIG } from "../src/config.ts";
 import { exitCode, runPipeline } from "../src/pipeline/run.ts";
 import type {
@@ -53,12 +57,12 @@ const usage = { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: 0.01 };
  * Answers each stage's result tool: one tmux nugget per session, all routed into a new
  * "tmux-config" skill, drafted as a valid SKILL.md written into the guarded scratch dir.
  */
-class StageRunner implements PiRunner {
+class StageRunner implements AgentRunner {
   calls: string[] = [];
   failOn = new Set<string>();
   async run<S extends TSchema>(
-    req: PiRequest<S>,
-  ): Promise<PiResult<Static<S>>> {
+    req: AgentRequest<S>,
+  ): Promise<AgentResult<Static<S>>> {
     const tool = req.resultTool.name;
     this.calls.push(tool);
     if (this.failOn.has(tool)) throw new Error(`${tool}: model unavailable`);

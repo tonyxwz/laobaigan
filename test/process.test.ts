@@ -3,7 +3,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Static, TSchema } from "typebox";
 import { describe, expect, it } from "vitest";
-import type { PiRequest, PiResult, PiRunner } from "../src/agents/types.ts";
+import type {
+  AgentRequest,
+  AgentResult,
+  AgentRunner,
+} from "../src/agents/types.ts";
 import { type Config, DEFAULT_CONFIG, loadConfig } from "../src/config.ts";
 import { processSessions } from "../src/pipeline/process.ts";
 import { ClaudeAdapter } from "../src/sources/claude.ts";
@@ -59,12 +63,12 @@ class FakeAdapter implements SourceAdapter {
 }
 
 /** Runner that records prompts and returns one nugget citing the last U-label it sees. */
-class FakeRunner implements PiRunner {
+class FakeRunner implements AgentRunner {
   prompts: string[] = [];
   fail = false;
   async run<S extends TSchema>(
-    req: PiRequest<S>,
-  ): Promise<PiResult<Static<S>>> {
+    req: AgentRequest<S>,
+  ): Promise<AgentResult<Static<S>>> {
     this.prompts.push(req.prompt);
     if (this.fail) throw new Error("bedrock down");
     const labels = [...req.prompt.matchAll(/\[(U\d+)/g)].map((m) => m[1]!);

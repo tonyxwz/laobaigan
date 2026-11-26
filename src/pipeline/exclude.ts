@@ -1,4 +1,4 @@
-import type { PiRunner, Usage } from "../agents/types.ts";
+import type { AgentRunner, Usage } from "../agents/types.ts";
 import type { Config } from "../config.ts";
 import { type Exclusion, Proposals } from "../state/proposals.ts";
 import { subtreeNuggets, type Tree, type TreeNode } from "../state/tree.ts";
@@ -26,7 +26,7 @@ export interface ExclusionResult {
 
 export async function applyExclusions(
   tree: Tree,
-  runner: PiRunner,
+  runner: AgentRunner,
   cfg: Config,
   proposalId: number,
   skill: TreeNode,

@@ -1,4 +1,4 @@
-import type { PiRunner, Usage } from "../agents/types.ts";
+import type { AgentRunner, Usage } from "../agents/types.ts";
 import { addUsage, ZERO_USAGE } from "../agents/types.ts";
 import { agentModel, type Config } from "../config.ts";
 import {
@@ -88,7 +88,7 @@ export interface ProcessResult {
 export async function processSessions(
   adapters: SourceAdapter[],
   db: StateDb,
-  runner: PiRunner,
+  runner: AgentRunner,
   cfg: Config,
   opts: ProcessOptions = {},
 ): Promise<ProcessResult> {

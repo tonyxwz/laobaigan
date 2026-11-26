@@ -65,7 +65,7 @@ Environment overrides:
 
 `npm test` runs vitest. Tests never call a real model:
 
-- Pipeline stages take a `PiRunner`; tests pass scripted runners.
+- Pipeline stages take an `AgentRunner`; tests pass scripted runners.
 - End-to-end drafting tests run real pi sessions on pi's faux provider (`test/helpers/faux.ts`).
 - File system effects use temp dirs; the editor and the interactive pi chat use injectable launchers.
 
@@ -74,7 +74,7 @@ Environment overrides:
 - **TypeScript, erasable syntax only** (`erasableSyntaxOnly`): no enums, namespaces or constructor parameter properties, so Node can strip the types.
 - **Imports:** relative imports use `.ts` extensions; `tsconfig.build.json` rewrites them to `.js` in `dist/`.
 - **Database changes** are new numbered migrations in `src/state/db.ts`, never edits to old ones. Back up the real db before running a migration on it.
-- **Model calls** go through `PiRunner` (`src/agents/types.ts`) and return results through a result tool, never parsed free text.
+- **Model calls** go through `AgentRunner` (`src/agents/types.ts`) and return results through a result tool, never parsed free text.
 
 ## Task tracking
 

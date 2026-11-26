@@ -1,4 +1,4 @@
-import type { PiRunner, Usage } from "../agents/types.ts";
+import type { AgentRunner, Usage } from "../agents/types.ts";
 import { addUsage, ZERO_USAGE } from "../agents/types.ts";
 import type { Config } from "../config.ts";
 import { writePromptStatus } from "../notify/prompt.ts";
@@ -90,7 +90,7 @@ export interface RunOptions {
 export interface RunDeps {
   adapters: SourceAdapter[];
   db: StateDb;
-  runner: PiRunner;
+  runner: AgentRunner;
   cfg: Config;
   log?: (m: string) => void;
   now?: () => Date;
@@ -100,7 +100,7 @@ export interface RunDeps {
 interface StageContext {
   adapters: SourceAdapter[];
   db: StateDb;
-  runner: PiRunner;
+  runner: AgentRunner;
   cfg: Config;
   tree: Tree;
   opts: RunOptions;

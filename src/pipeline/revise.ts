@@ -3,8 +3,8 @@ import { dirname, join } from "node:path";
 import { applyPatch, createPatch } from "diff";
 import { GUARDED_TOOLS } from "../agents/guard.ts";
 import {
+  type AgentRunner,
   addUsage,
-  type PiRunner,
   type Usage,
   ZERO_USAGE,
 } from "../agents/types.ts";
@@ -252,7 +252,7 @@ export interface ReviseResult extends CloseResult {
 /** One-shot revise: pi redrafts the stored draft with my feedback. Nothing is stored if verification fails. */
 export async function reviseProposal(
   tree: Tree,
-  runner: PiRunner,
+  runner: AgentRunner,
   cfg: Config,
   id: number,
   feedback: string,

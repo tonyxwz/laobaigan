@@ -1,5 +1,5 @@
 import { type Static, Type } from "typebox";
-import type { PiRunner, Usage } from "../agents/types.ts";
+import type { AgentRunner, Usage } from "../agents/types.ts";
 import { addUsage, ZERO_USAGE } from "../agents/types.ts";
 import { agentModel, type Config } from "../config.ts";
 import {
@@ -91,7 +91,7 @@ export interface ClassifyResult {
 
 export async function classifyRejections(
   tree: Tree,
-  runner: PiRunner,
+  runner: AgentRunner,
   cfg: Config,
   opts: { maxCalls?: number; log?: (m: string) => void } = {},
 ): Promise<ClassifyResult> {

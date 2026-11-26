@@ -127,7 +127,7 @@ async function loop(
   }
 }
 
-export interface PiChatOptions {
+export interface ChatOptions {
   launcher?: Launcher;
   ask: Ask;
   log?: (m: string) => void;
@@ -164,7 +164,7 @@ interface ChatSetup {
   /** The session's display name. */
   name: string;
   launcher: Launcher;
-  opts: PiChatOptions;
+  opts: ChatOptions;
 }
 
 /** pi (`pi` on PATH: my TUI and pi settings) with lbg's guard extension. */
@@ -292,7 +292,7 @@ export async function chatRevise(
   tree: Tree,
   cfg: Config,
   id: number,
-  opts: PiChatOptions,
+  opts: ChatOptions,
 ): Promise<InteractiveResult> {
   const launcher = opts.launcher ?? terminalLauncher;
   const log = opts.log ?? (() => {});

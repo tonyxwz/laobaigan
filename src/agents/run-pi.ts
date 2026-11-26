@@ -16,7 +16,12 @@ import {
   type GuardedToolName,
   guardedToolDefinitions,
 } from "./guard.ts";
-import type { PiRequest, PiResult, PiRunner, ThinkingLevel } from "./types.ts";
+import type {
+  AgentRequest,
+  AgentResult,
+  AgentRunner,
+  ThinkingLevel,
+} from "./types.ts";
 
 /** A loader that discovers nothing: no extensions, skills, prompts, or AGENTS.md. */
 function minimalLoader(systemPrompt: string): ResourceLoader {
@@ -46,7 +51,7 @@ interface Resolved {
 }
 
 /** Headless, in-memory pi sessions through the SDK. `resolve` picks the runtime and model for a request. */
-export class SdkPiRunner implements PiRunner {
+export class SdkPiRunner implements AgentRunner {
   private readonly resolve: (id: string | undefined) => Promise<Resolved>;
 
   constructor(resolve: (id: string | undefined) => Promise<Resolved>) {
@@ -54,8 +59,8 @@ export class SdkPiRunner implements PiRunner {
   }
 
   async run<S extends TSchema>(
-    req: PiRequest<S>,
-  ): Promise<PiResult<Static<S>>> {
+    req: AgentRequest<S>,
+  ): Promise<AgentResult<Static<S>>> {
     const { runtime, model, thinking } = await this.resolve(req.model);
     const tools = req.tools ?? [];
     let fileTools: ToolDefinition[] = [];

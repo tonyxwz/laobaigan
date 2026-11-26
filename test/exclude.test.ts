@@ -5,7 +5,11 @@ import { join } from "node:path";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import type { Static, TSchema } from "typebox";
 import { describe, expect, it } from "vitest";
-import type { PiRequest, PiResult, PiRunner } from "../src/agents/types.ts";
+import type {
+  AgentRequest,
+  AgentResult,
+  AgentRunner,
+} from "../src/agents/types.ts";
 import { type Config, DEFAULT_CONFIG } from "../src/config.ts";
 import { buildDraftPrompt } from "../src/pipeline/draft-prompt.ts";
 import { insertNuggets } from "../src/pipeline/insert.ts";
@@ -77,10 +81,10 @@ describe("insert never routes a nugget back to a skill it was left out of", () =
     expect(db.getNugget(icat)).toMatchObject({ excludedFrom: [dot] });
     expect(db.getNugget(icat)!.nodeId).toBeUndefined();
     let prompt = "";
-    const runner: PiRunner = {
+    const runner: AgentRunner = {
       async run<S extends TSchema>(
-        req: PiRequest<S>,
-      ): Promise<PiResult<Static<S>>> {
+        req: AgentRequest<S>,
+      ): Promise<AgentResult<Static<S>>> {
         prompt = req.prompt;
         return {
           value: {

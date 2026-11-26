@@ -1,5 +1,5 @@
 import { type Static, type TSchema, Type } from "typebox";
-import type { PiRequest, PiRunner, Usage } from "../agents/types.ts";
+import type { AgentRequest, AgentRunner, Usage } from "../agents/types.ts";
 import { addUsage, ZERO_USAGE } from "../agents/types.ts";
 import { agentModel, type Config } from "../config.ts";
 import { isValidSkillName } from "../skills/name.ts";
@@ -455,7 +455,7 @@ interface InsertContext {
   maxCalls: number;
   log: (m: string) => void;
   /** One model call, counted against the budget. */
-  call: <S extends TSchema>(req: PiRequest<S>) => Promise<Static<S>>;
+  call: <S extends TSchema>(req: AgentRequest<S>) => Promise<Static<S>>;
 }
 
 /** Group nuggets by the tree they belong to. A repo nugget with no repo to go to stays unplaced. */
@@ -636,7 +636,7 @@ function applySectionPlan(
  */
 export async function insertNuggets(
   tree: Tree,
-  runner: PiRunner,
+  runner: AgentRunner,
   cfg: Config,
   opts: {
     nuggets?: NuggetRow[];

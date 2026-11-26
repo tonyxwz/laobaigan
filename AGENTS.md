@@ -39,7 +39,7 @@ test/                  vitest; helpers/faux.ts runs real pi sessions on pi's fau
 ## Design rules
 
 - **Only `lbg run` makes the pipeline's model calls.** Other commands only read or write the state db. The one exception is `lbg proposal revise`.
-- **Every model call goes through a `PiRunner`** (`src/agents/types.ts`) and returns its result through a result tool, never parsed free text. Models and credentials come from the configured agent (pi or Claude Code); lbg has no provider policy of its own.
+- **Every model call goes through an `AgentRunner`** (`src/agents/types.ts`) and returns its result through a result tool, never parsed free text. Models and credentials come from the configured agent (pi or Claude Code); lbg has no provider policy of its own.
 - **lbg never runs git and never changes skill files on its own.** Every change is a proposal stored in the state db; `accept` writes the files and committing is the user's call.
 - **Keep lbg generic.** A repository is the nearest ancestor directory with a `.git` entry. Don't add behavior for one particular environment or build system.
 - **Database changes are new numbered migrations** in `src/state/db.ts`, never edits to old ones.

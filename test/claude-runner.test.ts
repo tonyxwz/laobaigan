@@ -9,7 +9,7 @@ import {
   modelRunner,
 } from "../src/agents/run-claude.ts";
 import { PiConfigRunner } from "../src/agents/run-pi.ts";
-import type { PiRequest } from "../src/agents/types.ts";
+import type { AgentRequest } from "../src/agents/types.ts";
 import { agentModel, loadConfig } from "../src/config.ts";
 
 const schema = Type.Object({
@@ -17,8 +17,8 @@ const schema = Type.Object({
   note: Type.Optional(Type.String()),
 });
 const req = (
-  over: Partial<PiRequest<typeof schema>> = {},
-): PiRequest<typeof schema> => ({
+  over: Partial<AgentRequest<typeof schema>> = {},
+): AgentRequest<typeof schema> => ({
   model: "sonnet",
   systemPrompt: "sys",
   prompt: "hello",

@@ -1,5 +1,5 @@
 import { type Static, Type } from "typebox";
-import type { PiRunner, ThinkingLevel, Usage } from "../agents/types.ts";
+import type { AgentRunner, ThinkingLevel, Usage } from "../agents/types.ts";
 import { addUsage, ZERO_USAGE } from "../agents/types.ts";
 import type { Transcript } from "../sources/types.ts";
 import type { MemoryRow } from "../state/rejections.ts";
@@ -173,7 +173,7 @@ export function buildExtractPrompt(
 }
 
 export async function extractNuggets(
-  runner: PiRunner,
+  runner: AgentRunner,
   input: ExtractInput,
   model: { id?: string | undefined; thinking?: ThinkingLevel | undefined } = {},
 ): Promise<ExtractOutput> {

@@ -15,9 +15,9 @@ import {
 } from "./claude-guard.ts";
 import { PiConfigRunner } from "./run-pi.ts";
 import type {
-  PiRequest,
-  PiResult,
-  PiRunner,
+  AgentRequest,
+  AgentResult,
+  AgentRunner,
   ThinkingLevel,
   Usage,
 } from "./types.ts";
@@ -107,7 +107,7 @@ function thinkingOptions(
  * Requests without tools get none; requests with a file guard (drafting) get Claude Code's
  * built-in file tools, every call checked against the guard first (see claude-guard.ts).
  */
-export class ClaudeCodeRunner implements PiRunner {
+export class ClaudeCodeRunner implements AgentRunner {
   private readonly opts: ClaudeCodeOptions;
 
   constructor(opts: ClaudeCodeOptions = {}) {
@@ -115,8 +115,8 @@ export class ClaudeCodeRunner implements PiRunner {
   }
 
   async run<S extends TSchema>(
-    req: PiRequest<S>,
-  ): Promise<PiResult<Static<S>>> {
+    req: AgentRequest<S>,
+  ): Promise<AgentResult<Static<S>>> {
     const tools = req.tools ?? [];
     if (tools.length && !req.fileGuard)
       throw new Error("Claude Code runs tools only with a file guard");
@@ -271,7 +271,7 @@ export function modelRunner(cfg: {
     settingSources?: Options["settingSources"];
     settings?: Record<string, unknown>;
   };
-}): PiRunner {
+}): AgentRunner {
   if (cfg.agent !== "claude-code") return new PiConfigRunner();
   return new ClaudeCodeRunner({
     executable: cfg.claudeCode.executable,

@@ -5,7 +5,11 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { Static, TSchema } from "typebox";
 import { describe, expect, it } from "vitest";
-import type { PiRequest, PiResult, PiRunner } from "../src/agents/types.ts";
+import type {
+  AgentRequest,
+  AgentResult,
+  AgentRunner,
+} from "../src/agents/types.ts";
 import { type Config, DEFAULT_CONFIG } from "../src/config.ts";
 import { buildClassifyPrompt } from "../src/pipeline/classify.ts";
 import { rejectProposal } from "../src/pipeline/reject.ts";
@@ -16,13 +20,13 @@ import { Rejections } from "../src/state/rejections.ts";
 import { proposalSetup } from "./helpers/proposals.ts";
 
 /** A runner that must never be called. */
-const noCalls: PiRunner = {
+const noCalls: AgentRunner = {
   async run() {
     throw new Error("no model call expected");
   },
 };
 
-class Classifier implements PiRunner {
+class Classifier implements AgentRunner {
   prompts: string[] = [];
   answer: (prompt: string) => unknown = () => ({
     kind: "not-useful",
@@ -30,8 +34,8 @@ class Classifier implements PiRunner {
   });
   fail = false;
   async run<S extends TSchema>(
-    req: PiRequest<S>,
-  ): Promise<PiResult<Static<S>>> {
+    req: AgentRequest<S>,
+  ): Promise<AgentResult<Static<S>>> {
     if (req.resultTool.name !== "classify_rejection")
       throw new Error(`unexpected ${req.resultTool.name}`);
     this.prompts.push(req.prompt);
@@ -82,7 +86,7 @@ function setup() {
   return { ...s, proposalId: id, sibling, cfg, mem: new Rejections(s.db) };
 }
 
-const deps = (s: ReturnType<typeof setup>, runner: PiRunner) => ({
+const deps = (s: ReturnType<typeof setup>, runner: AgentRunner) => ({
   adapters: [],
   db: s.db,
   runner,

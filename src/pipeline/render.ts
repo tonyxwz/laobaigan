@@ -3,7 +3,7 @@ import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { Static } from "typebox";
 import { GUARDED_TOOLS } from "../agents/guard.ts";
-import type { PiRunner, Usage } from "../agents/types.ts";
+import type { AgentRunner, Usage } from "../agents/types.ts";
 import { addUsage, ZERO_USAGE } from "../agents/types.ts";
 import { agentModel, type Config } from "../config.ts";
 import { type DraftFile, Proposals } from "../state/proposals.ts";
@@ -112,7 +112,7 @@ const RETRYABLE: ((a: Attempt) => Fix | undefined)[] = [
 /** Draft one candidate skill into an `open` proposal. Never throws for drafting problems. */
 export async function draftSkill(
   tree: Tree,
-  runner: PiRunner,
+  runner: AgentRunner,
   cfg: Config,
   nodeId: number,
   opts: { log?: (m: string) => void } = {},
@@ -328,7 +328,7 @@ export async function draftSkill(
 /** Draft candidates (highest score first), up to cfg.render.maxPerRun. */
 export async function draftCandidates(
   tree: Tree,
-  runner: PiRunner,
+  runner: AgentRunner,
   cfg: Config,
   opts: {
     nodeIds?: number[];

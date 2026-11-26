@@ -1,6 +1,10 @@
 import type { Static, TSchema } from "typebox";
 import { describe, expect, it } from "vitest";
-import type { PiRequest, PiResult, PiRunner } from "../src/agents/types.ts";
+import type {
+  AgentRequest,
+  AgentResult,
+  AgentRunner,
+} from "../src/agents/types.ts";
 import { type Config, DEFAULT_CONFIG } from "../src/config.ts";
 import { buildDraftPrompt } from "../src/pipeline/draft-prompt.ts";
 import { processSessions } from "../src/pipeline/process.ts";
@@ -161,10 +165,10 @@ describe("forgetting nuggets", () => {
         turns,
       }),
     };
-    const runner: PiRunner = {
+    const runner: AgentRunner = {
       async run<S extends TSchema>(
-        _req: PiRequest<S>,
-      ): Promise<PiResult<Static<S>>> {
+        _req: AgentRequest<S>,
+      ): Promise<AgentResult<Static<S>>> {
         const value = {
           nuggets: [
             {

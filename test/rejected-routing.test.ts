@@ -1,6 +1,10 @@
 import type { Static, TSchema } from "typebox";
 import { describe, expect, it } from "vitest";
-import type { PiRequest, PiResult, PiRunner } from "../src/agents/types.ts";
+import type {
+  AgentRequest,
+  AgentResult,
+  AgentRunner,
+} from "../src/agents/types.ts";
 import { DEFAULT_CONFIG } from "../src/config.ts";
 import { buildSkillPrompt, insertNuggets } from "../src/pipeline/insert.ts";
 import { rejectProposal } from "../src/pipeline/reject.ts";
@@ -37,12 +41,12 @@ function setup() {
   return { ...s, proposalId: id, other, mem: new Rejections(s.db) };
 }
 
-class Router implements PiRunner {
+class Router implements AgentRunner {
   prompts: string[] = [];
   to: (prompt: string) => number = () => 0;
   async run<S extends TSchema>(
-    req: PiRequest<S>,
-  ): Promise<PiResult<Static<S>>> {
+    req: AgentRequest<S>,
+  ): Promise<AgentResult<Static<S>>> {
     this.prompts.push(req.prompt);
     const ids = [...req.prompt.matchAll(/<nugget id="(\d+)"/g)].map((m) =>
       Number(m[1]),
