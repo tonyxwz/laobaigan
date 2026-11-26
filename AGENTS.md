@@ -25,7 +25,8 @@ node src/cli.ts ...    # same as lbg
 ## Code layout
 
 ```
-src/cli.ts             commands
+src/cli.ts             entry point: option parsing, dispatch to a command
+src/commands/          one module per command; context.ts (options), format.ts (what they print)
 src/config.ts          defaults and ~/.config/laobaigan/config.json
 src/sources/           one adapter per agent (session listing and loading)
 src/pipeline/          the stages of lbg run, and proposal review (accept, revise, edit)

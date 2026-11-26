@@ -324,7 +324,8 @@ Migrations are numbered SQL in `src/state/db.ts` and applied on open (`PRAGMA us
 ```
 bin/lbg.js                   launcher: src/cli.ts in a checkout, dist/cli.js when installed
 src/
-  cli.ts                     commands
+  cli.ts                     entry point: option parsing, dispatch
+  commands/                  one module per command; context.ts (options), format.ts (output)
   config.ts                  defaults, ~/.config/laobaigan/config.json, skills dir detection
   init.ts service.ts         lbg init, lbg service
   sources/                   one adapter per agent
