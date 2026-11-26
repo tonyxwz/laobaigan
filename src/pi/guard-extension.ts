@@ -1,7 +1,7 @@
 /**
  * pi extension for `lbg proposal revise <id>` (interactive). lbg starts the pi CLI
  * in the draft's scratch dir with `-e` pointing here and LBG_GUARD set to
- * {"root": "...", "writable": ["..."]}.
+ * {"root": "...", "writable": ["..."], "readRoots": ["..."]}.
  *
  *  - read / ls / find / grep / write / edit are replaced by lbg's guarded versions
  *    (write only the proposal's paths); pi is started with --tools limited to these,

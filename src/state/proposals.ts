@@ -51,7 +51,10 @@ export interface ProposalRow {
   repo?: string;
   skillName?: string;
   targetRoot: string;
+  /** Every path the draft may change. */
   writable: string[];
+  /** The paths the proposal is mainly about (its target); the rest of `writable` is "may also touch". */
+  primary: string[];
   files: DraftFile[];
   summary?: string;
   nuggetIds: number[];
@@ -88,7 +91,7 @@ export type NewProposal = Pick<
   | "nuggetIds"
   | "sessions"
 > &
-  Partial<Pick<ProposalRow, "repo" | "skillName">>;
+  Partial<Pick<ProposalRow, "repo" | "skillName" | "primary">>;
 
 type Row = Record<string, unknown>;
 
@@ -103,6 +106,7 @@ function toProposal(r: Row): ProposalRow {
     ...(r.skill_name ? { skillName: String(r.skill_name) } : {}),
     targetRoot: String(r.target_root),
     writable: JSON.parse(String(r.writable)) as string[],
+    primary: JSON.parse(String(r.primary_paths ?? r.writable)) as string[],
     files: JSON.parse(String(r.files)) as DraftFile[],
     ...(r.summary ? { summary: String(r.summary) } : {}),
     nuggetIds: JSON.parse(String(r.nugget_ids)) as number[],
@@ -190,8 +194,8 @@ export class Proposals {
       const id = Number(
         this.sql
           .prepare(
-            `INSERT INTO proposal (node_id, kind, status, scope, repo, skill_name, target_root, writable, nugget_ids, sessions, drafted_at, worker_pid, created_at, updated_at)
-             VALUES (?, ?, 'drafting', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            `INSERT INTO proposal (node_id, kind, status, scope, repo, skill_name, target_root, writable, primary_paths, nugget_ids, sessions, drafted_at, worker_pid, created_at, updated_at)
+             VALUES (?, ?, 'drafting', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           )
           .run(
             p.nodeId,
@@ -201,6 +205,7 @@ export class Proposals {
             p.skillName ?? null,
             p.targetRoot,
             JSON.stringify(p.writable),
+            p.primary ? JSON.stringify(p.primary) : null,
             JSON.stringify(p.nuggetIds),
             p.sessions,
             now,

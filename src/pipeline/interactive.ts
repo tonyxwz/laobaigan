@@ -19,7 +19,7 @@ import { Feedback } from "../state/feedback.ts";
 import type { Tree } from "../state/tree.ts";
 import { editDiff } from "./accept.ts";
 import { readChatTurns, readClaudeChatTurns } from "./chatlog.ts";
-import { DRAFT_SYSTEM_PROMPT } from "./render.ts";
+import { DRAFT_SYSTEM_PROMPT, guardFor } from "./render.ts";
 import {
   type CloseResult,
   closeDraft,
@@ -134,7 +134,7 @@ export async function chatRevise(
 ): Promise<InteractiveResult> {
   const launcher = opts.launcher ?? terminalLauncher;
   const log = opts.log ?? (() => {});
-  const ws = await openDraft(tree, id, cfg);
+  const ws = await openDraft(tree, id);
   const side = await mkdtemp(join(tmpdir(), "lbg-chat-"));
   const cleanups: (() => Promise<void>)[] = [];
   try {
@@ -154,10 +154,7 @@ export async function chatRevise(
     );
     const env = {
       ...process.env,
-      LBG_GUARD: JSON.stringify({
-        root: ws.scratch,
-        writable: ws.target.writable,
-      }),
+      LBG_GUARD: JSON.stringify(guardFor(ws.scratch, ws.target)),
     };
     const opening = `This is proposal #${id} (${ws.proposal.kind}) for ${ws.target.skillName}. Read the draft and summarize it in a few lines, then ask me what to change.`;
     const name = `lbg proposal #${id} ${ws.target.skillName}`;
@@ -230,6 +227,8 @@ export async function chatRevise(
         JSON.stringify(settings),
         "--setting-sources",
         (cfg.claudeCode.settingSources ?? ["user"]).join(","),
+        // Reading the live repository is the hook's call, but Claude Code must know the directory.
+        ...(ws.target.readRoot ? ["--add-dir", ws.target.readRoot] : []),
         "--strict-mcp-config",
         "--disable-slash-commands",
         "--append-system-prompt",
@@ -357,7 +356,7 @@ export async function editProposal(
   const launcher = opts.launcher ?? terminalLauncher;
   const editor =
     opts.editor ?? process.env.VISUAL ?? process.env.EDITOR ?? "vi";
-  const ws = await openDraft(tree, id, cfg);
+  const ws = await openDraft(tree, id);
   try {
     const files = ws.proposal.files
       .filter((f) => f.content !== null)

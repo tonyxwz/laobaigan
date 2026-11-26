@@ -110,6 +110,7 @@ describe("drafter leaves off-topic evidence out", () => {
         root: cfg.skillsDir,
         skillName: "dotfiles-management",
         writable: ["dotfiles-management/"],
+        primary: ["dotfiles-management/"],
         skillDir: "dotfiles-management",
       },
       [],

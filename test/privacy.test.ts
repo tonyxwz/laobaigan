@@ -240,7 +240,7 @@ describe("the private-terms gate", () => {
     expect(commitMessageFor(s.tree, p(), strict)).not.toMatch(/acme/i);
 
     // A hand edit that keeps the term is not stored; one that removes it is, and then accept works.
-    const ws = await openDraft(s.tree, id, strict);
+    const ws = await openDraft(s.tree, id);
     expect((await closeDraft(s.tree, strict, ws)).problems).toEqual([
       'AGENTS.md adds private term(s) "acme" to a public repository (line 4)',
     ]);

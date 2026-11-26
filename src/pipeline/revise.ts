@@ -23,10 +23,10 @@ import {
   buildDraftPrompt,
   DRAFT_SYSTEM_PROMPT,
   diffSnapshot,
+  guardFor,
   makeScratch,
   type RenderTarget,
   ReportDraftSchema,
-  repoContextPaths,
   snapshot,
   verifyDraft,
 } from "./render.ts";
@@ -71,20 +71,18 @@ export interface Rebased {
 }
 
 /** The render target a proposal was drafted for, rebuilt from what it stored. */
-export function targetOf(
-  p: ProposalRow,
-  skill: TreeNode,
-  context: string[] = [],
-): RenderTarget {
-  const dir = p.writable.find((w) => w.endsWith("/"));
-  const file = p.writable.find((w) => !w.endsWith("/"));
+export function targetOf(p: ProposalRow, skill: TreeNode): RenderTarget {
+  const dir = p.primary.find((w) => w.endsWith("/"));
+  const file = p.primary.find((w) => !w.endsWith("/"));
   const kind =
     skill.origin === "file" ? fileNodeKind(skill.sourcePath) : undefined;
   const base = {
     root: p.targetRoot,
     skillName: p.skillName ?? skill.name ?? `node-${skill.id}`,
     writable: p.writable,
-    ...(context.length ? { context } : {}),
+    primary: p.primary,
+    // Proposals drafted before a repo could be read as a whole keep working: reading it is harmless.
+    ...(p.scope === "repo" ? { readRoot: p.targetRoot } : {}),
   };
   if (kind === "doc" && file && !dir) {
     // Drafted for a document: either the document itself, or a pointer to it in AGENTS.md.
@@ -106,7 +104,6 @@ export function targetOf(
 export async function openDraft(
   tree: Tree,
   id: number,
-  cfg?: Pick<Config, "repoDocs">,
 ): Promise<DraftWorkspace> {
   const props = new Proposals(tree.db);
   const p = props.assertFree(id);
@@ -119,13 +116,7 @@ export async function openDraft(
   if (!skill)
     throw new Error(`Proposal #${id}: node ${p.nodeId} no longer exists`);
   const openedAt = new Date();
-  const target = targetOf(
-    p,
-    skill,
-    p.scope === "repo" && cfg
-      ? await repoContextPaths(p.targetRoot, cfg.repoDocs)
-      : [],
-  );
+  const target = targetOf(p, skill);
   const base = await snapshot(target.root, target.writable);
   const scratch = await makeScratch(target);
   const rebased: Rebased[] = [];
@@ -288,7 +279,7 @@ export async function reviseProposal(
   id: number,
   feedback: string,
 ): Promise<ReviseResult> {
-  const ws = await openDraft(tree, id, cfg);
+  const ws = await openDraft(tree, id);
   const prompt = `${reviseContext(tree, ws)}\n\nFeedback from the engineer (apply it):\n${feedback}\n\nRevise the files now, then call report_draft.`;
   // What I asked for is review feedback for this skill, whatever the redraft's outcome.
   new Feedback(tree.db).add({ proposalId: id, kind: "revise", text: feedback });
@@ -298,7 +289,7 @@ export async function reviseProposal(
       systemPrompt: DRAFT_SYSTEM_PROMPT,
       prompt,
       tools: [...GUARDED_TOOLS],
-      fileGuard: { root: ws.scratch, writable: ws.target.writable },
+      fileGuard: guardFor(ws.scratch, ws.target),
       resultTool: {
         name: "report_draft",
         description: "Report the revised draft.",

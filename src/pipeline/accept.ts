@@ -133,6 +133,16 @@ export async function acceptProposal(
     paths: [],
     commitMessage: commitMessageFor(tree, p, cfg),
   };
+  // A repo draft may also touch files that other live nodes mirror (a pointer in AGENTS.md,
+  // a line in another document). Sync would then date those nodes to now and count their
+  // waiting evidence as absorbed, though this draft never saw it. Remember their dates.
+  const dated = new Map(
+    tree
+      .trees()
+      .flatMap((r) => r.children)
+      .filter((n) => n.id !== p.nodeId && n.origin === "file" && n.renderedAt)
+      .map((n) => [n.id, n] as const),
+  );
   for (const f of p.files) {
     const abs = join(p.targetRoot, f.path);
     if (f.content === null) {
@@ -163,6 +173,20 @@ export async function acceptProposal(
   // live skill to the draft, so evidence that arrived while the proposal waited still counts
   // as new (and can earn an update). If sync couldn't match the node to a file (e.g. a new
   // AGENTS.md section under its own heading), it's published either way.
+  for (const [nodeId, before] of dated) {
+    const now = tree.getNode(nodeId);
+    const src = (before.sourcePath ?? "").replace(/#.*$/, "");
+    const own = src.endsWith("/SKILL.md") ? `${dirname(src)}/` : src;
+    const touched = res.paths.some((w) =>
+      own.endsWith("/") ? w.startsWith(own) : w === own,
+    );
+    if (
+      now &&
+      touched &&
+      now.renderedAt?.getTime() !== before.renderedAt?.getTime()
+    )
+      tree.updateNode(nodeId, { renderedAt: before.renderedAt });
+  }
   const node = tree.getNode(p.nodeId);
   if (node)
     tree.updateNode(p.nodeId, {

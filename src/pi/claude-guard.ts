@@ -12,7 +12,7 @@ import {
  * lbg decides every call before it runs (a PreToolUse hook, with canUseTool as a backstop),
  * using the same path checks as pi's guarded tools:
  *
- *   Read, Glob, Grep   anywhere inside the worktree
+ *   Read, Glob, Grep   anywhere inside the worktree, or the guard's read-only roots
  *   Write, Edit        only inside the writable paths, never .git
  *   StructuredOutput   the final answer
  *   anything else      denied (Claude Code is only given these tools anyway)

@@ -788,7 +788,9 @@ async function main(argv: string[]): Promise<number> {
           const buf: string[] = [];
           const out = (s: string) => void buf.push(s);
           out(renderProposalLine(p, tree));
-          out(`target: ${p.targetRoot}   writable: ${p.writable.join(", ")}\n`);
+          out(
+            `target: ${p.targetRoot}   writes: ${p.primary.join(", ")}${p.writable.length > p.primary.length ? `   (may also change the repo's other agent files and docs)` : ""}\n`,
+          );
           if (p.summary) out(`\n${p.summary}\n`);
           if (p.detail)
             out(`\n${p.status === "failed" ? "error" : "note"}: ${p.detail}\n`);

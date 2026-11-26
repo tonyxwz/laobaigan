@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { exists, subdirs } from "../util/fs.ts";
-import { repoDocFiles, splitByHeading } from "./parse.ts";
+import { repoDocFiles, repoSkillDirs, splitByHeading } from "./parse.ts";
 
 export interface SkillInfo {
   name: string;
@@ -93,7 +93,7 @@ export async function projectRoot(dir: string): Promise<string | undefined> {
 
 const repoCache = new Map<string, Promise<RepoContext | undefined>>();
 
-/** Repo-local skills (`.agents/skills`) and AGENTS.md headings for the repo containing `dir`. */
+/** Repo-local skills (every agent's skills directory) and AGENTS.md headings for the repo containing `dir`. */
 export function repoContext(
   dir: string,
   docDirs: string[] = [],
@@ -116,10 +116,9 @@ export function repoContext(
           // unreadable: skip
         }
       }
-      const skills = await loadSkillsDir(
-        join(root, ".agents", "skills"),
-        "repo",
-      );
+      const skills: SkillInfo[] = [];
+      for (const d of await repoSkillDirs(root))
+        skills.push(...(await loadSkillsDir(join(root, d), "repo")));
       for (const name of ["AGENTS.md", "CLAUDE.md"]) {
         const path = join(root, name);
         try {
@@ -156,7 +155,7 @@ export function renderSkillIndex(
   if (repo) {
     lines.push("", `Repo-local knowledge in ${repo.root}:`);
     for (const s of repo.skills)
-      lines.push(`- .agents/skills/${s.name}: ${s.description}`);
+      lines.push(`- ${relative(repo.root, dirname(s.path))}: ${s.description}`);
     if (repo.agentsMdPath) {
       lines.push(
         `- ${repo.agentsMdPath.split("/").pop()} sections: ${repo.agentsMdHeadings.join(" | ") || "(no headings)"}`,

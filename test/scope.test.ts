@@ -26,6 +26,7 @@ const target: RenderTarget = {
   root: "/s",
   skillName: "pr-review",
   writable: ["pr-review/"],
+  primary: ["pr-review/"],
   skillDir: "pr-review",
 };
 const base = new Map([["pr-review/SKILL.md", md(OLD)]]);

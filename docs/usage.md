@@ -99,7 +99,9 @@ lbg proposal diff <id>                 # only the diff, in git format
 
 Global knowledge goes to your skills directory; knowledge about one repository goes to that repository.
 
-In a repository, lbg files knowledge where the project already keeps it: the sections of `AGENTS.md` (and the text before its first section), `.agents/skills/<name>`, and the documents in `docs/*.md` (`repoDocs` in the config). An `update` of a document changes that document. A `fix-description` of a document means it already says what you had to explain again, so agents aren't reading it: the proposal adds a pointer to it in `AGENTS.md` instead. `AGENTS.md` itself is always loaded, so it never gets a `fix-description`.
+In a repository, lbg files knowledge where the project already keeps it: the sections of `AGENTS.md` (and the text before its first section), the skills in any agent's skills directory (`.agents/skills`, `.claude/skills`, `.pi/skills`, `.codex/skills`, `.gemini/skills`, …), and the documents in `docs/*.md` (`repoDocs` in the config). An `update` of a document changes that document. A `fix-description` of a document means it already says what you had to explain again, so agents aren't reading it: the proposal adds a pointer to it in `AGENTS.md` instead. `AGENTS.md` itself is always loaded, so it never gets a `fix-description`.
+
+While drafting for a repository, the model can read every file in it, source included, so what it writes is checked against the code. Whatever it reads goes to your model provider. It can only change the repo's agent files and documents: `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `README.md`, the agents' skills and rules directories, and `docs/`. Each proposal has one primary target (`show` prints it as `writes:`), and may touch the others to put a piece where it belongs or to point to what it wrote; the diff shows every file. It never changes source code, agent settings, or blocks marked `<!-- BEGIN … -->` that another tool generates.
 
 ### Changing a draft
 

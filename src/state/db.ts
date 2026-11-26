@@ -299,6 +299,9 @@ export const MIGRATIONS: string[] = [
    ALTER TABLE nugget ADD COLUMN forgotten_memory INTEGER;   -- the rejection memory that forgot it
    ALTER TABLE rejection_memory ADD COLUMN caught INTEGER NOT NULL DEFAULT 0;        -- nuggets insert routed to it
    ALTER TABLE rejection_memory ADD COLUMN extract_uses INTEGER NOT NULL DEFAULT 0;  -- extraction calls it was in`,
+  // 18: the paths a proposal is mainly about. `writable` grew to every agent file and document
+  // of the repo; this is the one target the draft was made for (NULL: same as writable).
+  `ALTER TABLE proposal ADD COLUMN primary_paths TEXT;`,
 ];
 
 /** Lifecycle of a skill: open → candidate (earned a proposal) → proposed → open again (accepted: it's live now) or rejected. */

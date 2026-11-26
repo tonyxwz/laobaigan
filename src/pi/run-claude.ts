@@ -140,6 +140,10 @@ export class ClaudeCodeRunner implements PiRunner {
         prompt: req.prompt,
         options: {
           cwd,
+          // Read-only for the guard; Claude Code still has to know the directory exists.
+          ...(req.fileGuard?.readRoots?.length
+            ? { additionalDirectories: req.fileGuard.readRoots }
+            : {}),
           ...(model ? { model } : {}),
           ...thinkingOptions(req.thinking),
           systemPrompt: `${req.systemPrompt}\n\n${answerNote(req.resultTool.name)}`,

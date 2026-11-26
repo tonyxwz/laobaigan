@@ -23,7 +23,8 @@ import {
 /**
  * File tools for the drafting session, confined to one proposal worktree:
  *
- *   read, ls, find, grep  anywhere inside `root`
+ *   read, ls, find, grep  anywhere inside `root`, and inside `readRoots` (the live repository,
+ *                         so a draft can be written with the whole project in view)
  *   write, edit           only inside `writable` (paths relative to `root`;
  *                         "dir/" = that directory and everything below it, otherwise one exact file)
  *
@@ -39,6 +40,8 @@ export interface FileGuard {
   root: string;
   /** Writable paths relative to root: "dir/" for a subtree, or an exact file. */
   writable: string[];
+  /** Extra directories that may be read but never written (absolute paths). */
+  readRoots?: string[];
 }
 
 export const GUARDED_TOOLS = [
@@ -105,15 +108,28 @@ export async function resolveGuard(g: FileGuard): Promise<ResolvedGuard> {
       return { real, dir, label: w };
     }),
   );
+  const readRoots: string[] = [];
+  for (const r of g.readRoots ?? []) {
+    if (!isAbsolute(r))
+      throw new GuardError(`Read root must be an absolute path: ${r}`);
+    readRoots.push(await realpath(r));
+  }
   const show = (p: string) => (inside(p, root) ? relative(root, p) || "." : p);
   const guard: ResolvedGuard = {
     root,
     async check(absPath, mode) {
       const real = await realish(resolve(root, absPath));
-      if (!inside(real, root))
+      if (!inside(real, root)) {
+        const live = readRoots.find((r) => inside(real, r));
+        if (live && mode === "read") return real;
+        if (live)
+          throw new GuardError(
+            `${absPath} is the live repository, which is read-only. Change the copy in the working directory instead: ${relative(live, real) || "."} (if it is one of the writable paths).`,
+          );
         throw new GuardError(
           `${absPath} is outside the worktree; only files in the worktree can be ${mode === "read" ? "read" : "changed"}.`,
         );
+      }
       if (mode === "read") return real;
       const rel = relative(root, real);
       if (rel.split(sep).includes(".git"))

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readdir, readFile, stat } from "node:fs/promises";
+import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import { basename, extname, join } from "node:path";
 import { parseFrontmatter } from "./index.ts";
 
@@ -13,7 +13,8 @@ import { parseFrontmatter } from "./index.ts";
  *     "## Heading" sections           → depth-1 nodes, source "<AGENTS.md>#<slug>"
  *       "### Heading" subsections     → depth-2 nodes
  *     text before the first "##"      → a depth-1 node too (the intro), source "<AGENTS.md>#^intro"
- *   <repo>/.agents/skills/<name>/     → repo skills, parsed like global ones
+ *   <repo>/.agents/skills/<name>/     → repo skills, parsed like global ones (also .claude/skills,
+ *                                       .pi/skills, …: see AGENT_SKILL_DIRS)
  *   <repo>/docs/*.md                  → documents: depth-1 nodes, source = the file
  *     "## Heading" sections           → depth-2 nodes, source "<file>#<slug>"
  *
@@ -53,6 +54,75 @@ export interface ParsedAgentsMd {
   intro?: ParsedSkill;
   sections: ParsedSkill[];
   hash: string;
+}
+
+/**
+ * Where agents keep a repository's skills, in order of preference. Many repos have several
+ * (often symlinked to one another); lbg mirrors them all and writes new skills to the first
+ * one the repo already uses.
+ */
+export const AGENT_SKILL_DIRS = [
+  ".agents/skills",
+  ".claude/skills",
+  ".pi/skills",
+  ".codex/skills",
+  ".gemini/skills",
+  ".opencode/skills",
+  ".cursor/skills",
+  ".kiro/skills",
+  ".github/skills",
+];
+
+/** Instruction files agents load from a repository's root, plus the README. */
+export const AGENT_FILES = [
+  "AGENTS.md",
+  "CLAUDE.md",
+  "GEMINI.md",
+  "README.md",
+  ".github/copilot-instructions.md",
+];
+
+/** Directories of per-agent instruction files (rules), other than skills. */
+export const AGENT_RULE_DIRS = [
+  ".claude/rules",
+  ".cursor/rules",
+  ".kiro/steering",
+  ".github/instructions",
+];
+
+/**
+ * Of `candidates` (paths relative to `repo`), those that exist, stay inside the repo once
+ * symlinks are resolved, and aren't another name for (or inside) an earlier one.
+ */
+export async function distinctExisting(
+  repo: string,
+  candidates: string[],
+): Promise<string[]> {
+  let root: string;
+  try {
+    root = await realpath(repo);
+  } catch {
+    return [];
+  }
+  const within = (child: string, parent: string) =>
+    child === parent || child.startsWith(`${parent}/`);
+  const kept: { rel: string; real: string }[] = [];
+  for (const rel of candidates) {
+    let real: string;
+    try {
+      real = await realpath(join(repo, rel));
+    } catch {
+      continue;
+    }
+    if (!within(real, root) || kept.some((k) => within(real, k.real))) continue;
+    kept.push({ rel, real });
+  }
+  return kept.map((k) => k.rel);
+}
+
+/** The skills directories a repo has, one entry per real directory. */
+export function repoSkillDirs(repo: string): Promise<string[]> {
+  return distinctExisting(repo, AGENT_SKILL_DIRS);
 }
 
 /** Source path suffix of the AGENTS.md intro node ("^" never comes out of slugify). */
@@ -366,7 +436,7 @@ export async function parseSkillsDir(dir: string): Promise<ParsedSkill[]> {
   return out;
 }
 
-/** A repo's AGENTS.md (or CLAUDE.md when there is no AGENTS.md), its .agents/skills and its documents. */
+/** A repo's AGENTS.md (or CLAUDE.md when there is no AGENTS.md), the skills of every agent's skills directory, and its documents. */
 export async function parseRepo(
   repo: string,
   docDirs: string[] = [],
@@ -390,9 +460,8 @@ export async function parseRepo(
     const md = await readIfExists(join(repo, rel));
     if (md?.trim()) docs.push(parseDoc(join(repo, rel), rel, md));
   }
-  return {
-    ...(agentsMd ? { agentsMd } : {}),
-    skills: await parseSkillsDir(join(repo, ".agents", "skills")),
-    docs,
-  };
+  const skills: ParsedSkill[] = [];
+  for (const dir of await repoSkillDirs(repo))
+    skills.push(...(await parseSkillsDir(join(repo, dir))));
+  return { ...(agentsMd ? { agentsMd } : {}), skills, docs };
 }

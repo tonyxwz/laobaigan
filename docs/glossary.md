@@ -80,7 +80,7 @@ depth 2  section  a "##" section of SKILL.md or of a document, a references/*.md
 ```
 
 **Scope**
-: Either `global` (the shared skills directory every agent loads) or `repo` (one repository: its `AGENTS.md`, `.agents/skills` and documents). Nuggets, skills and proposals never cross scopes.
+: Either `global` (the shared skills directory every agent loads) or `repo` (one repository: its `AGENTS.md`, every agent's skills directory and documents). Nuggets, skills and proposals never cross scopes.
 
 **Root**
 : The top node of one scope's tree. Roots never hold nuggets and are never proposed.
@@ -141,13 +141,16 @@ depth 2  section  a "##" section of SKILL.md or of a document, a references/*.md
 ## Proposals
 
 **Draft**
-: pi writing one candidate skill's files (`src/pipeline/render.ts`), in a **scratch dir**: a temporary copy of only that skill's target paths, plus read-only copies of a repository's `AGENTS.md`, `README.md` and documents. Your real files are never touched while drafting.
+: pi writing one candidate skill's files (`src/pipeline/render.ts`), in a **scratch dir**: a temporary copy of the paths it may change. Your real files are never touched while drafting.
 
 **Guarded tools**
-: The file tools the drafting model gets (`read`, `ls`, `find`, `grep`, `write`, `edit`), confined to the scratch dir, with writes allowed only to the skill's paths. No bash (`src/pi/guard.ts`).
+: The file tools the drafting model gets (`read`, `ls`, `find`, `grep`, `write`, `edit`). Writes go only to the proposal's writable paths, in the scratch dir. Reads are allowed there and, for a repo, anywhere in the live repository. No bash (`src/pi/guard.ts`).
+
+**Primary target**
+: What a repo proposal is about: one `AGENTS.md` section, skill folder or document. The draft may also change the repo's other agent files and documents (every agent's instruction file, skills and rules, the README, `docs/`), never source code or agent settings.
 
 **Verification**
-: Checks on a draft before it's stored: only the target paths changed, frontmatter `name` matches the folder, the description fits, `SKILL.md` isn't too long, other `AGENTS.md` sections are untouched, no secrets, no private terms added to a public repo.
+: Checks on a draft before it's stored: only writable paths changed, every touched skill has a `name` matching its folder and a description that fits, `SKILL.md` isn't too long, generated blocks (`<!-- BEGIN … -->`) are untouched, nothing outside the target skill is deleted, no secrets, no private terms added to a public repo.
 
 **Private terms**
 : Words listed in `privacy.privateTerms` that must never be added to a repository listed in `privacy.publicRepos`. A keyword gate (`src/pipeline/privacy.ts`): drafts, revisions and accepts that add one are refused.
