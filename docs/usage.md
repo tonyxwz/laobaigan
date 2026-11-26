@@ -127,6 +127,8 @@ lbg proposal accept <id> --commit      # write them, then run your commitCommand
 lbg proposal accept <id> --force       # write them even though the live files changed since the draft
 ```
 
+If the repository is listed in `privacy.publicRepos` and the draft would add one of your `privacy.privateTerms` to it, `accept` refuses, `--force` included; `show` tells you which file and lines. Take the terms out with `revise` or `edit`. See [Private terms](#private-terms).
+
 lbg never runs git. Accepting writes the files, makes the skill live in lbg's tree right away, and prints the paths and a suggested commit message. With `--commit` it runs your own `commitCommand`. If that command fails, the proposal is still accepted; commit by hand. Forgot `--commit`? Run it again on the accepted proposal: it only runs the commit, and tells you if you've edited the files since.
 
 Accepting refuses if the live files changed since the draft was made: revise the proposal, or use `--force`.
@@ -301,6 +303,13 @@ systemctl --user disable --now laobaigan.timer   # pause
   // inside are homes for that repo's knowledge, next to AGENTS.md. [] turns this off.
   "repoDocs": ["docs"],
 
+  // Repositories you publish, and words that must never be added to them.
+  // A term is plain text (case-insensitive, matches anywhere) or a "/regex/flags".
+  "privacy": {
+    "publicRepos": ["~/src/my-open-source-tool"],
+    "privateTerms": ["corp-internal-tool", "/\\bwiki\\.corp\\b/", "me@corp.example"]
+  },
+
   // Optional steering: skills you want to exist, and a policy for how knowledge is grouped.
   "topics": [
     {
@@ -330,6 +339,8 @@ systemctl --user disable --now laobaigan.timer   # pause
 | `render.maxSkillLines`                    | a drafted `SKILL.md` longer than this fails its check (detail belongs in `references/`)                                                                                                                                                                                                                                                                                                             |
 | `rejections.maxCallsPerRun`               | rejections classified per run                                                                                                                                                                                                                                                                                                                                                                       |
 | `repoDocs`                                | directories (relative to a repository root) whose `*.md` files lbg files that repo's knowledge into; default `["docs"]`, `[]` for none                                                                                                                                                                                                                                                              |
+| `privacy.publicRepos`                     | repositories whose files are published; drafts for them are checked against `privacy.privateTerms`                                                                                                                                                                                                                                                                                                  |
+| `privacy.privateTerms`                    | text or `/regex/flags` that must never be added to a public repo; a draft or accept that adds one is refused                                                                                                                                                                                                                                                                                        |
 | `rejections.expireDays`                   | when `not-useful` memories expire (0 = never)                                                                                                                                                                                                                                                                                                                                                       |
 | `agent`                                   | `pi` (default) or `claude-code`: the agent for every call (extraction, rejection classification, tree routing, drafting, revise one-shot and interactive)                                                                                                                                                                                                                                           |
 | `pi.model`, `pi.thinking`                 | pi's model (`provider/id`, or an id of pi's default provider) and thinking level (`off`, `minimal`, `low`, `medium`, `high`). Unset: pi's defaults                                                                                                                                                                                                                                                  |
@@ -375,6 +386,19 @@ The check is a `PreToolUse` hook, which runs whatever your settings' allow rules
 | `${skill}`, `${proposal_id}` | the skill name, the proposal id                             |
 
 `~` in the command means your home directory, including after `=` (as in `--git-dir=~/.cfg`), which `sh` itself wouldn't expand.
+
+### Private terms
+
+Knowledge about a public repository often mentions things that must not be published: an internal tool, a host name, a work address. `privacy` is a gate for that, with no model in it:
+
+- `privacy.publicRepos` lists the repositories (a path inside one counts too). Other repositories and your global skills directory are never checked.
+- `privacy.privateTerms` lists the words. Plain text matches case-insensitively anywhere, also inside a longer word; write `"/\\bword\\b/i"` for a whole word.
+- A draft that **adds** a listed term to a file of a public repo fails verification. Lines the file already had are not checked, and a new file's path is.
+- While drafting, the model gets one retry with the terms named and is told to leave out what can't be said without them. If the retry still adds one, the draft fails.
+- `revise` and `edit` are checked the same way, and `accept` checks again against the files on disk, so a proposal drafted before you listed a term is refused as well.
+- The suggested commit message leaves out the drafter's summary when it contains a term.
+
+The gate only refuses. It doesn't decide where such knowledge should live instead; until that exists, evidence that can't be written without a private term stays in lbg's state and out of the repository.
 
 ## Troubleshooting
 

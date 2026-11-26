@@ -207,7 +207,9 @@ For each candidate, the draft stage of `lbg run` (at most `render.maxPerRun` per
    - for `AGENTS.md`, the preamble and every section other than the target are unchanged (for the intro: every section; for a pointer: the file must name the document)
    - a document isn't deleted
    - no secrets and no `[REDACTED]` placeholders
+   - no private terms added to a public repo (see [Private terms](#private-terms))
 4. **Stores the changed files on the proposal** (path, hash of the original, new content), deletes the scratch dir, and marks the proposal `open`. The live files are untouched.
+   A draft whose only problem is private terms gets one retry in the same scratch copy, with the terms named, like the scope retry below.
 5. **Keeps a live skill's scope.** For an `update` of a live skill, the new description may only use words the skill already covers (its old description, `SKILL.md` and `references/`), allowing at most 2 new words for rewording (`src/pipeline/scope.ts`). If it takes on a new subject, the drafter gets one retry in the same scratch copy with the problem explained; if it still widens the scope, the draft fails with the new words listed. `fix-description` proposals are exempt. In one-shot or chat `revise` it's only a warning (you're steering); a hand `edit` isn't checked. If the drafter finds that none of the new evidence is on-topic, it changes nothing, every item is re-filed, and the proposal closes as "nothing on-topic to add" instead of failing.
 6. **Re-files off-topic evidence.** The drafter stays on the skill's topic and lists items that are only adjacent (they mention a related tool or word but are about something else) in `report_draft`'s `excluded`, with a reason. Each one is taken off the skill, remembered on the nugget (`excluded_from`), and re-inserted; insert never routes it back to a skill it was left out of. It lands in a better skill or starts a latent one, and no longer counts toward the skill it left. One-shot `revise` can exclude items the same way. `proposal show` lists them and where they went (`src/pipeline/exclude.ts`).
 
@@ -220,7 +222,7 @@ A failed draft becomes a `failed` proposal and the skill stays a candidate. `lbg
 - **Dropping evidence:** `lbg proposal drop <id> <nugget>...` takes off-topic evidence off an open proposal even though its skill is `proposed` (my deliberate call, unlike automatic curation). It's recorded on the proposal and the nugget (`excluded_from`), re-filed by insert (or put in `--to <node>` and locked), and never routed back. The draft's files may still hold its content: `proposals`, `show` and `accept` warn ("dropped since draft"), and every revise, chat or one-shot, is told which items were dropped since the draft; `--revise` redrafts right away (`src/pipeline/drop.ts`).
 - **Evidence while a proposal is open:** insert keeps routing nuggets into the proposed skill; the draft isn't redrafted automatically. Each proposal records `drafted_at`, when its evidence was taken (the draft, or the last AI revise; a hand `edit` doesn't change it). Nuggets attached after it are **new since the draft**: `lbg proposals` shows the count, `show` lists them, and revise marks them `(NEW SINCE THE DRAFT)` for pi and then adds them to the proposal's evidence.
 - **show / diff:** the stored files against what's on disk now, plus the evidence. A draft whose targets changed since drafting is **stale**.
-- **accept:** refuses a stale draft unless `--force`. Otherwise it writes the files into the target, marks the proposal accepted, and syncs, so the skill is live immediately. The live skill is dated to `drafted_at`, not to the accept: evidence the files contain counts as absorbed, and evidence that arrived while the proposal waited still counts as new (and can earn an `update`). It prints the paths and a suggested commit message; lbg never runs git.
+- **accept:** refuses a stale draft unless `--force`, and a draft that would add private terms to a public repo whatever the flags. Otherwise it writes the files into the target, marks the proposal accepted, and syncs, so the skill is live immediately. The live skill is dated to `drafted_at`, not to the accept: evidence the files contain counts as absorbed, and evidence that arrived while the proposal waited still counts as new (and can earn an `update`). It prints the paths and a suggested commit message; lbg never runs git.
 - **reject:** no model call. The skill becomes `rejected` and records its session count (it returns only with evidence from new sessions), the reason is stored as review feedback, and a **rejection memory** is written (`src/state/rejections.ts`): a snapshot of what was rejected (skill name, title, description, proposal kind, up to 12 evidence titles), so classifying it doesn't depend on the node surviving. It is `pending`; with `--kind` it is `active` and locked right away, the reason being the rule (`--to <skill>` sets a `wrong-place` target, same scope only). With no reason it is `later`, unlocked.
 - **classify (first part of lbg run's extract stage):** each pending, unlocked memory gets one call (extract model, `src/pipeline/classify.ts`) with the reason, the topic snapshot and the other skills of the scope; the answer is a kind, a one-line rule (redacted, ≤ 240 chars) and, for `wrong-place`, a target from that list (anything else is dropped). A failed call leaves the memory pending with the error; two failures in a row leave the rest for the next run. `lbg rejections edit` sets kind / rule / target and locks the memory; `forget` marks it `removed`. Memories follow their nodes when a node is replaced (`tree.removeNode`).
 - **Rejection memories in effect** (active, not expired; the newest per skill decides) act at every stage:
@@ -247,6 +249,17 @@ A failed draft becomes a `failed` proposal and the skill stays a candidate. `lbg
   The guard extension (`src/pi/guard-extension.ts`) registers the same guarded tools from `LBG_GUARD`. `--no-approve` skips pi's trust prompt for the scratch dir, and the temp session dir keeps the chat out of `~/.pi/agent/sessions`. When the user exits, the result is verified and stored. If verification fails, the user can go back in or keep the previous draft.
 - **edit:** opens the drafted files in `$VISUAL` / `$EDITOR`, with the same verification loop.
 - **Review feedback** (`src/state/feedback.ts`, `src/pipeline/review.ts`): what I say while reviewing is kept, redacted, per proposal: my turns in a revise chat (read from pi's session file in the temp session dir before it's deleted, without lbg's opening message), the text of a one-shot revise, the diff of a hand edit against the AI draft (only if I changed something), and the reject reason. It is not session evidence: it isn't extracted, never counts toward promotion, and extraction still skips lbg's own draft and chat dirs. Every later draft or revise of the same skill gets it in the prompt (`<review_feedback>`, newest first, size-capped) as decisions to keep, and drafts of other skills in the same scope get the reasons for rejections there (`<rejected_nearby>`). Feedback belongs to its proposal, so it moves with the proposal's history when a skill's node is replaced. `lbg proposal show` lists it.
+
+### Private terms
+
+`src/pipeline/privacy.ts` is a gate for repositories that are published (`config.privacy.publicRepos`). Knowledge about such a repo often names things that must not be published, and a rule like "never mention X here" can't be written into that repo without breaking itself. The gate is keyword-based, with no model in it:
+
+- `privateHits` finds the `config.privacy.privateTerms` (plain text, or `/regex/flags`) that a set of drafted files would **add**: lines the file on disk doesn't already have, and the path of a new file. Existing text never blocks an unrelated change.
+- `verifyDraft` reports them as problems, so drafts, one-shot and chat revisions and hand edits are all refused. During drafting the model gets one retry.
+- `acceptProposal` checks again, against the files as they are now, and `--force` doesn't override it. That also covers proposals drafted before a term was listed. `proposal show` prints the same warning.
+- `commitMessageFor` drops the drafter's summary when it contains a term, since the message is published as well.
+
+It only refuses. Where private knowledge about a public repo should live instead, and whether the drafter should be told that an item is private, is not decided yet.
 
 ## 8. Models (`src/pi/run-pi.ts`)
 
@@ -316,7 +329,7 @@ src/
   pipeline/
     fingerprint.ts prefilter.ts redact.ts process.ts extract.ts
     sync.ts insert.ts treescore.ts stats.ts curate.ts
-    render.ts accept.ts revise.ts interactive.ts
+    render.ts accept.ts revise.ts interactive.ts privacy.ts
     run.ts                   the lbg run pass
   skills/                    parse SKILL.md / AGENTS.md, repo resolution
   pi/run-pi.ts run-claude.ts claude-guard.ts claude-guard-hook.ts guard.ts guard-extension.ts
@@ -330,6 +343,7 @@ test/
 | Topic               | Decision                                                                                                                                                                         |
 | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Repo knowledge      | Goes into the repo, never into a global skill: the document or `AGENTS.md` section that is about it; else `AGENTS.md` for short rules, `.agents/skills/<name>/` for procedures.  |
+| Public repos        | A keyword gate, not a model: nothing that adds a listed private term to a listed public repo is stored or written.                                                               |
 | History             | Backfill all history on the first run; dedup state makes re-runs cheap.                                                                                                          |
 | Resumed sessions    | Change tokens plus per-turn fingerprints: only new turns are extracted, even when an agent copies old history into a new file.                                                   |
 | Models and provider | One agent for every stage (`agent`: pi or Claude Code), with that agent's model: its own default, or `pi.model` / `claudeCode.model` in lbg's config.                            |

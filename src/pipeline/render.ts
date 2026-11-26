@@ -28,6 +28,7 @@ import {
 } from "../state/tree.ts";
 import { truncate } from "../util/text.ts";
 import { applyExclusions, type Rehomed } from "./exclude.ts";
+import { privateHits, privateProblems, privateRetryPrompt } from "./privacy.ts";
 import { containsSecrets } from "./redact.ts";
 import { reviewFeedbackPrompt } from "./review.ts";
 import { checkScope, scopeProblem, scopeRetryPrompt } from "./scope.ts";
@@ -543,7 +544,18 @@ export function verifyDraft(
     if (f.content.includes("[REDACTED"))
       problems.push(`${f.path} contains a [REDACTED] placeholder`);
   }
+  problems.push(...privateProblems(draftPrivateHits(files, base, target, cfg)));
   return problems;
+}
+
+/** Private terms the draft would add, when its target is a public repo (see privacy.ts). */
+export function draftPrivateHits(
+  files: DraftFile[],
+  base: Map<string, string>,
+  target: RenderTarget,
+  cfg: Config,
+) {
+  return privateHits(files, target.root, cfg, (p) => base.get(p));
 }
 
 // ---- driver -----------------------------------------------------------------------------
@@ -680,19 +692,35 @@ export async function draftSkill(
     let report = res.value;
     let files = await diffSnapshot(base, scratch, target.writable);
     let problems = verifyDraft(files, base, target, cfg);
-    // A live skill's scope: one retry, in the same scratch copy, if the description took on a new subject.
+    // Two problems get one retry, in the same scratch copy: a live skill's description that took
+    // on a new subject, and private terms added to a public repo. Anything else fails right away.
     const live = skill.origin === "file";
-    let scope = problems.length
-      ? undefined
-      : checkScope(files, base, target, kind, live);
-    if (scope?.widened) {
+    let priv = draftPrivateHits(files, base, target, cfg);
+    const onlyPrivate = () =>
+      priv.length > 0 && problems.length === privateProblems(priv).length;
+    let scope =
+      problems.length && !onlyPrivate()
+        ? undefined
+        : checkScope(files, base, target, kind, live);
+    if (scope?.widened || onlyPrivate()) {
+      const fixes = [
+        ...(scope?.widened ? [scopeRetryPrompt(scope)] : []),
+        ...(onlyPrivate() ? [privateRetryPrompt(priv)] : []),
+      ];
       log(
-        `draft ${target.skillName}: description widens the scope (${scope.added.join(", ")}); asking the drafter to fix it`,
+        `draft ${target.skillName}: ${[
+          ...(scope?.widened
+            ? [`description widens the scope (${scope.added.join(", ")})`]
+            : []),
+          ...(onlyPrivate()
+            ? ["adds private terms to a public repository"]
+            : []),
+        ].join("; ")}; asking the drafter to fix it`,
       );
       const retry = await runner.run({
         ...agentModel(cfg),
         systemPrompt: DRAFT_SYSTEM_PROMPT,
-        prompt: `${buildDraftPrompt(skill, kind, target, siblings, undefined, review).replace(/\nWrite the files now, then call report_draft\.$/, "")}\n\nThe files in the current directory are your draft.\n\n${scopeRetryPrompt(scope)}`,
+        prompt: `${buildDraftPrompt(skill, kind, target, siblings, undefined, review).replace(/\nWrite the files now, then call report_draft\.$/, "")}\n\nThe files in the current directory are your draft.\n\n${fixes.join("\n\n")}`,
         tools: [...GUARDED_TOOLS],
         fileGuard: { root: scratch, writable: target.writable },
         resultTool: {
@@ -708,6 +736,7 @@ export async function draftSkill(
       };
       files = await diffSnapshot(base, scratch, target.writable);
       problems = verifyDraft(files, base, target, cfg);
+      priv = draftPrivateHits(files, base, target, cfg);
       scope = problems.length
         ? undefined
         : checkScope(files, base, target, kind, live);

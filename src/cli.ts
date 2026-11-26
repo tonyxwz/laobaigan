@@ -18,6 +18,7 @@ import {
   acceptProposal,
   commitTargetFor,
   newSinceDraft,
+  privateHitsFor,
   proposalDiff,
   proposalView,
   rejectProposal,
@@ -30,6 +31,7 @@ import {
   editProposal,
   type InteractiveResult,
 } from "./pipeline/interactive.ts";
+import { privateProblems } from "./pipeline/privacy.ts";
 import {
   type ProcessOptions,
   processSessions,
@@ -880,6 +882,16 @@ async function main(argv: string[]): Promise<number> {
                 `  lbg proposal revise ${id} rebases it onto the current files; accept refuses it until then (or use --force).\n`,
               );
             }
+            const priv =
+              p.status === "open" ? await privateHitsFor(p, cfg) : [];
+            if (priv.length)
+              out(
+                `\n⚠ private terms: accept will refuse this draft until they are gone (lbg proposal revise ${id} / edit ${id}):\n${privateProblems(
+                  priv,
+                )
+                  .map((x) => `  - ${x}`)
+                  .join("\n")}\n`,
+              );
             const dropped =
               p.status === "open" ? props.droppedSinceDraft(p) : [];
             if (dropped.length)
@@ -919,7 +931,7 @@ async function main(argv: string[]): Promise<number> {
           let r: { paths: string[]; commitMessage: string };
           if (before.status === "accepted" && template) {
             // Accepted earlier without --commit: just commit its files now.
-            const t = await commitTargetFor(tree, before);
+            const t = await commitTargetFor(tree, before, cfg);
             if (t.changedSince.length) {
               out(
                 `note: changed since #${id} was accepted (your edits are committed as they are now): ${t.changedSince.join(", ")}\n`,

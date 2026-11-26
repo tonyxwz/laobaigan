@@ -147,7 +147,10 @@ depth 2  section  a "##" section of SKILL.md or of a document, a references/*.md
 : The file tools the drafting model gets (`read`, `ls`, `find`, `grep`, `write`, `edit`), confined to the scratch dir, with writes allowed only to the skill's paths. No bash (`src/pi/guard.ts`).
 
 **Verification**
-: Checks on a draft before it's stored: only the target paths changed, frontmatter `name` matches the folder, the description fits, `SKILL.md` isn't too long, other `AGENTS.md` sections are untouched, no secrets.
+: Checks on a draft before it's stored: only the target paths changed, frontmatter `name` matches the folder, the description fits, `SKILL.md` isn't too long, other `AGENTS.md` sections are untouched, no secrets, no private terms added to a public repo.
+
+**Private terms**
+: Words listed in `privacy.privateTerms` that must never be added to a repository listed in `privacy.publicRepos`. A keyword gate (`src/pipeline/privacy.ts`): drafts, revisions and accepts that add one are refused.
 
 **Proposal**
 : One drafted change to one skill, stored in lbg's database: the changed files (path, hash of the original, new content), a summary for you, the evidence, and the cost. lbg doesn't use git.

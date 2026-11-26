@@ -178,6 +178,15 @@ export interface Config {
    * knowledge, next to AGENTS.md and .agents/skills. Default ["docs"]; [] turns it off.
    */
   repoDocs: string[];
+  privacy: {
+    /** Repositories whose files are published. Drafts for them are checked against privateTerms. */
+    publicRepos: string[];
+    /**
+     * Terms that must never be added to a public repo: plain text (case-insensitive), or
+     * "/regex/flags". A draft or accept that adds one is refused.
+     */
+    privateTerms: string[];
+  };
   /** Topics I want to exist (future skills / AGENTS.md sections); always offered as homes. */
   topics: DeclaredTopic[];
   clustering: {
@@ -270,6 +279,7 @@ export const DEFAULT_CONFIG: Config = {
     agentsMdMaxChars: 1200,
   },
   repoDocs: ["docs"],
+  privacy: { publicRepos: [], privateTerms: [] },
   topics: [],
   clustering: { guidance: "" },
 };
@@ -377,6 +387,7 @@ export function loadConfig(path = CONFIG_PATH): Config {
     },
     stateDir: expandPath(c.stateDir),
     repoDocs: validateRepoDocs(c.repoDocs),
+    privacy: validatePrivacy(c.privacy),
   };
 }
 
@@ -392,6 +403,28 @@ function validateRepoDocs(v: unknown): string[] {
       'config.repoDocs must be a list of directories relative to a repository root, e.g. ["docs"]',
     );
   return v.map((d) => d.replace(/\/+$/, ""));
+}
+
+function validatePrivacy(v: unknown): Config["privacy"] {
+  const o = (v ?? {}) as Record<string, unknown>;
+  const repos = o.publicRepos ?? [];
+  const terms = o.privateTerms ?? [];
+  if (!strings(repos))
+    throw new Error("config.privacy.publicRepos must be a list of paths");
+  if (!strings(terms))
+    throw new Error("config.privacy.privateTerms must be a list of strings");
+  for (const t of terms) {
+    const m = /^\/(.+)\/([a-z]*)$/.exec(t);
+    if (!m) continue;
+    try {
+      new RegExp(m[1]!, m[2]);
+    } catch (e) {
+      throw new Error(
+        `config.privacy.privateTerms: bad pattern ${t}: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+  }
+  return { publicRepos: repos.map(expandPath), privateTerms: terms };
 }
 
 /** Settings that would switch off (or let tools around) lbg's guard hook. */

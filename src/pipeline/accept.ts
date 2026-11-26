@@ -16,6 +16,13 @@ import {
   Rejections,
 } from "../state/rejections.ts";
 import { subtreeNuggets, type Tree } from "../state/tree.ts";
+import {
+  isPublicRepo,
+  type PrivateHit,
+  privateHits,
+  privateProblems,
+  privateTermsIn,
+} from "./privacy.ts";
 import { isAllowed } from "./render.ts";
 import { syncTree } from "./sync.ts";
 
@@ -56,6 +63,17 @@ export async function conflicts(p: ProposalRow): Promise<Conflict[]> {
     }
   }
   return out;
+}
+
+/** Private terms accepting the proposal would add to a public repo (against the files on disk now). */
+export async function privateHitsFor(
+  p: ProposalRow,
+  cfg: Pick<Config, "privacy">,
+): Promise<PrivateHit[]> {
+  if (p.scope !== "repo") return [];
+  const now = new Map<string, string | null>();
+  for (const f of p.files) now.set(f.path, await current(p.targetRoot, f.path));
+  return privateHits(p.files, p.targetRoot, cfg, (path) => now.get(path));
 }
 
 function checkPath(p: ProposalRow, f: DraftFile): void {
@@ -101,11 +119,19 @@ export async function acceptProposal(
       `Proposal #${id} is stale: ${c.map((x) => `${x.path} ${x.reason}`).join("; ")}. Redraft it with lbg proposal revise ${id}, or use --force to overwrite.`,
     );
   }
+  // Not something --force overrides: revise or edit the draft, or change the config.
+  const priv = await privateHitsFor(p, cfg);
+  if (priv.length) {
+    throw new Error(
+      `Proposal #${id} is refused: ${privateProblems(priv).join("; ")}. ` +
+        `Take them out with lbg proposal revise ${id} or lbg proposal edit ${id} (privacy.privateTerms in the config lists the terms).`,
+    );
+  }
   const res: AcceptResult = {
     written: [],
     deleted: [],
     paths: [],
-    commitMessage: commitMessageFor(tree, p),
+    commitMessage: commitMessageFor(tree, p, cfg),
   };
   for (const f of p.files) {
     const abs = join(p.targetRoot, f.path);
@@ -172,6 +198,7 @@ export interface CommitTarget {
 export async function commitTargetFor(
   tree: Tree,
   p: ProposalRow,
+  cfg?: Pick<Config, "privacy">,
 ): Promise<CommitTarget> {
   if (p.status !== "accepted")
     throw new Error(
@@ -184,7 +211,7 @@ export async function commitTargetFor(
   }
   return {
     paths: p.files.map((f) => join(p.targetRoot, f.path)),
-    commitMessage: commitMessageFor(tree, p),
+    commitMessage: commitMessageFor(tree, p, cfg),
     changedSince,
   };
 }
@@ -403,8 +430,23 @@ export async function proposalDiff(p: ProposalRow): Promise<string> {
   return (await proposalView(p)).diff;
 }
 
-/** A commit message you can use; lbg itself never commits. */
-export function commitMessageFor(tree: Tree, p: ProposalRow): string {
+/**
+ * A commit message you can use; lbg itself never commits. For a public repo the drafter's
+ * summary is left out when it contains a private term: the message is published too.
+ */
+export function commitMessageFor(
+  tree: Tree,
+  p: ProposalRow,
+  cfg?: Pick<Config, "privacy">,
+): string {
+  const summary =
+    p.summary &&
+    cfg &&
+    p.scope === "repo" &&
+    isPublicRepo(p.targetRoot, cfg) &&
+    privateTermsIn(p.summary, cfg).length
+      ? undefined
+      : p.summary;
   const verb =
     p.kind === "new"
       ? "add"
@@ -416,7 +458,7 @@ export function commitMessageFor(tree: Tree, p: ProposalRow): string {
   return [
     `skills: ${verb} ${p.skillName ?? `#${p.nodeId}`}`,
     "",
-    ...(p.summary ? [p.summary.trim(), ""] : []),
+    ...(summary ? [summary.trim(), ""] : []),
     `From ${nuggets.length} explanation(s) in ${p.sessions} session(s) (${agents.join(", ")}), drafted by laobaigan.`,
   ].join("\n");
 }
