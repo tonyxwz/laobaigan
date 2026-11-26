@@ -1,7 +1,7 @@
 import { basename } from "node:path";
 import type { Config } from "../config.ts";
 import { parseFrontmatter } from "../skills/index.ts";
-import { AGENT_SKILL_DIRS } from "../skills/parse.ts";
+import { AGENT_SKILL_DIRS } from "../skills/layout.ts";
 import type { DraftFile } from "../state/proposals.ts";
 import { privateHits, privateProblems } from "./privacy.ts";
 import { containsSecrets } from "./redact.ts";

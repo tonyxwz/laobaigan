@@ -2,15 +2,15 @@ import { existsSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import type { Config } from "../config.ts";
 import type { FileGuard } from "../pi/guard.ts";
-import { isValidSkillName } from "../skills/name.ts";
 import {
   AGENT_FILES,
   AGENT_RULE_DIRS,
   AGENT_SKILL_DIRS,
   distinctExisting,
-  fileNodeKind,
   repoSkillDirs,
-} from "../skills/parse.ts";
+} from "../skills/layout.ts";
+import { isValidSkillName } from "../skills/name.ts";
+import { fileNodeKind } from "../skills/parse.ts";
 import { resolveRepo } from "../skills/repo.ts";
 import { subtreeNuggets, type TreeNode } from "../state/tree.ts";
 import { evidenceText, skillName } from "./stats.ts";

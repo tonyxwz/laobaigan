@@ -1,7 +1,8 @@
 import { readFile } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 import { exists, subdirs } from "../util/fs.ts";
-import { repoDocFiles, repoSkillDirs, splitByHeading } from "./parse.ts";
+import { repoDocFiles, repoSkillDirs } from "./layout.ts";
+import { splitByHeading } from "./parse.ts";
 
 export interface SkillInfo {
   name: string;
