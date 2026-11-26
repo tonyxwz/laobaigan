@@ -578,11 +578,18 @@ export function verifyDraft(
     problems.push(
       `${target.agentsMd} doesn't mention ${target.doc}; the change must point to it`,
     );
+  // What the draft adds, not what the file already had: a document may legitimately show a
+  // placeholder or an example key, and that must not block every later change to it.
   for (const f of files) {
     if (f.content === null) continue;
-    if (containsSecrets(f.content))
+    const had = new Set((base.get(f.path) ?? "").split("\n"));
+    const added = f.content
+      .split("\n")
+      .filter((l) => !had.has(l))
+      .join("\n");
+    if (containsSecrets(added))
       problems.push(`${f.path} looks like it contains a secret`);
-    if (f.content.includes("[REDACTED"))
+    if (added.includes("[REDACTED"))
       problems.push(`${f.path} contains a [REDACTED] placeholder`);
   }
   problems.push(...privateProblems(draftPrivateHits(files, base, target, cfg)));

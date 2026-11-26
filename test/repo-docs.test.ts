@@ -285,6 +285,33 @@ describe("repo documents as homes", () => {
     await discardDraft(ws);
   });
 
+  it("a placeholder the document already shows doesn't block a change; one the draft adds does", async () => {
+    const s = await repoSetup();
+    await writeFile(
+      join(s.repo, "docs", "development.md"),
+      `${DOC}\nExample: replace it with [REDACTED].\n`,
+    );
+    await s.sync();
+    const doc = s.node("docs-development");
+    s.teach(doc.id);
+    const edit = (newText: string) =>
+      calls(
+        fauxToolCall("edit", {
+          path: "docs/development.md",
+          edits: [{ oldText: "Tabs.", newText }],
+        }),
+      );
+    const bad = await fauxRunner([edit("Token is [REDACTED]."), report()]);
+    expect(await draftSkill(s.tree, bad, s.cfg, doc.id)).toMatchObject({
+      status: "failed",
+      reason: expect.stringMatching(/contains a \[REDACTED\] placeholder/),
+    });
+    const good = await fauxRunner([edit("Tabs, always."), report()]);
+    expect(await draftSkill(s.tree, good, s.cfg, doc.id)).toMatchObject({
+      status: "open",
+    });
+  });
+
   it("AGENTS.md is always loaded: text it already states earns nothing", async () => {
     const s = await repoSetup();
     const build = s.node("build");
