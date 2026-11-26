@@ -447,6 +447,189 @@ function scopeOf(n: NuggetRow): Scope | undefined {
 const scopeKey = (s: Scope) =>
   s.scope === "global" ? "global" : `repo:${s.repo}`;
 
+/** What the passes of one insert share. */
+interface InsertContext {
+  tree: Tree;
+  cfg: Config;
+  res: InsertResult;
+  maxCalls: number;
+  log: (m: string) => void;
+  /** One model call, counted against the budget. */
+  call: <S extends TSchema>(req: PiRequest<S>) => Promise<Static<S>>;
+}
+
+/** Group nuggets by the tree they belong to. A repo nugget with no repo to go to stays unplaced. */
+function groupByScope(
+  tree: Tree,
+  pending: NuggetRow[],
+  repairs: string[],
+): { scope: Scope; nuggets: NuggetRow[] }[] {
+  const byScope = new Map<string, { scope: Scope; nuggets: NuggetRow[] }>();
+  for (const n of pending) {
+    const s = scopeOf(n);
+    if (!s) {
+      repairs.push(
+        `nugget ${n.id}: repo-specific but no repository or working directory; left unplaced`,
+      );
+      continue;
+    }
+    if (s.scope === "repo" && s.repo && !n.repo) {
+      tree.db.db
+        .prepare("UPDATE nugget SET repo = ? WHERE id = ?")
+        .run(s.repo, n.id);
+      n.repo = s.repo;
+    }
+    const e = byScope.get(scopeKey(s)) ?? { scope: s, nuggets: [] };
+    e.nuggets.push(n);
+    byScope.set(scopeKey(s), e);
+  }
+  return [...byScope.values()];
+}
+
+/** Level 1: which skill each nugget of the batch goes to. Undefined when the call budget is spent. */
+async function routeToSkills(
+  ctx: InsertContext,
+  scope: Scope,
+  root: TreeNode,
+  batch: NuggetRow[],
+  rejected: Map<number, MemoryRow>,
+): Promise<SkillPlan | undefined> {
+  const only = batch.length === 1 ? batch[0] : undefined;
+  if (root.children.length === 0 && only)
+    return {
+      newSkills: [
+        {
+          key: "solo",
+          title: only.title,
+          name: skillName(only.title),
+          description: only.triggers[0] ?? only.title,
+          nuggetIds: [only.id],
+        },
+      ],
+      placements: [],
+      repairs: [],
+    };
+  if (ctx.res.calls >= ctx.maxCalls) return undefined;
+  ctx.log(
+    `insert ${scopeKey(scope)}: ${batch.length} nugget(s) vs ${root.children.length} skill(s)`,
+  );
+  return validateSkillRoute(
+    await ctx.call({
+      ...agentModel(ctx.cfg),
+      systemPrompt: withGuidance(SKILL_SYSTEM_PROMPT, ctx.cfg),
+      prompt: buildSkillPrompt(root, batch, rejected),
+      resultTool: {
+        name: "route_to_skills",
+        description: "Place each new nugget in a skill.",
+        parameters: SkillRouteSchema,
+      },
+    }),
+    root,
+    batch,
+  );
+}
+
+/** Create the plan's new skills and group the batch by the skill each nugget goes to. */
+function groupBySkill(
+  ctx: InsertContext,
+  rootId: number,
+  plan: SkillPlan,
+  batch: NuggetRow[],
+): Map<number, NuggetRow[]> {
+  const toSkill = new Map<number, NuggetRow[]>();
+  const byId = new Map(batch.map((n) => [n.id, n]));
+  const pick = (ids: number[]) =>
+    ids.map((x) => byId.get(x)).filter((n) => n !== undefined);
+  ctx.tree.db.tx(() => {
+    for (const s of plan.newSkills) {
+      const id = ctx.tree.createNode(rootId, {
+        title: s.title,
+        name: s.name,
+        description: s.description,
+      });
+      ctx.res.skillsCreated.push(s.name);
+      toSkill.set(id, pick(s.nuggetIds));
+    }
+  });
+  for (const p of plan.placements)
+    toSkill.set(p.skillId, [
+      ...(toSkill.get(p.skillId) ?? []),
+      ...pick([p.nuggetId]),
+    ]);
+  return toSkill;
+}
+
+/** Level 2: which section of the skill each nugget goes to. Without a call, all go to the body. */
+async function routeToSections(
+  ctx: InsertContext,
+  skill: TreeNode,
+  ns: NuggetRow[],
+): Promise<SectionPlan> {
+  const wanted = wantsSections(skill, ns.length);
+  if (wanted && ctx.res.calls < ctx.maxCalls) {
+    ctx.log(
+      `insert ${skill.name ?? skill.title}: ${ns.length} nugget(s) vs ${skill.children.length} section(s)`,
+    );
+    return validateSectionRoute(
+      await ctx.call({
+        ...agentModel(ctx.cfg),
+        systemPrompt: withGuidance(SECTION_SYSTEM_PROMPT, ctx.cfg),
+        prompt: buildSectionPrompt(skill, ns),
+        resultTool: {
+          name: "route_to_sections",
+          description: "Place each nugget in a section of this skill.",
+          parameters: SectionRouteSchema,
+        },
+      }),
+      skill,
+      ns,
+    );
+  }
+  if (wanted)
+    ctx.log(
+      `insert: call budget reached; ${ns.length} nugget(s) go to the body of ${skill.name ?? skill.title}`,
+    );
+  return {
+    newSections: [],
+    placements: ns.map((n) => ({ nuggetId: n.id, covered: false })),
+    repairs: [],
+  };
+}
+
+/** Create the plan's new sections and attach every nugget where the plan put it. */
+function applySectionPlan(
+  ctx: InsertContext,
+  skill: TreeNode,
+  sp: SectionPlan,
+): void {
+  const { tree, res } = ctx;
+  tree.db.tx(() => {
+    for (const s of sp.newSections) {
+      const id = tree.createNode(skill.id, {
+        title: s.title,
+        description: s.description,
+      });
+      res.sectionsCreated.push(`${skill.name ?? skill.title} › ${s.title}`);
+      for (const n of s.nuggetIds) tree.attachNugget(n, id);
+      res.placed += s.nuggetIds.length;
+    }
+    for (const p of sp.placements) {
+      const target = p.sectionId ?? skill.id;
+      tree.attachNugget(p.nuggetId, target);
+      // Only live text can already "cover" something; latent text is our own summary.
+      const live =
+        (p.sectionId
+          ? skill.children.find((c) => c.id === p.sectionId)?.origin
+          : skill.origin) === "file";
+      if (p.covered && live) {
+        tree.setCovered(p.nuggetId, target);
+        res.covered++;
+      }
+      res.placed++;
+    }
+  });
+}
+
 /**
  * Place nuggets in the tree (default: all unplaced ones). Call `syncTree` first so
  * live skills and declared topics are in the tree to be routed into.
@@ -476,151 +659,53 @@ export async function insertNuggets(
     deferred: 0,
     caught: [],
   };
-  const call = async <S extends TSchema>(
-    req: PiRequest<S>,
-  ): Promise<Static<S>> => {
-    const r = await runner.run(req);
-    res.calls++;
-    res.usage = addUsage(res.usage, r.usage);
-    return r.value;
+  const ctx: InsertContext = {
+    tree,
+    cfg,
+    res,
+    maxCalls,
+    log,
+    call: async (req) => {
+      const r = await runner.run(req);
+      res.calls++;
+      res.usage = addUsage(res.usage, r.usage);
+      return r.value;
+    },
   };
 
   const pending = opts.nuggets ?? tree.unplacedNuggets();
-  const byScope = new Map<string, { scope: Scope; nuggets: NuggetRow[] }>();
-  for (const n of pending) {
-    const s = scopeOf(n);
-    if (!s) {
-      res.repairs.push(
-        `nugget ${n.id}: repo-specific but no repository or working directory; left unplaced`,
-      );
-      continue;
-    }
-    if (s.scope === "repo" && !n.repo) {
-      tree.db.db
-        .prepare("UPDATE nugget SET repo = ? WHERE id = ?")
-        .run(s.repo!, n.id);
-      n.repo = s.repo!;
-    }
-    const e = byScope.get(scopeKey(s)) ?? { scope: s, nuggets: [] };
-    e.nuggets.push(n);
-    byScope.set(scopeKey(s), e);
-  }
-
-  for (const { scope, nuggets: all } of byScope.values()) {
+  for (const { scope, nuggets: all } of groupByScope(
+    tree,
+    pending,
+    res.repairs,
+  )) {
     for (let i = 0; i < all.length; i += batchSize) {
       const batch = all.slice(i, i + batchSize);
       const rootId = tree.ensureRoot(scope);
-      const root = tree.subtree(rootId)!;
+      const root = tree.subtree(rootId);
+      if (!root) throw new Error(`no tree root #${rootId}`);
       // Rejected skills, with the rule of their newest memory: look-alikes go there, not to a twin.
       const memories = new Rejections(tree.db);
-      const inEffect = memories.byNode();
       const rejected = new Map(
-        [...inEffect].filter(([id]) =>
+        [...memories.byNode()].filter(([id]) =>
           root.children.some((c) => c.id === id && c.status === "rejected"),
         ),
       );
 
-      // ---- level 1: which skill?
-      let plan: SkillPlan;
-      if (root.children.length === 0 && batch.length === 1) {
-        const n = batch[0]!;
-        plan = {
-          newSkills: [
-            {
-              key: "solo",
-              title: n.title,
-              name: skillName(n.title),
-              description: n.triggers[0] ?? n.title,
-              nuggetIds: [n.id],
-            },
-          ],
-          placements: [],
-          repairs: [],
-        };
-      } else {
-        if (res.calls >= maxCalls) {
-          res.deferred += all.length - i;
-          log(
-            `insert ${scopeKey(scope)}: call budget (${maxCalls}) reached; ${all.length - i} nugget(s) wait for the next run`,
-          );
-          break;
-        }
+      const plan = await routeToSkills(ctx, scope, root, batch, rejected);
+      if (!plan) {
+        res.deferred += all.length - i;
         log(
-          `insert ${scopeKey(scope)}: ${batch.length} nugget(s) vs ${root.children.length} skill(s)`,
+          `insert ${scopeKey(scope)}: call budget (${maxCalls}) reached; ${all.length - i} nugget(s) wait for the next run`,
         );
-        plan = validateSkillRoute(
-          await call({
-            ...agentModel(cfg),
-            systemPrompt: withGuidance(SKILL_SYSTEM_PROMPT, cfg),
-            prompt: buildSkillPrompt(root, batch, rejected),
-            resultTool: {
-              name: "route_to_skills",
-              description: "Place each new nugget in a skill.",
-              parameters: SkillRouteSchema,
-            },
-          }),
-          root,
-          batch,
-        );
+        break;
       }
       res.repairs.push(...plan.repairs);
 
-      // Group by target skill, creating new skills.
-      const toSkill = new Map<number, NuggetRow[]>();
-      const byId = new Map(batch.map((n) => [n.id, n]));
-      tree.db.tx(() => {
-        for (const s of plan.newSkills) {
-          const id = tree.createNode(rootId, {
-            title: s.title,
-            name: s.name,
-            description: s.description,
-          });
-          res.skillsCreated.push(s.name);
-          toSkill.set(
-            id,
-            s.nuggetIds.map((x) => byId.get(x)!),
-          );
-        }
-      });
-      for (const p of plan.placements)
-        toSkill.set(p.skillId, [
-          ...(toSkill.get(p.skillId) ?? []),
-          byId.get(p.nuggetId)!,
-        ]);
-
-      // ---- level 2: which section?
-      for (const [skillId, ns] of toSkill) {
-        const skill = tree.subtree(skillId)!;
-        let sp: SectionPlan;
-        if (!wantsSections(skill, ns.length) || res.calls >= maxCalls) {
-          if (wantsSections(skill, ns.length))
-            log(
-              `insert: call budget reached; ${ns.length} nugget(s) go to the body of ${skill.name ?? skill.title}`,
-            );
-          sp = {
-            newSections: [],
-            placements: ns.map((n) => ({ nuggetId: n.id, covered: false })),
-            repairs: [],
-          };
-        } else {
-          log(
-            `insert ${skill.name ?? skill.title}: ${ns.length} nugget(s) vs ${skill.children.length} section(s)`,
-          );
-          sp = validateSectionRoute(
-            await call({
-              ...agentModel(cfg),
-              systemPrompt: withGuidance(SECTION_SYSTEM_PROMPT, cfg),
-              prompt: buildSectionPrompt(skill, ns),
-              resultTool: {
-                name: "route_to_sections",
-                description: "Place each nugget in a section of this skill.",
-                parameters: SectionRouteSchema,
-              },
-            }),
-            skill,
-            ns,
-          );
-        }
+      for (const [skillId, ns] of groupBySkill(ctx, rootId, plan, batch)) {
+        const skill = tree.subtree(skillId);
+        if (!skill) throw new Error(`no skill #${skillId}`);
+        const sp = await routeToSections(ctx, skill, ns);
         res.repairs.push(...sp.repairs);
         const caught = rejected.get(skillId);
         if (caught) {
@@ -631,33 +716,7 @@ export async function insertNuggets(
             nuggets: ns.length,
           });
         }
-        tree.db.tx(() => {
-          for (const s of sp.newSections) {
-            const id = tree.createNode(skillId, {
-              title: s.title,
-              description: s.description,
-            });
-            res.sectionsCreated.push(
-              `${skill.name ?? skill.title} › ${s.title}`,
-            );
-            for (const n of s.nuggetIds) tree.attachNugget(n, id);
-            res.placed += s.nuggetIds.length;
-          }
-          for (const p of sp.placements) {
-            const target = p.sectionId ?? skillId;
-            tree.attachNugget(p.nuggetId, target);
-            // Only live text can already "cover" something; latent text is our own summary.
-            const live =
-              (p.sectionId
-                ? skill.children.find((c) => c.id === p.sectionId)?.origin
-                : skill.origin) === "file";
-            if (p.covered && live) {
-              tree.setCovered(p.nuggetId, target);
-              res.covered++;
-            }
-            res.placed++;
-          }
-        });
+        applySectionPlan(ctx, skill, sp);
       }
     }
   }
