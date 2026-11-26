@@ -5,7 +5,12 @@ import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { agentModel, type Config, DEFAULT_PATHS } from "../config.ts";
+import {
+  type AgentKind,
+  agentModel,
+  type Config,
+  DEFAULT_PATHS,
+} from "../config.ts";
 import { claudeToolsFor } from "../pi/claude-guard.ts";
 import { GUARDED_TOOLS } from "../pi/guard.ts";
 import {
@@ -127,6 +132,157 @@ export interface PiChatOptions {
   claudeProjects?: string;
 }
 
+/** The agent's side of an interactive revise: its terminal program and where its chat ends up. */
+interface ChatAgent {
+  /** The agent's name, for the proposal's note. */
+  label: string;
+  /** Run the agent in the terminal until I exit: a new chat first, the same one after that. */
+  launch: (first: boolean) => void;
+  /** What was said, read from the agent's session files. */
+  readChat: () => Promise<Turn[]>;
+  /** Remove what the chat left outside lbg's temp dir. */
+  cleanup: () => Promise<void>;
+}
+
+/** What an agent needs to start a chat on a draft. */
+interface ChatSetup {
+  cfg: Config;
+  ws: DraftWorkspace;
+  /** lbg's temp dir for this chat. */
+  side: string;
+  /** The system prompt, as a file. */
+  promptFile: string;
+  /** The environment, with the file guard in LBG_GUARD. */
+  env: NodeJS.ProcessEnv;
+  /** The first message, sent for me. */
+  opening: string;
+  /** The session's display name. */
+  name: string;
+  launcher: Launcher;
+  opts: PiChatOptions;
+}
+
+/** pi (`pi` on PATH: my TUI and pi settings) with lbg's guard extension. */
+function piChat(setup: ChatSetup): ChatAgent {
+  const { cfg, ws, side, promptFile, env, opening, name, launcher, opts } =
+    setup;
+  const { model, thinking } = agentModel(cfg);
+  const base = [
+    "--session-dir",
+    join(side, "sessions"),
+    // The scratch dir holds the draft (e.g. .agents/skills/<name>/), which pi would treat as
+    // project resources and ask to trust. Never load them: the draft is data, not a skill to use.
+    "--no-approve",
+    "--no-extensions",
+    "--no-skills",
+    "--no-context-files",
+    "--no-prompt-templates",
+    "--no-mcp",
+    "-e",
+    EXTENSION,
+    "--tools",
+    GUARDED_TOOLS.join(","),
+    "--append-system-prompt",
+    promptFile,
+    "--name",
+    name,
+    ...(model ? ["--model", model] : []),
+    ...(thinking ? ["--thinking", thinking] : []),
+  ];
+  return {
+    label: "pi",
+    launch: (first) =>
+      void launcher(
+        opts.pi ?? "pi",
+        first ? [...base, opening] : [...base, "--continue"],
+        { cwd: ws.scratch, env },
+      ),
+    readChat: () => readChatTurns(join(side, "sessions"), opening),
+    cleanup: async () => {},
+  };
+}
+
+/** My `claude` CLI with its built-in file tools and lbg's guard as a PreToolUse hook. */
+async function claudeChat(setup: ChatSetup): Promise<ChatAgent> {
+  const { cfg, ws, promptFile, env, opening, name, launcher, opts } = setup;
+  const { model, thinking } = agentModel(cfg);
+  const sessionId = randomUUID();
+  // My claudeCode.settings first, then lbg's: the guard hook runs next to any of mine.
+  const settings = claudeSettings(cfg.claudeCode.settings, {
+    ...CLAUDE_CONTEXT_SETTINGS,
+    hooks: {
+      PreToolUse: [
+        {
+          matcher: "*",
+          hooks: [
+            {
+              type: "command",
+              command: `${shq(process.execPath)} ${shq(claudeHookPath())}`,
+            },
+          ],
+        },
+      ],
+    },
+  });
+  const effort = claudeEffort(thinking);
+  // Every option before the prompt, each with its value in one argument where it takes a
+  // list (--tools=…), so nothing swallows the prompt. The prompt must come last: a wrapper
+  // `claude` may parse the command line itself, and some take a leading prompt for a
+  // subcommand, then drop --settings (and with it lbg's guard hook).
+  const base = [
+    `--tools=${claudeToolsFor(GUARDED_TOOLS).join(",")}`,
+    // Whatever lbg's hook doesn't allow is denied, never asked.
+    "--permission-mode",
+    "dontAsk",
+    "--settings",
+    JSON.stringify(settings),
+    "--setting-sources",
+    (cfg.claudeCode.settingSources ?? ["user"]).join(","),
+    // Reading the live repository is the hook's call, but Claude Code must know the directory.
+    ...(ws.target.readRoot ? ["--add-dir", ws.target.readRoot] : []),
+    "--strict-mcp-config",
+    "--disable-slash-commands",
+    "--append-system-prompt",
+    await readFile(promptFile, "utf8"),
+    "--name",
+    name,
+    ...(model ? ["--model", model] : []),
+    ...(effort ? ["--effort", effort] : []),
+  ];
+  // No CLAUDE.md / rules / auto-memory, like pi's --no-context-files.
+  const ccEnv = {
+    ...env,
+    ...CLAUDE_CONTEXT_ENV,
+    ...(thinking === "off" ? { MAX_THINKING_TOKENS: "0" } : {}),
+  };
+  const projects = opts.claudeProjects ?? DEFAULT_PATHS.claudeProjects;
+  return {
+    label: "Claude Code",
+    launch: (first) =>
+      void launcher(
+        cfg.claudeCode.executable ?? "claude",
+        first
+          ? [...base, "--session-id", sessionId, opening]
+          : [...base, "--resume", sessionId],
+        { cwd: ws.scratch, env: ccEnv },
+      ),
+    readChat: async () => {
+      const file = await findClaudeSession(projects, sessionId);
+      return file ? readClaudeChatTurns(file, opening) : [];
+    },
+    cleanup: () => removeClaudeSession(projects, sessionId),
+  };
+}
+
+/** One way to chat per agent lbg can be configured with. */
+const CHAT_AGENTS: Record<
+  AgentKind,
+  (setup: ChatSetup) => ChatAgent | Promise<ChatAgent>
+> = {
+  pi: piChat,
+  "claude-code": claudeChat,
+};
+
 export async function chatRevise(
   tree: Tree,
   cfg: Config,
@@ -159,130 +315,31 @@ export async function chatRevise(
     };
     const opening = `This is proposal #${id} (${ws.proposal.kind}) for ${ws.target.skillName}. Read the draft and summarize it in a few lines, then ask me what to change.`;
     const name = `lbg proposal #${id} ${ws.target.skillName}`;
-    const { model, thinking } = agentModel(cfg);
-    let session: (first: boolean) => void;
-    let chat: () => Promise<Turn[]>;
-    let agent: string;
-    if (cfg.agent === "pi") {
-      agent = "pi";
-      const base = [
-        "--session-dir",
-        join(side, "sessions"),
-        // The scratch dir holds the draft (e.g. .agents/skills/<name>/), which pi would treat as
-        // project resources and ask to trust. Never load them: the draft is data, not a skill to use.
-        "--no-approve",
-        "--no-extensions",
-        "--no-skills",
-        "--no-context-files",
-        "--no-prompt-templates",
-        "--no-mcp",
-        "-e",
-        EXTENSION,
-        "--tools",
-        GUARDED_TOOLS.join(","),
-        "--append-system-prompt",
-        promptFile,
-        "--name",
-        name,
-        ...(model ? ["--model", model] : []),
-        ...(thinking ? ["--thinking", thinking] : []),
-      ];
-      session = (first) =>
-        void launcher(
-          opts.pi ?? "pi",
-          first ? [...base, opening] : [...base, "--continue"],
-          { cwd: ws.scratch, env },
-        );
-      chat = () => readChatTurns(join(side, "sessions"), opening);
-    } else {
-      agent = "Claude Code";
-      const sessionId = randomUUID();
-      // My claudeCode.settings first, then lbg's: the guard hook runs next to any of mine.
-      const settings = claudeSettings(cfg.claudeCode.settings, {
-        ...CLAUDE_CONTEXT_SETTINGS,
-        hooks: {
-          PreToolUse: [
-            {
-              matcher: "*",
-              hooks: [
-                {
-                  type: "command",
-                  command: `${shq(process.execPath)} ${shq(claudeHookPath())}`,
-                },
-              ],
-            },
-          ],
-        },
-      });
-      const effort = claudeEffort(thinking);
-      // Every option before the prompt, each with its value in one argument where it takes a
-      // list (--tools=…), so nothing swallows the prompt. The prompt must come last: a wrapper
-      // `claude` may parse the command line itself, and some take a leading prompt for a
-      // subcommand, then drop --settings (and with it lbg's guard hook).
-      const base = [
-        `--tools=${claudeToolsFor(GUARDED_TOOLS).join(",")}`,
-        // Whatever lbg's hook doesn't allow is denied, never asked.
-        "--permission-mode",
-        "dontAsk",
-        "--settings",
-        JSON.stringify(settings),
-        "--setting-sources",
-        (cfg.claudeCode.settingSources ?? ["user"]).join(","),
-        // Reading the live repository is the hook's call, but Claude Code must know the directory.
-        ...(ws.target.readRoot ? ["--add-dir", ws.target.readRoot] : []),
-        "--strict-mcp-config",
-        "--disable-slash-commands",
-        "--append-system-prompt",
-        await readFile(promptFile, "utf8"),
-        "--name",
-        name,
-        ...(model ? ["--model", model] : []),
-        ...(effort ? ["--effort", effort] : []),
-      ];
-      // No CLAUDE.md / rules / auto-memory, like pi's --no-context-files.
-      const ccEnv = {
-        ...env,
-        ...CLAUDE_CONTEXT_ENV,
-        ...(thinking === "off" ? { MAX_THINKING_TOKENS: "0" } : {}),
-      };
-      session = (first) =>
-        void launcher(
-          cfg.claudeCode.executable ?? "claude",
-          first
-            ? [...base, "--session-id", sessionId, opening]
-            : [...base, "--resume", sessionId],
-          {
-            cwd: ws.scratch,
-            env: ccEnv,
-          },
-        );
-      chat = async () => {
-        const file = await findClaudeSession(
-          opts.claudeProjects ?? DEFAULT_PATHS.claudeProjects,
-          sessionId,
-        );
-        return file ? readClaudeChatTurns(file, opening) : [];
-      };
-      cleanups.push(() =>
-        removeClaudeSession(
-          opts.claudeProjects ?? DEFAULT_PATHS.claudeProjects,
-          sessionId,
-        ),
-      );
-    }
+    const chat = await CHAT_AGENTS[cfg.agent]({
+      cfg,
+      ws,
+      side,
+      promptFile,
+      env,
+      opening,
+      name,
+      launcher,
+      opts,
+    });
+    cleanups.push(chat.cleanup);
     const result = await loop(
       tree,
       cfg,
       ws,
-      session,
+      chat.launch,
       opts.ask,
       log,
-      `${ws.proposal.summary ?? ""}${ws.proposal.summary ? "\n" : ""}(Revised in an interactive ${agent} session.)`.trim(),
+      `${ws.proposal.summary ?? ""}${ws.proposal.summary ? "\n" : ""}(Revised in an interactive ${chat.label} session.)`.trim(),
       true, // the chat saw the current evidence
     );
     // Keep what I said: it's review feedback for this skill (the session is deleted next).
     try {
-      const turns = await chat();
+      const turns = await chat.readChat();
       const mine = turns.filter((t) => t.role === "user");
       if (mine.length) {
         new Feedback(tree.db).add({
