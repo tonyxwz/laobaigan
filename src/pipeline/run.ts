@@ -96,71 +96,34 @@ export interface RunDeps {
   now?: () => Date;
 }
 
-export async function runPipeline(
-  deps: RunDeps,
-  opts: RunOptions = {},
-): Promise<RunReport> {
-  const { adapters, db, runner, cfg } = deps;
-  const log = deps.log ?? (() => {});
-  const now = deps.now ?? (() => new Date());
-  const started = now().getTime();
-  const enabled = new Set(opts.stages ?? STAGES);
-  const tree = new Tree(db);
-  const runId = db.startRun("run", false);
-  const rep: RunReport = {
-    runId,
-    stages: [],
-    proposals: [],
-    rejections: [],
-    calls: 0,
-    usage: ZERO_USAGE,
-    extracted: [],
-    skipped: [],
-    ms: 0,
-  };
+/** What a stage works with: the run's dependencies and the report it adds to. */
+interface StageContext {
+  adapters: SourceAdapter[];
+  db: StateDb;
+  runner: PiRunner;
+  cfg: Config;
+  tree: Tree;
+  opts: RunOptions;
+  /** The run's report so far. Stages add their own findings (proposals, rejections, ...). */
+  rep: RunReport;
+  log: (m: string) => void;
+  now: () => Date;
+}
 
-  const stage = async (
-    name: Stage,
-    model: boolean,
-    fn: () => Promise<Omit<StageReport, "stage" | "status">>,
-  ): Promise<void> => {
-    if (!enabled.has(name)) return;
-    if (model && rep.abortedReason) {
-      rep.stages.push({
-        stage: name,
-        status: "skipped",
-        calls: 0,
-        usage: ZERO_USAGE,
-        summary: "skipped: model errors earlier in this run",
-      });
-      return;
-    }
-    try {
-      const r = await fn();
-      rep.stages.push({ stage: name, status: "ok", ...r });
-      rep.calls += r.calls;
-      rep.usage = addUsage(rep.usage, r.usage);
-    } catch (e) {
-      const error = e instanceof Error ? e.message : String(e);
-      // A stage may fail after spending some calls (e.g. extract: rejections failed, sessions ran).
-      const spent = e as { calls?: number; usage?: Usage };
-      const calls = spent.calls ?? 0;
-      const usage = spent.usage ?? ZERO_USAGE;
-      log(`${name}: failed: ${error}`);
-      rep.stages.push({
-        stage: name,
-        status: "error",
-        calls,
-        usage,
-        summary: `failed: ${error}`,
-        error,
-      });
-      rep.calls += calls;
-      rep.usage = addUsage(rep.usage, usage);
-    }
-  };
+/** One stage of `lbg run`. */
+interface StageDef {
+  name: Stage;
+  /** Skipped once model calls keep failing in this run. */
+  usesModel: boolean;
+  /** Do the work; what it returns becomes the stage's line in the report. */
+  run: (ctx: StageContext) => Promise<Omit<StageReport, "stage" | "status">>;
+}
 
-  await stage("sync", false, async () => {
+const syncStage: StageDef = {
+  name: "sync",
+  usesModel: false,
+  run: async (ctx) => {
+    const { cfg, tree } = ctx;
     const r = await syncTree(tree, {
       skillsDir: cfg.skillsDir,
       repoDocs: cfg.repoDocs,
@@ -183,11 +146,16 @@ export async function runPipeline(
         ? `${changed} skill change(s) picked up from files`
         : "skill files unchanged",
     };
-  });
+  },
+};
 
-  // extract: my words → knowledge. First reject reasons → rules (so extraction can use
-  // them), then session messages → nuggets. Separate budgets, shared model-error handling.
-  await stage("extract", true, async () => {
+// extract: my words → knowledge. First reject reasons → rules (so extraction can use
+// them), then session messages → nuggets. Separate budgets, shared model-error handling.
+const extractStage: StageDef = {
+  name: "extract",
+  usesModel: true,
+  run: async (ctx) => {
+    const { adapters, db, runner, cfg, tree, opts, rep, log } = ctx;
     // With --session (prompt tuning on one session), leave pending rejections for a normal run.
     const rj: ClassifyResult = opts.session
       ? { classified: [], failed: [], deferred: 0, calls: 0, usage: ZERO_USAGE }
@@ -258,9 +226,14 @@ export async function runPipeline(
         usage,
       });
     return { calls, usage, summary };
-  });
+  },
+};
 
-  await stage("insert", true, async () => {
+const insertStage: StageDef = {
+  name: "insert",
+  usesModel: true,
+  run: async (ctx) => {
+    const { runner, cfg, tree, log } = ctx;
     const pending = tree.unplacedNuggets().length;
     if (!pending)
       return {
@@ -281,9 +254,14 @@ export async function runPipeline(
       );
     if (r.deferred) parts.push(`${r.deferred} deferred (budget)`);
     return { calls: r.calls, usage: r.usage, summary: parts.join(", ") };
-  });
+  },
+};
 
-  await stage("score", false, async () => {
+const scoreStage: StageDef = {
+  name: "score",
+  usesModel: false,
+  run: async (ctx) => {
+    const { cfg, tree } = ctx;
     const r = scoreTree(tree, cfg.score);
     const parts = [`${r.scored} skill(s) scored`];
     if (r.promoted.length)
@@ -299,9 +277,14 @@ export async function runPipeline(
         `${r.moved} nugget(s) moved out of wrong-place rejected skills`,
       );
     return { calls: 0, usage: ZERO_USAGE, summary: parts.join("; ") };
-  });
+  },
+};
 
-  await stage("draft", true, async () => {
+const draftStage: StageDef = {
+  name: "draft",
+  usesModel: true,
+  run: async (ctx) => {
+    const { runner, cfg, tree, opts, rep, log, now } = ctx;
     const outcomes = await draftCandidates(tree, runner, cfg, {
       log,
       now: now(),
@@ -347,7 +330,91 @@ export async function runPipeline(
     if (failed.length && !rep.proposals.length)
       throw new Error(parts.join(", "));
     return { calls, usage, summary: parts.join(", ") };
-  });
+  },
+};
+
+/** The stages, in the order they run. */
+const PIPELINE: StageDef[] = [
+  syncStage,
+  extractStage,
+  insertStage,
+  scoreStage,
+  draftStage,
+];
+
+export async function runPipeline(
+  deps: RunDeps,
+  opts: RunOptions = {},
+): Promise<RunReport> {
+  const { adapters, db, runner, cfg } = deps;
+  const log = deps.log ?? (() => {});
+  const now = deps.now ?? (() => new Date());
+  const started = now().getTime();
+  const enabled = new Set(opts.stages ?? STAGES);
+  const tree = new Tree(db);
+  const runId = db.startRun("run", false);
+  const rep: RunReport = {
+    runId,
+    stages: [],
+    proposals: [],
+    rejections: [],
+    calls: 0,
+    usage: ZERO_USAGE,
+    extracted: [],
+    skipped: [],
+    ms: 0,
+  };
+
+  const ctx: StageContext = {
+    adapters,
+    db,
+    runner,
+    cfg,
+    tree,
+    opts,
+    rep,
+    log,
+    now,
+  };
+  const stage = async (def: StageDef): Promise<void> => {
+    const { name } = def;
+    if (!enabled.has(name)) return;
+    if (def.usesModel && rep.abortedReason) {
+      rep.stages.push({
+        stage: name,
+        status: "skipped",
+        calls: 0,
+        usage: ZERO_USAGE,
+        summary: "skipped: model errors earlier in this run",
+      });
+      return;
+    }
+    try {
+      const r = await def.run(ctx);
+      rep.stages.push({ stage: name, status: "ok", ...r });
+      rep.calls += r.calls;
+      rep.usage = addUsage(rep.usage, r.usage);
+    } catch (e) {
+      const error = e instanceof Error ? e.message : String(e);
+      // A stage may fail after spending some calls (e.g. extract: rejections failed, sessions ran).
+      const spent = e as { calls?: number; usage?: Usage };
+      const calls = spent.calls ?? 0;
+      const usage = spent.usage ?? ZERO_USAGE;
+      log(`${name}: failed: ${error}`);
+      rep.stages.push({
+        stage: name,
+        status: "error",
+        calls,
+        usage,
+        summary: `failed: ${error}`,
+        error,
+      });
+      rep.calls += calls;
+      rep.usage = addUsage(rep.usage, usage);
+    }
+  };
+
+  for (const def of PIPELINE) await stage(def);
 
   // The shell prompt segment (count of proposals waiting); never fails the run.
   try {
