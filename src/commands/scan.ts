@@ -1,6 +1,6 @@
 import { join } from "node:path";
+import { modelRunner } from "../agents/run-claude.ts";
 import { loadConfig } from "../config.ts";
-import { modelRunner } from "../pi/run-claude.ts";
 import { type ProcessOptions, processSessions } from "../pipeline/process.ts";
 import { StateDb } from "../state/db.ts";
 import { parseDuration, parseSince } from "../util/time.ts";

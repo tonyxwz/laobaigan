@@ -3,14 +3,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
-import { agentModel, loadConfig } from "../src/config.ts";
 import {
   ClaudeCodeRunner,
   claudeSettings,
   modelRunner,
-} from "../src/pi/run-claude.ts";
-import { PiConfigRunner } from "../src/pi/run-pi.ts";
-import type { PiRequest } from "../src/pi/types.ts";
+} from "../src/agents/run-claude.ts";
+import { PiConfigRunner } from "../src/agents/run-pi.ts";
+import type { PiRequest } from "../src/agents/types.ts";
+import { agentModel, loadConfig } from "../src/config.ts";
 
 const schema = Type.Object({
   items: Type.Array(Type.String()),

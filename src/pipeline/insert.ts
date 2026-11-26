@@ -1,7 +1,7 @@
 import { type Static, type TSchema, Type } from "typebox";
+import type { PiRequest, PiRunner, Usage } from "../agents/types.ts";
+import { addUsage, ZERO_USAGE } from "../agents/types.ts";
 import { agentModel, type Config } from "../config.ts";
-import type { PiRequest, PiRunner, Usage } from "../pi/types.ts";
-import { addUsage, ZERO_USAGE } from "../pi/types.ts";
 import { isValidSkillName } from "../skills/name.ts";
 import type { NuggetRow } from "../state/db.ts";
 import { type MemoryRow, Rejections } from "../state/rejections.ts";

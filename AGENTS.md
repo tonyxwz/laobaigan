@@ -6,7 +6,7 @@ This is **lbg** (laobaigan): a CLI that reads a user's Claude Code, pi and openc
 
 The docs are the source of truth for how lbg works. Read the one that covers your task before changing code, and update it in the same change.
 
-- `docs/architecture.md`: the pipeline (sync → extract → insert → score → draft), the knowledge tree, drafting and review, models, state. Read it before touching `src/pipeline/`, `src/state/` or `src/pi/`.
+- `docs/architecture.md`: the pipeline (sync → extract → insert → score → draft), the knowledge tree, drafting and review, models, state. Read it before touching `src/pipeline/`, `src/state/` or `src/agents/`.
 - `docs/development.md`: setup, debugging commands, tests, conventions, packaging.
 - `docs/usage.md`: every command, option and config key. Update it whenever the CLI or the config changes.
 - `docs/glossary.md`: the terms (nugget, scope, node, proposal, ...). Use them as defined.
@@ -32,14 +32,14 @@ src/sources/           one adapter per agent (session listing and loading)
 src/pipeline/          the stages of lbg run, and proposal review (accept, revise, edit)
 src/state/             SQLite state: db.ts (schema, migrations), tree.ts, proposals.ts, rejections.ts
 src/skills/            parsing SKILL.md, AGENTS.md and repo docs; repo resolution
-src/pi/                model runners (pi SDK, Claude Code) and the file guard for drafting
+src/agents/                model runners (pi SDK, Claude Code) and the file guard for drafting
 test/                  vitest; helpers/faux.ts runs real pi sessions on pi's faux provider
 ```
 
 ## Design rules
 
 - **Only `lbg run` makes the pipeline's model calls.** Other commands only read or write the state db. The one exception is `lbg proposal revise`.
-- **Every model call goes through a `PiRunner`** (`src/pi/types.ts`) and returns its result through a result tool, never parsed free text. Models and credentials come from the configured agent (pi or Claude Code); lbg has no provider policy of its own.
+- **Every model call goes through a `PiRunner`** (`src/agents/types.ts`) and returns its result through a result tool, never parsed free text. Models and credentials come from the configured agent (pi or Claude Code); lbg has no provider policy of its own.
 - **lbg never runs git and never changes skill files on its own.** Every change is a proposal stored in the state db; `accept` writes the files and committing is the user's call.
 - **Keep lbg generic.** A repository is the nearest ancestor directory with a `.git` entry. Don't add behavior for one particular environment or build system.
 - **Database changes are new numbered migrations** in `src/state/db.ts`, never edits to old ones.

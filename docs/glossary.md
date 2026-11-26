@@ -144,7 +144,7 @@ depth 2  section  a "##" section of SKILL.md or of a document, a references/*.md
 : pi writing one candidate skill's files (`src/pipeline/render.ts`), in a **scratch dir**: a temporary copy of the paths it may change. Your real files are never touched while drafting.
 
 **Guarded tools**
-: The file tools the drafting model gets (`read`, `ls`, `find`, `grep`, `write`, `edit`). Writes go only to the proposal's writable paths, in the scratch dir. Reads are allowed there and, for a repo, anywhere in the live repository. No bash (`src/pi/guard.ts`).
+: The file tools the drafting model gets (`read`, `ls`, `find`, `grep`, `write`, `edit`). Writes go only to the proposal's writable paths, in the scratch dir. Reads are allowed there and, for a repo, anywhere in the live repository. No bash (`src/agents/guard.ts`).
 
 **Primary target**
 : What a repo proposal is about: one `AGENTS.md` section, skill folder or document. The draft may also change the repo's other agent files and documents (every agent's instruction file, skills and rules, the README, `docs/`), never source code or agent settings.

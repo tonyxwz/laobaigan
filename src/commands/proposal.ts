@@ -1,8 +1,8 @@
 import { join } from "node:path";
 import { createInterface } from "node:readline/promises";
+import { modelRunner } from "../agents/run-claude.ts";
 import { CONFIG_PATH, type Config, loadConfig } from "../config.ts";
 import { writePromptStatus } from "../notify/prompt.ts";
-import { modelRunner } from "../pi/run-claude.ts";
 import {
   acceptProposal,
   newSinceDraft,

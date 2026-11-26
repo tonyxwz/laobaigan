@@ -1,8 +1,8 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { modelRunner } from "../agents/run-claude.ts";
 import { loadConfig } from "../config.ts";
-import { modelRunner } from "../pi/run-claude.ts";
 import { exitCode, runPipeline, STAGES, type Stage } from "../pipeline/run.ts";
 import { StateDb } from "../state/db.ts";
 import { acquireLock } from "../util/lock.ts";

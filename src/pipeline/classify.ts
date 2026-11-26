@@ -1,7 +1,7 @@
 import { type Static, Type } from "typebox";
+import type { PiRunner, Usage } from "../agents/types.ts";
+import { addUsage, ZERO_USAGE } from "../agents/types.ts";
 import { agentModel, type Config } from "../config.ts";
-import type { PiRunner, Usage } from "../pi/types.ts";
-import { addUsage, ZERO_USAGE } from "../pi/types.ts";
 import {
   type MemoryRow,
   REJECTION_KINDS,

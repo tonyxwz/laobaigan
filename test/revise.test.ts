@@ -216,7 +216,7 @@ describe("interactive (chat revise and edit)", () => {
     expect(args).not.toContain("--model"); // pi's own default
     expect(args).not.toContain("--provider");
     expect(args[args.indexOf("-e") + 1]).toMatch(
-      /src\/pi\/guard-extension\.ts$/,
+      /src\/agents\/guard-extension\.ts$/,
     );
     expect(args[args.indexOf("--session-dir") + 1]).toMatch(
       /lbg-chat-.*\/sessions$/,
@@ -356,7 +356,7 @@ describe("interactive (chat revise and edit)", () => {
       ),
     ).toEqual([
       "fmt",
-      expect.stringMatching(/src\/pi\/claude-guard-hook\.ts'$/),
+      expect.stringMatching(/src\/agents\/claude-guard-hook\.ts'$/),
     ]);
     expect(settings.outputStyle).toBe("default");
     expect(first!.env).toMatchObject({
@@ -438,13 +438,13 @@ describe("guardExtensionPath", () => {
       "../src/pipeline/interactive.ts"
     );
     expect(guardExtensionPath("file:///repo/src/pipeline/interactive.ts")).toBe(
-      "/repo/src/pi/guard-extension.ts",
+      "/repo/src/agents/guard-extension.ts",
     );
     expect(
       guardExtensionPath(
         "file:///usr/lib/node_modules/laobaigan/dist/pipeline/interactive.js",
       ),
-    ).toBe("/usr/lib/node_modules/laobaigan/dist/pi/guard-extension.js");
+    ).toBe("/usr/lib/node_modules/laobaigan/dist/agents/guard-extension.js");
     const { existsSync } = await import("node:fs");
     expect(existsSync(guardExtensionPath())).toBe(true);
   });

@@ -1,14 +1,14 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { applyPatch, createPatch } from "diff";
-import { agentModel, type Config } from "../config.ts";
-import { GUARDED_TOOLS } from "../pi/guard.ts";
+import { GUARDED_TOOLS } from "../agents/guard.ts";
 import {
   addUsage,
   type PiRunner,
   type Usage,
   ZERO_USAGE,
-} from "../pi/types.ts";
+} from "../agents/types.ts";
+import { agentModel, type Config } from "../config.ts";
 import { Feedback } from "../state/feedback.ts";
 import {
   type DraftFile,

@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
+import { piDefaults } from "../agents/run-pi.ts";
 import { CONFIG_PATH, loadConfig } from "../config.ts";
 import { init, renderInit } from "../init.ts";
-import { piDefaults } from "../pi/run-pi.ts";
 import type { Context } from "./context.ts";
 
 /** `lbg init`. */

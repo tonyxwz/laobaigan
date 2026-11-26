@@ -10,7 +10,7 @@ import {
   GuardError,
   guardedToolDefinitions,
   resolveGuard,
-} from "../src/pi/guard.ts";
+} from "../src/agents/guard.ts";
 import { fauxRunner, toolResults } from "./helpers/faux.ts";
 
 const SKILL = ".config/opencode/skills/dotfiles-management/";
@@ -259,7 +259,7 @@ describe("drafting session with guarded tools (real pi session)", () => {
 
 describe("PiConfigRunner model selection", () => {
   it("uses pi's default model and provider, or a provider/id override", async () => {
-    const { PiConfigRunner } = await import("../src/pi/run-pi.ts");
+    const { PiConfigRunner } = await import("../src/agents/run-pi.ts");
     const req = {
       prompt: "x",
       systemPrompt: "x",

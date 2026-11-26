@@ -5,20 +5,20 @@ import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { claudeToolsFor } from "../agents/claude-guard.ts";
+import { GUARDED_TOOLS } from "../agents/guard.ts";
+import {
+  CLAUDE_CONTEXT_ENV,
+  CLAUDE_CONTEXT_SETTINGS,
+  claudeEffort,
+  claudeSettings,
+} from "../agents/run-claude.ts";
 import {
   type AgentKind,
   agentModel,
   type Config,
   DEFAULT_PATHS,
 } from "../config.ts";
-import { claudeToolsFor } from "../pi/claude-guard.ts";
-import { GUARDED_TOOLS } from "../pi/guard.ts";
-import {
-  CLAUDE_CONTEXT_ENV,
-  CLAUDE_CONTEXT_SETTINGS,
-  claudeEffort,
-  claudeSettings,
-} from "../pi/run-claude.ts";
 import type { Turn } from "../state/feedback.ts";
 import { Feedback } from "../state/feedback.ts";
 import type { Tree } from "../state/tree.ts";
@@ -53,15 +53,15 @@ import { guardFor } from "./target.ts";
  */
 
 /**
- * The guard extension next to this module: src/pi/guard-extension.ts when running from
- * source, dist/pi/guard-extension.js from an install (pi then loads plain JS, no
+ * The guard extension next to this module: src/agents/guard-extension.ts when running from
+ * source, dist/agents/guard-extension.js from an install (pi then loads plain JS, no
  * TypeScript inside node_modules).
  */
 export function guardExtensionPath(
   moduleUrl: string = import.meta.url,
 ): string {
   const here = fileURLToPath(moduleUrl);
-  return join(dirname(here), "..", "pi", `guard-extension${extname(here)}`);
+  return join(dirname(here), "..", "agents", `guard-extension${extname(here)}`);
 }
 
 const EXTENSION = guardExtensionPath();
@@ -69,7 +69,12 @@ const EXTENSION = guardExtensionPath();
 /** The PreToolUse hook command next to this module (claude-guard-hook.ts / .js, like the extension). */
 export function claudeHookPath(moduleUrl: string = import.meta.url): string {
   const here = fileURLToPath(moduleUrl);
-  return join(dirname(here), "..", "pi", `claude-guard-hook${extname(here)}`);
+  return join(
+    dirname(here),
+    "..",
+    "agents",
+    `claude-guard-hook${extname(here)}`,
+  );
 }
 
 /** Quote for sh (Claude Code runs hook commands through a shell). */

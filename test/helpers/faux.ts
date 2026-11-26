@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createFauxCore, type FauxResponseStep } from "@earendil-works/pi-ai";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
-import { SdkPiRunner } from "../../src/pi/run-pi.ts";
+import { SdkPiRunner } from "../../src/agents/run-pi.ts";
 
 /** A real pi session on pi's faux provider: scripted model responses, no network. */
 export async function fauxRunner(

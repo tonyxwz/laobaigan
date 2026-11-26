@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import type { FileGuard } from "../agents/guard.ts";
 import type { Config } from "../config.ts";
-import type { FileGuard } from "../pi/guard.ts";
 import {
   AGENT_FILES,
   AGENT_RULE_DIRS,

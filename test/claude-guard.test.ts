@@ -5,9 +5,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
-import { claudeGuard, claudeToolsFor } from "../src/pi/claude-guard.ts";
-import { GUARDED_TOOLS } from "../src/pi/guard.ts";
-import { ClaudeCodeRunner } from "../src/pi/run-claude.ts";
+import { claudeGuard, claudeToolsFor } from "../src/agents/claude-guard.ts";
+import { GUARDED_TOOLS } from "../src/agents/guard.ts";
+import { ClaudeCodeRunner } from "../src/agents/run-claude.ts";
 
 /** wt/skills/{git (writable), gradle}/SKILL.md, wt/.git/HEAD, wt/skills/evil -> outside. */
 async function worktree() {
@@ -218,7 +218,7 @@ describe("claude-guard-hook (the command interactive Claude Code runs)", () => {
     import.meta.dirname,
     "..",
     "src",
-    "pi",
+    "agents",
     "claude-guard-hook.ts",
   );
   const run = (env: Record<string, string>, input: string) =>

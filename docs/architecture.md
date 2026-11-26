@@ -197,7 +197,7 @@ For each candidate, the draft stage of `lbg run` (at most `render.maxPerRun` per
    - Repo, the **primary target** (what the proposal is about): a live `AGENTS.md` section or intro → `AGENTS.md`; a live repo skill → its folder, in whichever agent's skills directory it is; a live document → that file for an `update`, and `AGENTS.md` (a pointer to the document) for a `fix-description`; otherwise a new skill (in the first skills directory the repo already has, else `.agents/skills/`) or a new `AGENTS.md` section, chosen by the model by size.
    - Repo, **what else the draft may change** (`repoWritable`): the repo's other agent files and documents, so a piece of knowledge can go where it belongs and other files can point to it. That is `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `README.md`, `.github/copilot-instructions.md`; every agent's skills directory (`.agents`, `.claude`, `.pi`, `.codex`, `.gemini`, `.opencode`, `.cursor`, `.kiro`, `.github`) and rules directory (`.claude/rules`, `.cursor/rules`, `.kiro/steering`, `.github/instructions`); and the `repoDocs` directories. Only what exists, one entry per real path (a directory that is a symlink to another counts once; one that leads outside the repo is left out). Source code and agent settings (hooks, permissions) are never writable. The proposal stores both lists (`writable`, `primary`).
    - Evidence filed under a multi-package workspace root (not a repo) is skipped for now.
-2. **Copies the writable paths** into a scratch dir (`lbg-draft-*`; `node_modules` and binary files are skipped) and runs pi there with the **guarded tools** (`src/pi/guard.ts`).
+2. **Copies the writable paths** into a scratch dir (`lbg-draft-*`; `node_modules` and binary files are skipped) and runs pi there with the **guarded tools** (`src/agents/guard.ts`).
    - `read`, `ls`, `find`, `grep`, `write`, `edit`, under pi's built-in names; a custom tool replaces the built-in of the same name.
    - Every path is resolved through symlinks. Writes go to the writable paths in the scratch dir; `.git` is never writable, and there is no bash.
    - Reads are allowed in the scratch dir and, for a repo target, anywhere in the live repository (the guard's `readRoots`): the drafter is given its absolute path and told to read what the knowledge is about, source included, before writing. The live repository is never writable; a write aimed at it is refused with the path of the copy to change instead. Nothing outside the repository can be read.
@@ -249,7 +249,7 @@ A failed draft becomes a `failed` proposal and the skill stays a candidate. `lbg
      --append-system-prompt <rules + evidence + current draft> --name ...
   ```
 
-  The guard extension (`src/pi/guard-extension.ts`) registers the same guarded tools from `LBG_GUARD`. `--no-approve` skips pi's trust prompt for the scratch dir, and the temp session dir keeps the chat out of `~/.pi/agent/sessions`. When the user exits, the result is verified and stored. If verification fails, the user can go back in or keep the previous draft.
+  The guard extension (`src/agents/guard-extension.ts`) registers the same guarded tools from `LBG_GUARD`. `--no-approve` skips pi's trust prompt for the scratch dir, and the temp session dir keeps the chat out of `~/.pi/agent/sessions`. When the user exits, the result is verified and stored. If verification fails, the user can go back in or keep the previous draft.
 - **edit:** opens the drafted files in `$VISUAL` / `$EDITOR`, with the same verification loop.
 - **Review feedback** (`src/state/feedback.ts`, `src/pipeline/review.ts`): what I say while reviewing is kept, redacted, per proposal: my turns in a revise chat (read from pi's session file in the temp session dir before it's deleted, without lbg's opening message), the text of a one-shot revise, the diff of a hand edit against the AI draft (only if I changed something), and the reject reason. It is not session evidence: it isn't extracted, never counts toward promotion, and extraction still skips lbg's own draft and chat dirs. Every later draft or revise of the same skill gets it in the prompt (`<review_feedback>`, newest first, size-capped) as decisions to keep, and drafts of other skills in the same scope get the reasons for rejections there (`<rejected_nearby>`). Feedback belongs to its proposal, so it moves with the proposal's history when a skill's node is replaced. `lbg proposal show` lists it.
 
@@ -264,7 +264,7 @@ A failed draft becomes a `failed` proposal and the skill stays a candidate. `lbg
 
 It only refuses. Where private knowledge about a public repo should live instead, and whether the drafter should be told that an item is private, is not decided yet.
 
-## 8. Models (`src/pi/run-pi.ts`)
+## 8. Models (`src/agents/run-pi.ts`)
 
 All model work goes through one wrapper:
 
@@ -291,7 +291,7 @@ session.getSessionStats(); // tokens and cost for the run log
 - **Credentials** are pi's own.
 - **Missing result:** if the model doesn't call the result tool, it's asked once more; then the call fails.
 - **Tests** run real pi sessions on pi's faux provider, through the same `SdkPiRunner`.
-- **Claude Code** (`src/pi/run-claude.ts`): with `agent: "claude-code"`, `modelRunner` is a `ClaudeCodeRunner`, which runs one Agent SDK `query()` with the result tool's schema as `outputFormat` (structured output), no skills/MCP/settings hooks, none of the user's Claude Code context (`CLAUDE_CODE_DISABLE_CLAUDE_MDS`, `CLAUDE_CODE_DISABLE_AUTO_MEMORY`, `outputStyle: "default"`; settings files still load for login/provider), and `persistSession: false` (lbg reads `~/.claude/projects`). Tool-less stages (extract, classify, insert) get no tools and an empty temp cwd. A request with a `fileGuard` (draft, revise) runs in the worktree (the guard's read-only roots passed as additional directories) with Claude Code's built-in `Read`/`Glob`/`Grep`/`Write`/`Edit` (mapped from pi's tool names); `src/pi/claude-guard.ts` decides each call with the same `resolveGuard` checks as pi's guarded tools, through a `PreToolUse` hook (runs regardless of settings allow rules) and `canUseTool`, under permission mode `dontAsk`. Interactive revise runs the `claude` CLI with the same checks as a hook command (`src/pi/claude-guard-hook.ts`, fails closed), passed in `--settings` (prompt last, so wrapper builds that parse the command line keep it), and deletes the chat's session file after reading it for feedback.
+- **Claude Code** (`src/agents/run-claude.ts`): with `agent: "claude-code"`, `modelRunner` is a `ClaudeCodeRunner`, which runs one Agent SDK `query()` with the result tool's schema as `outputFormat` (structured output), no skills/MCP/settings hooks, none of the user's Claude Code context (`CLAUDE_CODE_DISABLE_CLAUDE_MDS`, `CLAUDE_CODE_DISABLE_AUTO_MEMORY`, `outputStyle: "default"`; settings files still load for login/provider), and `persistSession: false` (lbg reads `~/.claude/projects`). Tool-less stages (extract, classify, insert) get no tools and an empty temp cwd. A request with a `fileGuard` (draft, revise) runs in the worktree (the guard's read-only roots passed as additional directories) with Claude Code's built-in `Read`/`Glob`/`Grep`/`Write`/`Edit` (mapped from pi's tool names); `src/agents/claude-guard.ts` decides each call with the same `resolveGuard` checks as pi's guarded tools, through a `PreToolUse` hook (runs regardless of settings allow rules) and `canUseTool`, under permission mode `dontAsk`. Interactive revise runs the `claude` CLI with the same checks as a hook command (`src/agents/claude-guard-hook.ts`, fails closed), passed in `--settings` (prompt last, so wrapper builds that parse the command line keep it), and deletes the chat's session file after reading it for feedback.
 
 ## 9. Running unattended
 
@@ -338,7 +338,7 @@ src/
     accept.ts reject.ts proposal-view.ts commit.ts revise.ts interactive.ts privacy.ts
     run.ts                   the lbg run pass
   skills/                    parse SKILL.md / AGENTS.md / docs, where agents keep files (layout.ts), repo resolution
-  pi/types.ts run-pi.ts run-claude.ts claude-guard.ts claude-guard-hook.ts guard.ts guard-extension.ts
+  agents/types.ts run-pi.ts run-claude.ts claude-guard.ts claude-guard-hook.ts guard.ts guard-extension.ts
   notify/prompt.ts           the shell prompt file
 systemd/                     unit templates
 test/
