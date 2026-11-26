@@ -246,14 +246,11 @@ export function reviseContext(tree: Tree, ws: DraftWorkspace): string {
           .map((c) => ({ ...c, children: [], nuggets: [], forgotten: [] }))
       : [];
   return [
-    buildDraftPrompt(
-      ws.skill,
-      ws.proposal.kind,
-      ws.target,
-      siblings,
-      ws.proposal.draftedAt,
-      reviewFeedbackPrompt(tree, ws.skill),
-    ).replace(/\nWrite the files now, then call report_draft\.$/, ""),
+    buildDraftPrompt(ws.skill, ws.proposal.kind, ws.target, siblings, {
+      draftedAt: ws.proposal.draftedAt,
+      review: reviewFeedbackPrompt(tree, ws.skill),
+      closing: false,
+    }),
     "",
     "A draft already exists: the files in the current directory ARE the current draft. Revise them; don't start over unless asked.",
     ...(ws.proposal.summary

@@ -10,11 +10,11 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, relative } from "node:path";
-import { Type } from "typebox";
+import { type Static, Type } from "typebox";
 import { agentModel, type Config } from "../config.ts";
 import { type FileGuard, GUARDED_TOOLS } from "../pi/guard.ts";
 import type { PiRunner, Usage } from "../pi/run-pi.ts";
-import { addUsage } from "../pi/run-pi.ts";
+import { addUsage, ZERO_USAGE } from "../pi/run-pi.ts";
 import { parseFrontmatter } from "../skills/index.ts";
 import { isValidSkillName } from "../skills/name.ts";
 import {
@@ -36,10 +36,20 @@ import {
 } from "../state/tree.ts";
 import { truncate } from "../util/text.ts";
 import { applyExclusions, type Rehomed } from "./exclude.ts";
-import { privateHits, privateProblems, privateRetryPrompt } from "./privacy.ts";
+import {
+  type PrivateHit,
+  privateHits,
+  privateProblems,
+  privateRetryPrompt,
+} from "./privacy.ts";
 import { containsSecrets } from "./redact.ts";
 import { reviewFeedbackPrompt } from "./review.ts";
-import { checkScope, scopeProblem, scopeRetryPrompt } from "./scope.ts";
+import {
+  checkScope,
+  type ScopeCheck,
+  scopeProblem,
+  scopeRetryPrompt,
+} from "./scope.ts";
 import { evidenceText, skillName } from "./stats.ts";
 import { skillStats } from "./treescore.ts";
 
@@ -328,9 +338,16 @@ export function buildDraftPrompt(
   kind: ProposalKind,
   target: RenderTarget,
   siblings: TreeNode[],
-  draftedAt?: Date,
-  review?: string,
+  opts: {
+    /** Revising: when the current draft was made. */
+    draftedAt?: Date | undefined;
+    /** What reviews of earlier drafts said (see reviewFeedbackPrompt). */
+    review?: string | undefined;
+    /** False leaves out the closing "write the files" instruction, for prompts that continue. */
+    closing?: boolean;
+  } = {},
 ): string {
+  const { draftedAt, review } = opts;
   const since = skill.renderedAt?.getTime() ?? 0;
   const base = (n: NuggetRow) =>
     kind === "new"
@@ -449,7 +466,8 @@ export function buildDraftPrompt(
     lines.push("</other_skills>", "");
   }
   if (review) lines.push(review, "");
-  lines.push("Write the files now, then call report_draft.");
+  if (opts.closing !== false)
+    lines.push("Write the files now, then call report_draft.");
   return lines.join("\n");
 }
 
@@ -632,6 +650,43 @@ export type DraftOutcome =
     }
   | { status: "skipped"; nodeId: number; reason: string };
 
+/** What one drafter run left behind. */
+interface Attempt {
+  report: Static<typeof ReportDraftSchema>;
+  files: DraftFile[];
+  problems: string[];
+  priv: PrivateHit[];
+  /** Private terms are the draft's only problem. */
+  onlyPrivate: boolean;
+  scope: ScopeCheck | undefined;
+}
+
+/** A problem the drafter gets one chance to fix, instead of the draft failing. */
+interface Fix {
+  /** For the log. */
+  what: string;
+  /** What to tell the drafter. */
+  prompt: string;
+}
+
+const RETRYABLE: ((a: Attempt) => Fix | undefined)[] = [
+  // A live skill's description that took on a new subject.
+  (a) =>
+    a.scope?.widened
+      ? {
+          what: `description widens the scope (${a.scope.added.join(", ")})`,
+          prompt: scopeRetryPrompt(a.scope),
+        }
+      : undefined,
+  (a) =>
+    a.onlyPrivate
+      ? {
+          what: "adds private terms to a public repository",
+          prompt: privateRetryPrompt(a.priv),
+        }
+      : undefined,
+];
+
 /** Draft one candidate skill into an `open` proposal. Never throws for drafting problems. */
 export async function draftSkill(
   tree: Tree,
@@ -693,6 +748,7 @@ export async function draftSkill(
   });
   let usage: Usage | undefined;
   let scratch: string | undefined;
+  const spent = (): Usage => usage ?? ZERO_USAGE;
   const fail = (reason: string): DraftOutcome => {
     log(`draft ${target.skillName}: failed: ${reason}`);
     props.markFailed(proposalId, reason, usage);
@@ -707,7 +763,8 @@ export async function draftSkill(
   try {
     const started = new Date(); // the evidence the draft sees is the subtree as of now
     const base = await snapshot(target.root, target.writable);
-    scratch = await makeScratch(target);
+    const dir = await makeScratch(target);
+    scratch = dir;
     log(`draft ${target.skillName} (${kind}): proposal #${proposalId}`);
     const siblings =
       skill.parentId !== undefined
@@ -716,77 +773,67 @@ export async function draftSkill(
             .map((c) => ({ ...c, children: [], nuggets: [], forgotten: [] }))
         : [];
     const review = reviewFeedbackPrompt(tree, skill);
-    const res = await runner.run({
-      ...agentModel(cfg),
-      systemPrompt: DRAFT_SYSTEM_PROMPT,
-      prompt: buildDraftPrompt(
-        skill,
-        kind,
-        target,
-        siblings,
-        undefined,
-        review,
-      ),
-      tools: [...GUARDED_TOOLS],
-      fileGuard: guardFor(scratch, target),
-      resultTool: {
-        name: "report_draft",
-        description: "Report the finished draft.",
-        parameters: ReportDraftSchema,
-      },
-    });
-    usage = res.usage;
-    let report = res.value;
-    let files = await diffSnapshot(base, scratch, target.writable);
-    let problems = verifyDraft(files, base, target, cfg);
-    // Two problems get one retry, in the same scratch copy: a live skill's description that took
-    // on a new subject, and private terms added to a public repo. Anything else fails right away.
     const live = skill.origin === "file";
-    let priv = draftPrivateHits(files, base, target, cfg);
-    const onlyPrivate = () =>
-      priv.length > 0 && problems.length === privateProblems(priv).length;
-    let scope =
-      problems.length && !onlyPrivate()
-        ? undefined
-        : checkScope(files, base, target, kind, live);
-    if (scope?.widened || onlyPrivate()) {
-      const fixes = [
-        ...(scope?.widened ? [scopeRetryPrompt(scope)] : []),
-        ...(onlyPrivate() ? [privateRetryPrompt(priv)] : []),
-      ];
-      log(
-        `draft ${target.skillName}: ${[
-          ...(scope?.widened
-            ? [`description widens the scope (${scope.added.join(", ")})`]
-            : []),
-          ...(onlyPrivate()
-            ? ["adds private terms to a public repository"]
-            : []),
-        ].join("; ")}; asking the drafter to fix it`,
-      );
-      const retry = await runner.run({
+    /** One drafter run in the scratch copy, and what its files look like afterwards. */
+    const attempt = async (
+      prompt: string,
+      description: string,
+    ): Promise<Attempt> => {
+      const res = await runner.run({
         ...agentModel(cfg),
         systemPrompt: DRAFT_SYSTEM_PROMPT,
-        prompt: `${buildDraftPrompt(skill, kind, target, siblings, undefined, review).replace(/\nWrite the files now, then call report_draft\.$/, "")}\n\nThe files in the current directory are your draft.\n\n${fixes.join("\n\n")}`,
+        prompt,
         tools: [...GUARDED_TOOLS],
-        fileGuard: guardFor(scratch, target),
+        fileGuard: guardFor(dir, target),
         resultTool: {
           name: "report_draft",
-          description: "Report the fixed draft.",
+          description,
           parameters: ReportDraftSchema,
         },
       });
-      usage = addUsage(usage, retry.usage);
-      report = {
-        ...retry.value,
-        excluded: [...(report.excluded ?? []), ...(retry.value.excluded ?? [])],
+      usage = usage ? addUsage(usage, res.usage) : res.usage;
+      const files = await diffSnapshot(base, dir, target.writable);
+      const problems = verifyDraft(files, base, target, cfg);
+      const priv = draftPrivateHits(files, base, target, cfg);
+      const onlyPrivate =
+        priv.length > 0 && problems.length === privateProblems(priv).length;
+      return {
+        report: res.value,
+        files,
+        problems,
+        priv,
+        onlyPrivate,
+        // The scope is only worth checking on a draft that is otherwise fine (or fixable).
+        scope:
+          problems.length && !onlyPrivate
+            ? undefined
+            : checkScope(files, base, target, kind, live),
       };
-      files = await diffSnapshot(base, scratch, target.writable);
-      problems = verifyDraft(files, base, target, cfg);
-      priv = draftPrivateHits(files, base, target, cfg);
-      scope = problems.length
-        ? undefined
-        : checkScope(files, base, target, kind, live);
+    };
+    const first = await attempt(
+      buildDraftPrompt(skill, kind, target, siblings, { review }),
+      "Report the finished draft.",
+    );
+    let { report, files, problems, scope } = first;
+    // Fixable problems get one retry, in the same scratch copy. Anything else fails right away.
+    const fixes = RETRYABLE.map((r) => r(first)).filter((f) => f !== undefined);
+    if (fixes.length) {
+      log(
+        `draft ${target.skillName}: ${fixes.map((f) => f.what).join("; ")}; asking the drafter to fix it`,
+      );
+      const retry = await attempt(
+        `${buildDraftPrompt(skill, kind, target, siblings, { review, closing: false })}\n\nThe files in the current directory are your draft.\n\n${fixes.map((f) => f.prompt).join("\n\n")}`,
+        "Report the fixed draft.",
+      );
+      report = {
+        ...retry.report,
+        excluded: [
+          ...(report.excluded ?? []),
+          ...(retry.report.excluded ?? []),
+        ],
+      };
+      ({ files, problems } = retry);
+      scope = problems.length ? undefined : retry.scope;
     }
     if (scope?.widened) problems.push(scopeProblem(scope));
     if (
@@ -805,7 +852,7 @@ export async function draftSkill(
         "drafter",
         log,
       );
-      if (ex.usage) usage = addUsage(usage, ex.usage);
+      if (ex.usage) usage = addUsage(spent(), ex.usage);
       props.markFailed(
         proposalId,
         `nothing on-topic to add: ${ex.items.length} off-topic item(s) re-filed elsewhere`,
@@ -818,12 +865,12 @@ export async function draftSkill(
         status: "nothing",
         nodeId,
         proposalId,
-        usage,
+        usage: spent(),
         excluded: ex.items,
       };
     }
     if (problems.length) return fail(`verification: ${problems.join("; ")}`);
-    props.markOpen(proposalId, files, report.summary, usage, {
+    props.markOpen(proposalId, files, report.summary, spent(), {
       draftedAt: started,
       nuggetIds: subtreeNuggets(skill).map((n) => n.id),
     });
@@ -837,7 +884,7 @@ export async function draftSkill(
       "drafter",
       log,
     );
-    if (ex.usage) usage = addUsage(usage, ex.usage);
+    if (ex.usage) usage = addUsage(spent(), ex.usage);
     log(
       `draft ${target.skillName}: proposal #${proposalId} ready (${files.length} file(s)${ex.items.length ? `, ${ex.items.length} off-topic item(s) re-filed` : ""})`,
     );
@@ -846,7 +893,7 @@ export async function draftSkill(
       nodeId,
       proposalId,
       files,
-      usage,
+      usage: spent(),
       excluded: ex.items,
     };
   } catch (e) {
