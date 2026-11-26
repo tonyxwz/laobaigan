@@ -5,13 +5,13 @@ import { join } from "node:path";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import { type Config, DEFAULT_CONFIG } from "../src/config.ts";
-import { rejectProposal } from "../src/pipeline/accept.ts";
 import { readChatTurns } from "../src/pipeline/chatlog.ts";
 import {
   chatRevise,
   editProposal,
   type Launcher,
 } from "../src/pipeline/interactive.ts";
+import { rejectProposal } from "../src/pipeline/reject.ts";
 import { draftSkill } from "../src/pipeline/render.ts";
 import { reviewFeedbackPrompt } from "../src/pipeline/review.ts";
 import { reviseProposal } from "../src/pipeline/revise.ts";

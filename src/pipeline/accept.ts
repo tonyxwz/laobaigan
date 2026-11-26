@@ -1,43 +1,24 @@
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
-import { createTwoFilesPatch } from "diff";
 import type { Config } from "../config.ts";
 import type { NuggetRow } from "../state/db.ts";
-import { Feedback } from "../state/feedback.ts";
 import {
   type DraftFile,
   hashContent,
   type ProposalRow,
   Proposals,
 } from "../state/proposals.ts";
-import {
-  type RejectedTopic,
-  type RejectionKind,
-  Rejections,
-} from "../state/rejections.ts";
 import { subtreeNuggets, type Tree } from "../state/tree.ts";
-import {
-  isPublicRepo,
-  type PrivateHit,
-  privateHits,
-  privateProblems,
-  privateTermsIn,
-} from "./privacy.ts";
+import { commitMessageFor } from "./commit.ts";
+import { type PrivateHit, privateHits, privateProblems } from "./privacy.ts";
+import { currentFile } from "./proposal-view.ts";
 import { syncTree } from "./sync.ts";
 import { isAllowed } from "./target.ts";
 
 /**
- * Accept / reject a proposal. Accepting writes the drafted files into the target
- * (the global skills dir, or the repo) and nothing else: no git. Commit it yourself.
+ * Accept a proposal: write the drafted files into the target (the global skills dir, or
+ * the repo) and nothing else: no git. Commit it yourself.
  */
-
-async function current(root: string, path: string): Promise<string | null> {
-  try {
-    return await readFile(join(root, path), "utf8");
-  } catch {
-    return null;
-  }
-}
 
 export interface Conflict {
   path: string;
@@ -48,7 +29,7 @@ export interface Conflict {
 export async function conflicts(p: ProposalRow): Promise<Conflict[]> {
   const out: Conflict[] = [];
   for (const f of p.files) {
-    const now = await current(p.targetRoot, f.path);
+    const now = await currentFile(p.targetRoot, f.path);
     const nowHash = now === null ? null : hashContent(now);
     if (nowHash !== f.baseHash) {
       out.push({
@@ -72,7 +53,8 @@ export async function privateHitsFor(
 ): Promise<PrivateHit[]> {
   if (p.scope !== "repo") return [];
   const now = new Map<string, string | null>();
-  for (const f of p.files) now.set(f.path, await current(p.targetRoot, f.path));
+  for (const f of p.files)
+    now.set(f.path, await currentFile(p.targetRoot, f.path));
   return privateHits(p.files, p.targetRoot, cfg, (path) => now.get(path));
 }
 
@@ -206,283 +188,4 @@ export function newSinceDraft(tree: Tree, p: ProposalRow): NuggetRow[] {
   return subtreeNuggets(skill).filter(
     (n) => !used.has(n.id) && (n.attachedAt?.getTime() ?? 0) > t,
   );
-}
-
-export interface CommitTarget {
-  paths: string[];
-  commitMessage: string;
-  /** Files that no longer contain what the proposal wrote (edited or committed differently since). */
-  changedSince: string[];
-}
-
-/**
- * What to commit for an already-accepted proposal (e.g. accepted without --commit): its
- * files as absolute paths, the suggested message, and which files changed since.
- */
-export async function commitTargetFor(
-  tree: Tree,
-  p: ProposalRow,
-  cfg?: Pick<Config, "privacy">,
-): Promise<CommitTarget> {
-  if (p.status !== "accepted")
-    throw new Error(
-      `Proposal #${p.id} is ${p.status}; only accepted proposals have files to commit`,
-    );
-  const changedSince: string[] = [];
-  for (const f of p.files) {
-    const now = await current(p.targetRoot, f.path);
-    if (now !== f.content) changedSince.push(f.path);
-  }
-  return {
-    paths: p.files.map((f) => join(p.targetRoot, f.path)),
-    commitMessage: commitMessageFor(tree, p, cfg),
-    changedSince,
-  };
-}
-
-export interface RejectResult {
-  memoryId: number;
-  /** pending: the next lbg run classifies it. active: I gave the kind (or there was no reason). */
-  status: "pending" | "active";
-  kind?: RejectionKind;
-  /** Evidence forgotten now (outdated, or --forget). */
-  forgotten?: number;
-}
-
-/**
- * Reject a proposal. No model call: it stores the reason as review feedback and
- * leaves a rejection memory that the next `lbg run` classifies (or, with `kind`,
- * is active right away with the reason as its rule).
- */
-export function rejectProposal(
-  tree: Tree,
-  id: number,
-  reason?: string,
-  opts: {
-    kind?: RejectionKind;
-    targetNodeId?: number;
-    forget?: boolean;
-    expireDays?: number;
-  } = {},
-): RejectResult {
-  const props = new Proposals(tree.db);
-  const p = props.mustGet(id);
-  const text = reason?.trim() ?? "";
-  const node = tree.getNode(p.nodeId);
-  const scope = node
-    ? { scope: node.scope, ...(node.repo ? { repo: node.repo } : {}) }
-    : { scope: p.scope, ...(p.repo ? { repo: p.repo } : {}) };
-  if (opts.targetNodeId !== undefined) {
-    if (opts.kind !== "wrong-place")
-      throw new Error("--to only goes with --kind wrong-place");
-    const t = tree.getNode(opts.targetNodeId);
-    if (!t || t.depth !== 1)
-      throw new Error(`--to ${opts.targetNodeId}: not a skill`);
-    if (t.id === p.nodeId)
-      throw new Error("--to: that's the rejected skill itself");
-    if (
-      t.scope !== scope.scope ||
-      (t.repo ?? undefined) !== (scope.repo ?? undefined)
-    )
-      throw new Error(`--to ${t.id}: a skill of another scope`);
-  }
-  const topic: RejectedTopic = {
-    ...((p.skillName ?? node?.name)
-      ? { name: p.skillName ?? node!.name! }
-      : {}),
-    title: node?.title ?? p.skillName ?? `skill #${p.nodeId}`,
-    ...(node?.description ? { description: node.description } : {}),
-    proposalKind: p.kind,
-    evidence: p.nuggetIds
-      .slice(0, 12)
-      .map((n) => tree.db.getNugget(n))
-      .filter((n): n is NonNullable<typeof n> => !!n)
-      .map((n) => ({ id: n.id, title: n.title })),
-  };
-  const done = (r: RejectResult): RejectResult => {
-    // --forget: its evidence stops counting whatever the kind (given back if the memory is forgotten).
-    if (opts.forget)
-      r.forgotten = tree.forgetNuggets(
-        new Rejections(tree.db).proposalNuggets(id),
-        `forgotten on reject (rejection #${r.memoryId})`,
-        r.memoryId,
-      );
-    else
-      r.forgotten = tree.db
-        .nuggets()
-        .filter((n) => n.forgottenMemory === r.memoryId).length;
-    return r;
-  };
-  return tree.db.tx(() => {
-    props.markRejected(id, text || undefined);
-    // The reason is review feedback: the next draft of this skill (or a nearby one) sees it.
-    const feedbackId = new Feedback(tree.db).add({
-      proposalId: id,
-      kind: "reject",
-      text,
-    });
-    const mem = new Rejections(
-      tree.db,
-      opts.expireDays !== undefined ? { expireDays: opts.expireDays } : {},
-    );
-    const base = {
-      proposalId: id,
-      feedbackId,
-      nodeId: p.nodeId,
-      ...scope,
-      topic,
-    };
-    if (opts.kind) {
-      const memoryId = mem.add({
-        ...base,
-        kind: opts.kind,
-        rule: text || `rejected as ${opts.kind}`,
-        ...(opts.targetNodeId !== undefined
-          ? { targetNodeId: opts.targetNodeId }
-          : {}),
-      });
-      return done({ memoryId, status: "active" as const, kind: opts.kind });
-    }
-    if (!text) {
-      // Nothing to classify: "not now". Unlocked, so I can still edit it.
-      const memoryId = mem.add({
-        ...base,
-        kind: "later",
-        rule: "rejected without a reason",
-        locked: false,
-      });
-      return done({
-        memoryId,
-        status: "active" as const,
-        kind: "later" as const,
-      });
-    }
-    return done({ memoryId: mem.add(base), status: "pending" as const });
-  });
-}
-
-/** Diff of the AI's draft (`before`) against my version (`after`); empty when nothing changed. */
-export function editDiff(before: DraftFile[], after: DraftFile[]): string {
-  const old = new Map(before.map((f) => [f.path, f.content]));
-  const now = new Map(after.map((f) => [f.path, f.content]));
-  const paths = [...new Set([...old.keys(), ...now.keys()])].sort();
-  return paths
-    .map((p) =>
-      fileDiff(
-        p,
-        old.has(p)
-          ? (old.get(p) ?? null)
-          : (after.find((f) => f.path === p)?.baseContent ?? null),
-        now.has(p)
-          ? (now.get(p) ?? null)
-          : (before.find((f) => f.path === p)?.baseContent ?? null),
-      ),
-    )
-    .filter(Boolean)
-    .join("\n");
-}
-
-/** One file as a git-style diff (null = absent). Empty when there's no change. */
-function fileDiff(
-  path: string,
-  oldText: string | null,
-  newText: string | null,
-): string {
-  if (oldText === null && newText === null) return "";
-  if (
-    (oldText ?? "") === (newText ?? "") &&
-    (oldText === null) === (newText === null)
-  )
-    return "";
-  const header = [`diff --git a/${path} b/${path}`];
-  if (oldText === null)
-    header.push("new file mode 100644", "--- /dev/null", `+++ b/${path}`);
-  else if (newText === null)
-    header.push("deleted file mode 100644", `--- a/${path}`, "+++ /dev/null");
-  else header.push(`--- a/${path}`, `+++ b/${path}`);
-  const body = createTwoFilesPatch(
-    "a",
-    "b",
-    oldText ?? "",
-    newText ?? "",
-    "",
-    "",
-    { context: 3 },
-  );
-  const at = body.indexOf("\n@@");
-  return at < 0 ? "" : `${header.join("\n")}\n${body.slice(at + 1)}`;
-}
-
-export interface FileView {
-  path: string;
-  /** The file on disk differs from what the draft was based on. */
-  stale: boolean;
-  /** What the diff is against: the draft's base (stale with a stored base), or the file on disk now. */
-  against: "draft-base" | "current";
-  /** Stale files: the changes made on disk since the draft (empty if unknown). */
-  onDisk: string;
-}
-
-/**
- * The proposal's change, one git-style diff. For a file that changed on disk since the draft
- * (stale), it's the draft's own change against the version it was drafted from, so it doesn't
- * look like the draft reverts newer edits; `revise` rebases it onto the current file. Drafts
- * stored before lbg kept originals fall back to the current file.
- */
-export async function proposalView(
-  p: ProposalRow,
-): Promise<{ diff: string; files: FileView[] }> {
-  const parts: string[] = [];
-  const files: FileView[] = [];
-  for (const f of p.files) {
-    const now = await current(p.targetRoot, f.path);
-    const stale = (now === null ? null : hashContent(now)) !== f.baseHash;
-    const haveBase = f.baseContent !== undefined;
-    const from = stale && haveBase ? f.baseContent! : now;
-    parts.push(fileDiff(f.path, from, f.content));
-    files.push({
-      path: f.path,
-      stale,
-      against: stale && haveBase ? "draft-base" : "current",
-      onDisk: stale && haveBase ? fileDiff(f.path, f.baseContent!, now) : "",
-    });
-  }
-  return { diff: parts.join(""), files };
-}
-
-export async function proposalDiff(p: ProposalRow): Promise<string> {
-  return (await proposalView(p)).diff;
-}
-
-/**
- * A commit message you can use; lbg itself never commits. For a public repo the drafter's
- * summary is left out when it contains a private term: the message is published too.
- */
-export function commitMessageFor(
-  tree: Tree,
-  p: ProposalRow,
-  cfg?: Pick<Config, "privacy">,
-): string {
-  const summary =
-    p.summary &&
-    cfg &&
-    p.scope === "repo" &&
-    isPublicRepo(p.targetRoot, cfg) &&
-    privateTermsIn(p.summary, cfg).length
-      ? undefined
-      : p.summary;
-  const verb =
-    p.kind === "new"
-      ? "add"
-      : p.kind === "update"
-        ? "update"
-        : "fix description of";
-  const nuggets = tree.db.nuggets().filter((n) => p.nuggetIds.includes(n.id));
-  const agents = [...new Set(nuggets.map((n) => n.agent))].sort();
-  return [
-    `skills: ${verb} ${p.skillName ?? `#${p.nodeId}`}`,
-    "",
-    ...(summary ? [summary.trim(), ""] : []),
-    `From ${nuggets.length} explanation(s) in ${p.sessions} session(s) (${agents.join(", ")}), drafted by laobaigan.`,
-  ].join("\n");
 }

@@ -1,6 +1,12 @@
 import { spawnSync } from "node:child_process";
 import { homedir } from "node:os";
+import { join } from "node:path";
 import type { Config } from "../config.ts";
+import type { ProposalRow } from "../state/proposals.ts";
+import type { Tree } from "../state/tree.ts";
+import { isPublicRepo, privateTermsIn } from "./privacy.ts";
+
+import { currentFile } from "./proposal-view.ts";
 
 /**
  * `lbg proposal accept <id> --commit`: run the user's commit command (config.commitCommand)
@@ -95,4 +101,69 @@ export function runCommit(
     status: r.status ?? 1,
     output: `${r.stdout ?? ""}${r.stderr ?? ""}`,
   };
+}
+
+export interface CommitTarget {
+  paths: string[];
+  commitMessage: string;
+  /** Files that no longer contain what the proposal wrote (edited or committed differently since). */
+  changedSince: string[];
+}
+
+/**
+ * What to commit for an already-accepted proposal (e.g. accepted without --commit): its
+ * files as absolute paths, the suggested message, and which files changed since.
+ */
+export async function commitTargetFor(
+  tree: Tree,
+  p: ProposalRow,
+  cfg?: Pick<Config, "privacy">,
+): Promise<CommitTarget> {
+  if (p.status !== "accepted")
+    throw new Error(
+      `Proposal #${p.id} is ${p.status}; only accepted proposals have files to commit`,
+    );
+  const changedSince: string[] = [];
+  for (const f of p.files) {
+    const now = await currentFile(p.targetRoot, f.path);
+    if (now !== f.content) changedSince.push(f.path);
+  }
+  return {
+    paths: p.files.map((f) => join(p.targetRoot, f.path)),
+    commitMessage: commitMessageFor(tree, p, cfg),
+    changedSince,
+  };
+}
+
+/**
+ * A commit message you can use; lbg itself never commits. For a public repo the drafter's
+ * summary is left out when it contains a private term: the message is published too.
+ */
+export function commitMessageFor(
+  tree: Tree,
+  p: ProposalRow,
+  cfg?: Pick<Config, "privacy">,
+): string {
+  const summary =
+    p.summary &&
+    cfg &&
+    p.scope === "repo" &&
+    isPublicRepo(p.targetRoot, cfg) &&
+    privateTermsIn(p.summary, cfg).length
+      ? undefined
+      : p.summary;
+  const verb =
+    p.kind === "new"
+      ? "add"
+      : p.kind === "update"
+        ? "update"
+        : "fix description of";
+  const nuggets = tree.db.nuggets().filter((n) => p.nuggetIds.includes(n.id));
+  const agents = [...new Set(nuggets.map((n) => n.agent))].sort();
+  return [
+    `skills: ${verb} ${p.skillName ?? `#${p.nodeId}`}`,
+    "",
+    ...(summary ? [summary.trim(), ""] : []),
+    `From ${nuggets.length} explanation(s) in ${p.sessions} session(s) (${agents.join(", ")}), drafted by laobaigan.`,
+  ].join("\n");
 }

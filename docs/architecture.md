@@ -218,7 +218,7 @@ For each candidate, the draft stage of `lbg run` (at most `render.maxPerRun` per
 
 A failed draft becomes a `failed` proposal and the skill stays a candidate. `lbg run` waits `render.retryAfterHours` before trying it again; `lbg run --only <id>` retries right away.
 
-## 7. Review (`src/pipeline/accept.ts`, `revise.ts`, `interactive.ts`)
+## 7. Review (`src/pipeline/accept.ts`, `reject.ts`, `proposal-view.ts`, `commit.ts`, `revise.ts`, `interactive.ts`)
 
 - **Who is working on a proposal:** each proposal records the pid of the lbg process drafting it, or running a `revise` / `edit` session on it (a chat can last hours; the proposal stays `open`). While that process is alive, other lbg commands refuse to accept, reject, revise or edit it. When it has died (crash, Ctrl-C, timer timeout), the next `lbg draft`, `lbg run` or `lbg proposals` recovers it: a `drafting` proposal becomes `failed` and its skill a candidate again; an `open` one is just released, its stored draft intact. lbg's state is per host, so pids are too.
 - **Stale drafts:** each drafted file stores the original it was drafted from (`baseContent`). When a target file changes on disk after the draft, `show` / `diff` diff the draft against that original and list the on-disk changes separately. `revise` / `edit` start from the current file with the draft's change merged on top (`applyPatch`); if that conflicts, the scratch has the current file and the reviser is given the draft's patch to re-apply. Drafts stored before originals were kept fall back to the current file plus the old draft as reference.
@@ -334,7 +334,7 @@ src/
     sync.ts insert.ts treescore.ts stats.ts curate.ts
     render.ts                drafting one candidate: target.ts (where it goes), scratch.ts,
                              draft-prompt.ts, verify.ts
-    accept.ts revise.ts interactive.ts privacy.ts
+    accept.ts reject.ts proposal-view.ts commit.ts revise.ts interactive.ts privacy.ts
     run.ts                   the lbg run pass
   skills/                    parse SKILL.md / AGENTS.md / docs, where agents keep files (layout.ts), repo resolution
   pi/types.ts run-pi.ts run-claude.ts claude-guard.ts claude-guard-hook.ts guard.ts guard-extension.ts

@@ -17,9 +17,9 @@ import {
 import type { Turn } from "../state/feedback.ts";
 import { Feedback } from "../state/feedback.ts";
 import type { Tree } from "../state/tree.ts";
-import { editDiff } from "./accept.ts";
 import { readChatTurns, readClaudeChatTurns } from "./chatlog.ts";
 import { DRAFT_SYSTEM_PROMPT } from "./draft-prompt.ts";
+import { editDiff } from "./proposal-view.ts";
 import {
   type CloseResult,
   closeDraft,

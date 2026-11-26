@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_CONFIG } from "../src/config.ts";
-import { rejectProposal } from "../src/pipeline/accept.ts";
+import { rejectProposal } from "../src/pipeline/reject.ts";
 import { scoreTree } from "../src/pipeline/treescore.ts";
 import { isExpired, Rejections } from "../src/state/rejections.ts";
 import { proposalSetup } from "./helpers/proposals.ts";

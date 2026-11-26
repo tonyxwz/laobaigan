@@ -2,9 +2,9 @@ import type { Static, TSchema } from "typebox";
 import { describe, expect, it } from "vitest";
 import { type Config, DEFAULT_CONFIG } from "../src/config.ts";
 import type { PiRequest, PiResult, PiRunner } from "../src/pi/types.ts";
-import { rejectProposal } from "../src/pipeline/accept.ts";
 import { buildDraftPrompt } from "../src/pipeline/draft-prompt.ts";
 import { processSessions } from "../src/pipeline/process.ts";
+import { rejectProposal } from "../src/pipeline/reject.ts";
 import { resolveTarget } from "../src/pipeline/target.ts";
 import { scoreTree } from "../src/pipeline/treescore.ts";
 import type {

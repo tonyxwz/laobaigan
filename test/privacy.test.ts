@@ -5,11 +5,8 @@ import { join } from "node:path";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import { type Config, DEFAULT_CONFIG, loadConfig } from "../src/config.ts";
-import {
-  acceptProposal,
-  commitMessageFor,
-  privateHitsFor,
-} from "../src/pipeline/accept.ts";
+import { acceptProposal, privateHitsFor } from "../src/pipeline/accept.ts";
+import { commitMessageFor } from "../src/pipeline/commit.ts";
 import {
   isPublicRepo,
   privateHits,

@@ -11,12 +11,12 @@ import { describe, expect, it } from "vitest";
 import { type Config, DEFAULT_CONFIG } from "../src/config.ts";
 import {
   acceptProposal,
-  commitTargetFor,
   conflicts,
   newSinceDraft,
-  proposalDiff,
-  rejectProposal,
 } from "../src/pipeline/accept.ts";
+import { commitTargetFor } from "../src/pipeline/commit.ts";
+import { proposalDiff } from "../src/pipeline/proposal-view.ts";
+import { rejectProposal } from "../src/pipeline/reject.ts";
 import { draftCandidates, draftSkill } from "../src/pipeline/render.ts";
 import {
   closeDraft,
@@ -567,7 +567,7 @@ describe("committing an already-accepted proposal", () => {
 
 describe("proposalView (stale proposals)", () => {
   it("shows the draft's own change against its base, plus what changed on disk, instead of reverting newer edits", async () => {
-    const { proposalView } = await import("../src/pipeline/accept.ts");
+    const { proposalView } = await import("../src/pipeline/proposal-view.ts");
     const { hashContent } = await import("../src/state/proposals.ts");
     const root = realpathSync(await mkdtemp(join(tmpdir(), "lbg-stale-")));
     await mkdir(join(root, "s"));

@@ -16,14 +16,15 @@ import { modelRunner } from "./pi/run-claude.ts";
 import { piDefaults } from "./pi/run-pi.ts";
 import {
   acceptProposal,
-  commitTargetFor,
   newSinceDraft,
   privateHitsFor,
-  proposalDiff,
-  proposalView,
-  rejectProposal,
 } from "./pipeline/accept.ts";
-import { commitTemplate, renderCommit, runCommit } from "./pipeline/commit.ts";
+import {
+  commitTargetFor,
+  commitTemplate,
+  renderCommit,
+  runCommit,
+} from "./pipeline/commit.ts";
 import * as curate from "./pipeline/curate.ts";
 import { dropEvidence } from "./pipeline/drop.ts";
 import {
@@ -37,6 +38,8 @@ import {
   processSessions,
   type SessionOutcome,
 } from "./pipeline/process.ts";
+import { proposalDiff, proposalView } from "./pipeline/proposal-view.ts";
+import { rejectProposal } from "./pipeline/reject.ts";
 import type { Rebased } from "./pipeline/revise.ts";
 import { reviseProposal } from "./pipeline/revise.ts";
 import { exitCode, runPipeline, STAGES, type Stage } from "./pipeline/run.ts";
