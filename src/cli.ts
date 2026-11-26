@@ -74,6 +74,7 @@ import {
 } from "./state/rejections.ts";
 import { subtreeNuggets, Tree, type TreeNode } from "./state/tree.ts";
 import { acquireLock } from "./util/lock.ts";
+import { tildify } from "./util/path.ts";
 import { truncate } from "./util/text.ts";
 import { parseDuration, parseSince } from "./util/time.ts";
 
@@ -1315,11 +1316,7 @@ function renderOutcomes(
 }
 
 function shortPath(p: string | undefined): string {
-  if (!p) return "?";
-  const home = process.env.HOME ?? "";
-  return home && p.startsWith(home)
-    ? `~${p.slice(home.length)}`
-    : p.replace(/^\/local\/home\/[^/]+/, "~");
+  return p ? tildify(p) : "?";
 }
 
 function sessionsOf(n: TreeNode): number {

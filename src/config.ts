@@ -1,8 +1,9 @@
 import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, join, resolve } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { type ExtraPattern, setExtraPatterns } from "./pipeline/redact.ts";
 import { isValidSkillName } from "./skills/name.ts";
+import { expandHome } from "./util/path.ts";
 
 /** Truncation limits applied when normalizing transcripts. */
 export interface NormalizeLimits {
@@ -18,13 +19,6 @@ export const DEFAULT_LIMITS: NormalizeLimits = {
 };
 
 const home = homedir();
-
-/** Expand a leading `~` and make the path absolute. */
-export function expandPath(p: string): string {
-  const expanded =
-    p === "~" ? home : p.startsWith("~/") ? join(home, p.slice(2)) : p;
-  return isAbsolute(expanded) ? expanded : resolve(expanded);
-}
 
 /** Global skills dirs of the agents lbg knows, in order of preference. */
 export function skillsDirCandidates(h: string = home): string[] {
@@ -303,7 +297,7 @@ function validateTopics(topics: DeclaredTopic[]): DeclaredTopic[] {
     const key = `${scope}:${t.repo ?? ""}:${t.name}`;
     if (seen.has(key)) throw new Error(`config.topics: duplicate ${t.name}`);
     seen.add(key);
-    return { ...t, scope, ...(t.repo ? { repo: expandPath(t.repo) } : {}) };
+    return { ...t, scope, ...(t.repo ? { repo: expandHome(t.repo) } : {}) };
   });
 }
 
@@ -361,7 +355,7 @@ export function loadConfig(path = CONFIG_PATH): Config {
   );
   return {
     ...c,
-    skillsDir: expandPath(c.skillsDir),
+    skillsDir: expandHome(c.skillsDir),
     topics: validateTopics(Array.isArray(c.topics) ? c.topics : []),
     ...validateCommitCommand(c.commitCommand),
     agent: validateAgent(c.agent),
@@ -376,10 +370,10 @@ export function loadConfig(path = CONFIG_PATH): Config {
       ...validateClaudeSettings(c.claudeCode?.settings),
       // A bare name ("claude") is looked up on PATH; anything path-like is expanded.
       ...(c.claudeCode?.executable && /[/~]/.test(c.claudeCode.executable)
-        ? { executable: expandPath(c.claudeCode.executable) }
+        ? { executable: expandHome(c.claudeCode.executable) }
         : {}),
     },
-    stateDir: expandPath(c.stateDir),
+    stateDir: expandHome(c.stateDir),
     repoDocs: validateRepoDocs(c.repoDocs),
     privacy: validatePrivacy(c.privacy),
   };
@@ -418,7 +412,7 @@ function validatePrivacy(v: unknown): Config["privacy"] {
       );
     }
   }
-  return { publicRepos: repos.map(expandPath), privateTerms: terms };
+  return { publicRepos: repos.map((r) => expandHome(r)), privateTerms: terms };
 }
 
 /** Settings that would switch off (or let tools around) lbg's guard hook. */

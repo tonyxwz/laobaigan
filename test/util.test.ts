@@ -30,3 +30,29 @@ describe("text", () => {
     expect(renderInput("a\n b", 100)).toBe("a b");
   });
 });
+
+describe("home paths", () => {
+  it("expands and shortens paths under the home directory", async () => {
+    const { expandHome, tildify } = await import("../src/util/path.ts");
+    expect(expandHome("~/a/b", "/h")).toBe("/h/a/b");
+    expect(expandHome("~", "/h")).toBe("/h");
+    expect(expandHome("/x/~", "/h")).toBe("/x/~");
+    expect(tildify("/h/a", "/h")).toBe("~/a");
+    expect(tildify("/h", "/h")).toBe("~");
+    expect(tildify("/hx/a", "/h")).toBe("/hx/a");
+  });
+
+  it("matches the real path of a symlinked home directory", async () => {
+    const { mkdtempSync, mkdirSync, symlinkSync, realpathSync } = await import(
+      "node:fs"
+    );
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { tildify } = await import("../src/util/path.ts");
+    const d = realpathSync(mkdtempSync(join(tmpdir(), "lbg-home-")));
+    mkdirSync(join(d, "real"));
+    symlinkSync(join(d, "real"), join(d, "link"));
+    expect(tildify(join(d, "real", "repo"), join(d, "link"))).toBe("~/repo");
+    expect(tildify(join(d, "link", "repo"), join(d, "link"))).toBe("~/repo");
+  });
+});

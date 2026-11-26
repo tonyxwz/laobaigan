@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { CONFIG_PATH, detectSkillsDir, skillsDirCandidates } from "./config.ts";
+import { tildify } from "./util/path.ts";
 import type { SourceAdapter } from "./sources/types.ts";
 
 /**
@@ -19,9 +20,6 @@ export interface InitReport {
   agents: { agent: string; available: boolean }[];
   pi: { provider?: string; model?: string; cli?: string };
 }
-
-const tilde = (p: string, h: string) =>
-  p === h ? "~" : p.startsWith(`${h}/`) ? `~${p.slice(h.length)}` : p;
 
 /** First `name` on PATH. */
 export function onPath(
@@ -54,7 +52,7 @@ export async function init(opts: {
     mkdirSync(dirname(configPath), { recursive: true });
     writeFileSync(
       configPath,
-      `${JSON.stringify({ skillsDir: tilde(skillsDir, h) }, null, 2)}\n`,
+      `${JSON.stringify({ skillsDir: tildify(skillsDir, h) }, null, 2)}\n`,
     );
     config = "created";
   }
@@ -79,7 +77,7 @@ export async function init(opts: {
 }
 
 export function renderInit(r: InitReport, h: string = homedir()): string {
-  const t = (p: string) => tilde(p, h);
+  const t = (p: string) => tildify(p, h);
   const lines = [
     `config: ${t(r.configPath)} (${r.config === "created" ? "created" : "already exists, left as is"})`,
     `skills dir: ${t(r.skillsDir)}`,
