@@ -73,6 +73,7 @@ Environment overrides:
 
 - **TypeScript, erasable syntax only** (`erasableSyntaxOnly`): no enums, namespaces or constructor parameter properties, so Node can strip the types.
 - **Imports:** relative imports use `.ts` extensions; `tsconfig.build.json` rewrites them to `.js` in `dist/`.
+- **Pipeline groups:** `src/pipeline/extract/`, `tree/`, `draft/` and `review/` each have an `index.ts` that says what the group does and exports its entry points. `run.ts` and the commands import through it. Files inside `src/pipeline/` import each other directly, so the groups don't load each other in a cycle.
 - **Database changes** are new numbered migrations in `src/state/db.ts`, never edits to old ones. Back up the real db before running a migration on it.
 - **Model calls** go through `AgentRunner` (`src/agents/types.ts`) and return results through a result tool, never parsed free text.
 

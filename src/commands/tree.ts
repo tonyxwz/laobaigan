@@ -2,9 +2,12 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadConfig } from "../config.ts";
-import * as curate from "../pipeline/tree/curate.ts";
-import { type SyncReport, syncTree } from "../pipeline/tree/sync.ts";
-import { scoreTree } from "../pipeline/tree/treescore.ts";
+import {
+  curate,
+  type SyncReport,
+  scoreTree,
+  syncTree,
+} from "../pipeline/tree/index.ts";
 import { StateDb } from "../state/db.ts";
 import { Tree } from "../state/tree.ts";
 import type { Context } from "./context.ts";

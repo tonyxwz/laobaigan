@@ -3,32 +3,26 @@ import { createInterface } from "node:readline/promises";
 import { modelRunner } from "../agents/run-claude.ts";
 import { CONFIG_PATH, type Config, loadConfig } from "../config.ts";
 import { writePromptStatus } from "../notify/prompt.ts";
-import { privateProblems } from "../pipeline/draft/privacy.ts";
+import { privateProblems } from "../pipeline/draft/index.ts";
 import {
   acceptProposal,
-  newSinceDraft,
-  privateHitsFor,
-} from "../pipeline/review/accept.ts";
-import {
+  chatRevise,
   commitTargetFor,
   commitTemplate,
-  renderCommit,
-  runCommit,
-} from "../pipeline/review/commit.ts";
-import { dropEvidence } from "../pipeline/review/drop.ts";
-import {
-  chatRevise,
+  dropEvidence,
   editProposal,
   type InteractiveResult,
-} from "../pipeline/review/interactive.ts";
-import {
+  newSinceDraft,
+  privateHitsFor,
   proposalDiff,
   proposalView,
-} from "../pipeline/review/proposal-view.ts";
-import { rejectProposal } from "../pipeline/review/reject.ts";
-import type { Rebased } from "../pipeline/review/revise.ts";
-import { reviseProposal } from "../pipeline/review/revise.ts";
-import { scoreTree } from "../pipeline/tree/treescore.ts";
+  type Rebased,
+  rejectProposal,
+  renderCommit,
+  reviseProposal,
+  runCommit,
+} from "../pipeline/review/index.ts";
+import { scoreTree } from "../pipeline/tree/index.ts";
 import { StateDb } from "../state/db.ts";
 import { Feedback } from "../state/feedback.ts";
 import {

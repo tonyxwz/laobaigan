@@ -1,7 +1,6 @@
 import { join } from "node:path";
 import { loadConfig } from "../config.ts";
-import * as curate from "../pipeline/tree/curate.ts";
-import { scoreTree } from "../pipeline/tree/treescore.ts";
+import { curate, scoreTree } from "../pipeline/tree/index.ts";
 import { StateDb } from "../state/db.ts";
 import { subtreeNuggets, Tree } from "../state/tree.ts";
 import { indent } from "../util/text.ts";

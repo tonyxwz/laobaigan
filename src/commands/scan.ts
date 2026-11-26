@@ -4,7 +4,7 @@ import { loadConfig } from "../config.ts";
 import {
   type ProcessOptions,
   processSessions,
-} from "../pipeline/extract/process.ts";
+} from "../pipeline/extract/index.ts";
 import { StateDb } from "../state/db.ts";
 import { parseDuration, parseSince } from "../util/time.ts";
 import type { Context } from "./context.ts";

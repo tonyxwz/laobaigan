@@ -330,7 +330,7 @@ src/
   init.ts service.ts         lbg init, lbg service
   sources/                   one adapter per agent
   state/db.ts tree.ts proposals.ts
-  pipeline/
+  pipeline/                  each group's index.ts says what it does and exports its entry points
     extract/                 fingerprint.ts prefilter.ts redact.ts process.ts extract.ts classify.ts
     tree/                    sync.ts insert.ts treescore.ts stats.ts curate.ts
     draft/                   render.ts (drafting one candidate), target.ts (where it goes),

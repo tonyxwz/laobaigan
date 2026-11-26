@@ -1,6 +1,6 @@
-import type { SessionOutcome } from "../pipeline/extract/process.ts";
-import { newSinceDraft } from "../pipeline/review/accept.ts";
-import type { TreeScoreResult } from "../pipeline/tree/treescore.ts";
+import type { SessionOutcome } from "../pipeline/extract/index.ts";
+import { newSinceDraft } from "../pipeline/review/index.ts";
+import type { TreeScoreResult } from "../pipeline/tree/index.ts";
 import { type AgentId, ALL_AGENTS, type Transcript } from "../sources/index.ts";
 import { type ProposalRow, Proposals } from "../state/proposals.ts";
 import { isExpired, type MemoryRow } from "../state/rejections.ts";

@@ -5,12 +5,14 @@ import { writePromptStatus } from "../notify/prompt.ts";
 import type { AgentId, SourceAdapter } from "../sources/index.ts";
 import type { StateDb } from "../state/db.ts";
 import { Tree } from "../state/tree.ts";
-import { draftCandidates } from "./draft/render.ts";
-import { type ClassifyResult, classifyRejections } from "./extract/classify.ts";
-import { processSessions, type SessionOutcome } from "./extract/process.ts";
-import { insertNuggets } from "./tree/insert.ts";
-import { syncTree } from "./tree/sync.ts";
-import { scoreTree } from "./tree/treescore.ts";
+import { draftCandidates } from "./draft/index.ts";
+import {
+  type ClassifyResult,
+  classifyRejections,
+  processSessions,
+  type SessionOutcome,
+} from "./extract/index.ts";
+import { insertNuggets, scoreTree, syncTree } from "./tree/index.ts";
 
 /**
  * One unattended pass (what the hourly timer runs):
