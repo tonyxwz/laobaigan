@@ -3,8 +3,9 @@ import { describe, expect, it } from "vitest";
 import { type Config, DEFAULT_CONFIG } from "../src/config.ts";
 import type { PiRequest, PiResult, PiRunner } from "../src/pi/run-pi.ts";
 import { rejectProposal } from "../src/pipeline/accept.ts";
+import { buildDraftPrompt } from "../src/pipeline/draft-prompt.ts";
 import { processSessions } from "../src/pipeline/process.ts";
-import { buildDraftPrompt, resolveTarget } from "../src/pipeline/render.ts";
+import { resolveTarget } from "../src/pipeline/target.ts";
 import { scoreTree } from "../src/pipeline/treescore.ts";
 import type {
   SessionRef,

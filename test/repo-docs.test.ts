@@ -10,9 +10,10 @@ import {
 import { describe, expect, it } from "vitest";
 import { type Config, DEFAULT_CONFIG } from "../src/config.ts";
 import { acceptProposal } from "../src/pipeline/accept.ts";
-import { draftSkill, resolveTarget } from "../src/pipeline/render.ts";
+import { draftSkill } from "../src/pipeline/render.ts";
 import { closeDraft, discardDraft, openDraft } from "../src/pipeline/revise.ts";
 import { syncTree } from "../src/pipeline/sync.ts";
+import { resolveTarget } from "../src/pipeline/target.ts";
 import { scoreTree, skillStats } from "../src/pipeline/treescore.ts";
 import { type NuggetInsert, StateDb } from "../src/state/db.ts";
 import { Tree } from "../src/state/tree.ts";

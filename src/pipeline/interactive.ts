@@ -19,7 +19,7 @@ import { Feedback } from "../state/feedback.ts";
 import type { Tree } from "../state/tree.ts";
 import { editDiff } from "./accept.ts";
 import { readChatTurns, readClaudeChatTurns } from "./chatlog.ts";
-import { DRAFT_SYSTEM_PROMPT, guardFor } from "./render.ts";
+import { DRAFT_SYSTEM_PROMPT } from "./draft-prompt.ts";
 import {
   type CloseResult,
   closeDraft,
@@ -28,6 +28,7 @@ import {
   openDraft,
   reviseContext,
 } from "./revise.ts";
+import { guardFor } from "./target.ts";
 
 /**
  * Interactive changes to an open proposal, in my own terminal:

@@ -23,8 +23,8 @@ import {
   privateProblems,
   privateTermsIn,
 } from "./privacy.ts";
-import { isAllowed } from "./render.ts";
 import { syncTree } from "./sync.ts";
+import { isAllowed } from "./target.ts";
 
 /**
  * Accept / reject a proposal. Accepting writes the drafted files into the target

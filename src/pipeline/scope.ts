@@ -1,7 +1,7 @@
 import { parseFrontmatter } from "../skills/index.ts";
 import type { DraftFile } from "../state/proposals.ts";
 import type { ProposalKind } from "../state/tree.ts";
-import type { RenderTarget } from "./render.ts";
+import type { RenderTarget } from "./target.ts";
 
 /**
  * A live skill's scope. Its description is a contract: it tells agents (and lbg's router)

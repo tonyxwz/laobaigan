@@ -332,7 +332,9 @@ src/
   pipeline/
     fingerprint.ts prefilter.ts redact.ts process.ts extract.ts
     sync.ts insert.ts treescore.ts stats.ts curate.ts
-    render.ts accept.ts revise.ts interactive.ts privacy.ts
+    render.ts                drafting one candidate: target.ts (where it goes), scratch.ts,
+                             draft-prompt.ts, verify.ts
+    accept.ts revise.ts interactive.ts privacy.ts
     run.ts                   the lbg run pass
   skills/                    parse SKILL.md / AGENTS.md, repo resolution
   pi/run-pi.ts run-claude.ts claude-guard.ts claude-guard-hook.ts guard.ts guard-extension.ts

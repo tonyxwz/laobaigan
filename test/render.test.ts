@@ -622,7 +622,7 @@ describe("proposalView (stale proposals)", () => {
   });
 
   it("drafts store the original content of each changed file", async () => {
-    const { diffSnapshot } = await import("../src/pipeline/render.ts");
+    const { diffSnapshot } = await import("../src/pipeline/scratch.ts");
     const scratch = realpathSync(await mkdtemp(join(tmpdir(), "lbg-snap-")));
     await mkdir(join(scratch, "s"));
     await writeFile(join(scratch, "s", "SKILL.md"), "new\n");
