@@ -6,6 +6,7 @@ import {
   type TreeNode,
 } from "../state/tree.ts";
 import { truncate } from "../util/text.ts";
+import { homeOfTarget } from "./homes.ts";
 import type { RenderTarget } from "./target.ts";
 
 export const DRAFT_SYSTEM_PROMPT = `You write and maintain agent skills from knowledge an engineer taught their AI coding agents (pi, Claude Code, opencode).
@@ -82,33 +83,7 @@ export function buildDraftPrompt(
     `${base(n)}${draftedAt && (n.attachedAt?.getTime() ?? 0) > draftedAt.getTime() ? " (NEW SINCE THE DRAFT)" : ""}`;
   const lines: string[] = [];
 
-  if (target.pointer && target.doc && target.agentsMd) {
-    lines.push(
-      `Task: ${target.doc} already states the knowledge below, yet the engineer had to explain it again: agents working in this repository did not read that document. Make ${target.agentsMd} point to it: add (or sharpen) one or two lines saying WHEN to read ${target.doc}, naming the tasks, files and commands involved. Put them where ${target.agentsMd} lists its documentation, or in a new short "##" section if it has no such place. Do not copy the document's content into ${target.agentsMd}.`,
-    );
-  } else if (target.doc) {
-    lines.push(
-      `Task: update the document ${target.doc}. Read it first; add the new knowledge to the section it belongs to (a new "##" section only if none fits) and change as little as needed.`,
-    );
-  } else if (target.agentsMd && target.intro) {
-    lines.push(
-      `Task: update the text before the first "##" section of ${target.agentsMd}. Keep it short, since every agent in the repository always reads it.`,
-    );
-  } else if (target.agentsMd && target.section) {
-    lines.push(
-      `Task: update the "## ${target.section}" section of ${target.agentsMd}.`,
-    );
-  } else if (kind === "new") {
-    lines.push(
-      target.agentsMd
-        ? `Task: write this repository knowledge. Short rules and facts (a few lines) go into a new "##" section of ${target.agentsMd}; a multi-step procedure becomes the skill ${target.skillDir}/SKILL.md (+ references/). Pick one.`
-        : `Task: create the new skill ${target.skillDir}/SKILL.md (name: ${target.skillName}), with references/<subtopic>.md where useful.`,
-    );
-  } else {
-    lines.push(
-      `Task: update the existing skill ${target.skillDir}/. Read its files first and keep their structure and voice; change as little as needed.`,
-    );
-  }
+  lines.push(homeOfTarget(target, kind).task(target, kind));
   if (kind === "update")
     lines.push(
       "Integrate the knowledge marked (NEW). Items marked (already absorbed) are background.",

@@ -1,5 +1,4 @@
 import type { ScoreConfig } from "../config.ts";
-import { fileNodeKind } from "../skills/parse.ts";
 import type { NuggetRow } from "../state/db.ts";
 import { type MemoryRow, Rejections } from "../state/rejections.ts";
 import {
@@ -8,6 +7,7 @@ import {
   type Tree,
   type TreeNode,
 } from "../state/tree.ts";
+import { homeOf } from "./homes.ts";
 import {
   type EvidenceStats,
   evidenceStats,
@@ -77,9 +77,10 @@ export function earnedProposal(
     (fresh.sessions >= 2 && fresh.agents.length >= 2)
   )
     return "update";
-  const kind = fileNodeKind(skill.sourcePath);
-  const alwaysLoaded = kind === "agents-section" || kind === "agents-intro";
-  if (!alwaysLoaded && stats.covered!.sessions >= p.fixDescriptionMinSessions)
+  if (
+    !homeOf(skill).alwaysLoaded &&
+    stats.covered!.sessions >= p.fixDescriptionMinSessions
+  )
     return "fix-description";
   return undefined;
 }

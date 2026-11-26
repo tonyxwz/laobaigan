@@ -333,8 +333,8 @@ src/
   pipeline/
     fingerprint.ts prefilter.ts redact.ts process.ts extract.ts
     sync.ts insert.ts treescore.ts stats.ts curate.ts
-    render.ts                drafting one candidate: target.ts (where it goes), scratch.ts,
-                             draft-prompt.ts, verify.ts
+    render.ts                drafting one candidate: target.ts (where it goes), homes.ts (what
+                             differs per kind of place), scratch.ts, draft-prompt.ts, verify.ts
     accept.ts reject.ts proposal-view.ts commit.ts revise.ts interactive.ts privacy.ts
     run.ts                   the lbg run pass
   skills/                    parse SKILL.md / AGENTS.md / docs, where agents keep files (layout.ts), repo resolution

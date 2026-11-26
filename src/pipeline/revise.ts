@@ -1,5 +1,5 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
-import { dirname, join, relative } from "node:path";
+import { dirname, join } from "node:path";
 import { applyPatch, createPatch } from "diff";
 import { agentModel, type Config } from "../config.ts";
 import { GUARDED_TOOLS } from "../pi/guard.ts";
@@ -9,7 +9,6 @@ import {
   type Usage,
   ZERO_USAGE,
 } from "../pi/types.ts";
-import { fileNodeKind } from "../skills/parse.ts";
 import { Feedback } from "../state/feedback.ts";
 import {
   type DraftFile,
@@ -24,6 +23,7 @@ import {
   ReportDraftSchema,
 } from "./draft-prompt.ts";
 import { applyExclusions, type Rehomed } from "./exclude.ts";
+import { homeOf } from "./homes.ts";
 import { reviewFeedbackPrompt } from "./review.ts";
 import { checkScope, scopeProblem } from "./scope.ts";
 import { diffSnapshot, makeScratch, snapshot } from "./scratch.ts";
@@ -71,30 +71,14 @@ export interface Rebased {
 export function targetOf(p: ProposalRow, skill: TreeNode): RenderTarget {
   const dir = p.primary.find((w) => w.endsWith("/"));
   const file = p.primary.find((w) => !w.endsWith("/"));
-  const kind =
-    skill.origin === "file" ? fileNodeKind(skill.sourcePath) : undefined;
-  const base = {
+  return {
     root: p.targetRoot,
     skillName: p.skillName ?? skill.name ?? `node-${skill.id}`,
     writable: p.writable,
     primary: p.primary,
     // Proposals drafted before a repo could be read as a whole keep working: reading it is harmless.
     ...(p.scope === "repo" ? { readRoot: p.targetRoot } : {}),
-  };
-  if (kind === "doc" && file && !dir) {
-    // Drafted for a document: either the document itself, or a pointer to it in AGENTS.md.
-    const doc = relative(p.targetRoot, skill.sourcePath!);
-    return file === doc
-      ? { ...base, doc }
-      : { ...base, agentsMd: file, doc, pointer: true };
-  }
-  const agents = !!file && !dir;
-  return {
-    ...base,
-    ...(dir ? { skillDir: dir.replace(/\/$/, "") } : {}),
-    ...(file ? { agentsMd: file } : {}),
-    ...(agents && kind === "agents-section" ? { section: skill.title } : {}),
-    ...(agents && kind === "agents-intro" ? { intro: true } : {}),
+    ...homeOf(skill).restore(skill, p, { dir, file }),
   };
 }
 

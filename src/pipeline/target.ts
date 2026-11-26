@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { dirname, join, relative } from "node:path";
+import { join } from "node:path";
 import type { Config } from "../config.ts";
 import type { FileGuard } from "../pi/guard.ts";
 import {
@@ -7,12 +7,11 @@ import {
   AGENT_RULE_DIRS,
   AGENT_SKILL_DIRS,
   distinctExisting,
-  repoSkillDirs,
 } from "../skills/layout.ts";
 import { isValidSkillName } from "../skills/name.ts";
-import { fileNodeKind } from "../skills/parse.ts";
 import { resolveRepo } from "../skills/repo.ts";
 import { subtreeNuggets, type TreeNode } from "../state/tree.ts";
+import { HOMES, homeOf, type RepoPlace } from "./homes.ts";
 import { evidenceText, skillName } from "./stats.ts";
 
 /**
@@ -119,48 +118,26 @@ export async function resolveTarget(
       `evidence is filed under ${skill.repo}, which maps to ${root}; drafting for workspace roots isn't supported yet`,
     );
   }
-  const src = skill.sourcePath ?? "";
-  const kind = skill.origin === "file" ? fileNodeKind(src) : undefined;
-  const repo = async (
-    primary: string[],
-    rest: Omit<RenderTarget, "root" | "skillName" | "writable" | "primary">,
-  ): Promise<RenderTarget> => ({
+  const place: RepoPlace = {
+    root,
+    name,
+    agentsMd:
+      existsSync(join(root, "AGENTS.md")) ||
+      !existsSync(join(root, "CLAUDE.md"))
+        ? "AGENTS.md"
+        : "CLAUDE.md",
+  };
+  // Where the draft goes depends on the node's home; a node without a usable file is latent.
+  const at =
+    (await homeOf(skill).place(skill, place)) ??
+    (await HOMES.latent.place(skill, place));
+  if (!at) throw new SkipError("no place to draft into");
+  return {
     root,
     skillName: name,
-    writable: await repoWritable(root, cfg.repoDocs, primary),
-    primary,
+    writable: await repoWritable(root, cfg.repoDocs, at.primary),
+    primary: at.primary,
     readRoot: root,
-    ...rest,
-  });
-  const md = /^(.*\/(?:AGENTS|CLAUDE)\.md)#/.exec(src);
-  if (md && (kind === "agents-section" || kind === "agents-intro")) {
-    const agentsMd = relative(root, md[1]!);
-    return repo(
-      [agentsMd],
-      kind === "agents-intro"
-        ? { agentsMd, intro: true }
-        : { agentsMd, section: skill.title },
-    );
-  }
-  const agentsMd =
-    existsSync(join(root, "AGENTS.md")) || !existsSync(join(root, "CLAUDE.md"))
-      ? "AGENTS.md"
-      : "CLAUDE.md";
-  if (kind === "doc") {
-    const doc = relative(root, src);
-    // The document already says it and it was explained again: agents didn't read it.
-    // What's missing is a pointer in AGENTS.md, not more text in the document.
-    return skill.proposalKind === "fix-description"
-      ? repo([agentsMd], { agentsMd, doc, pointer: true })
-      : repo([doc], { doc });
-  }
-  if (kind === "skill") {
-    // A live skill stays in whichever agent's directory it is in.
-    const skillDir = relative(root, dirname(src));
-    return repo([`${skillDir}/`], { skillDir });
-  }
-  // A new skill goes where the repo already keeps skills.
-  const home = (await repoSkillDirs(root))[0] ?? AGENT_SKILL_DIRS[0]!;
-  const skillDir = `${home}/${name}`;
-  return repo([`${skillDir}/`, agentsMd], { skillDir, agentsMd });
+    ...at.place,
+  };
 }
