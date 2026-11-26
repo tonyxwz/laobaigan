@@ -1,6 +1,6 @@
 import { type Static, Type } from "typebox";
-import type { PiRunner, ThinkingLevel, Usage } from "../pi/run-pi.ts";
-import { addUsage, ZERO_USAGE } from "../pi/run-pi.ts";
+import type { PiRunner, ThinkingLevel, Usage } from "../pi/types.ts";
+import { addUsage, ZERO_USAGE } from "../pi/types.ts";
 import type { Transcript } from "../sources/types.ts";
 import type { MemoryRow } from "../state/rejections.ts";
 import type { Excerpt } from "./prefilter.ts";

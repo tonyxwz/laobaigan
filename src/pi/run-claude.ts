@@ -13,14 +13,14 @@ import {
   claudeToolsFor,
   STRUCTURED_OUTPUT_TOOL,
 } from "./claude-guard.ts";
-import {
-  PiConfigRunner,
-  type PiRequest,
-  type PiResult,
-  type PiRunner,
-  type ThinkingLevel,
-  type Usage,
-} from "./run-pi.ts";
+import { PiConfigRunner } from "./run-pi.ts";
+import type {
+  PiRequest,
+  PiResult,
+  PiRunner,
+  ThinkingLevel,
+  Usage,
+} from "./types.ts";
 
 export interface ClaudeCodeOptions {
   /** The `claude` executable. Default: the one bundled with the Agent SDK. */

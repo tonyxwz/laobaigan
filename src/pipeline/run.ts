@@ -1,7 +1,7 @@
 import type { Config } from "../config.ts";
 import { writePromptStatus } from "../notify/prompt.ts";
-import type { PiRunner, Usage } from "../pi/run-pi.ts";
-import { addUsage, ZERO_USAGE } from "../pi/run-pi.ts";
+import type { PiRunner, Usage } from "../pi/types.ts";
+import { addUsage, ZERO_USAGE } from "../pi/types.ts";
 import type { AgentId, SourceAdapter } from "../sources/index.ts";
 import type { StateDb } from "../state/db.ts";
 import { Tree } from "../state/tree.ts";

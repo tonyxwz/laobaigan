@@ -8,7 +8,7 @@ import {
   type PiRunner,
   type Usage,
   ZERO_USAGE,
-} from "../pi/run-pi.ts";
+} from "../pi/types.ts";
 import { fileNodeKind } from "../skills/parse.ts";
 import { Feedback } from "../state/feedback.ts";
 import {

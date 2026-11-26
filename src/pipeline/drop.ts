@@ -1,6 +1,6 @@
 import type { Config } from "../config.ts";
-import type { PiRunner, Usage } from "../pi/run-pi.ts";
-import { addUsage, ZERO_USAGE } from "../pi/run-pi.ts";
+import type { PiRunner, Usage } from "../pi/types.ts";
+import { addUsage, ZERO_USAGE } from "../pi/types.ts";
 import { Proposals } from "../state/proposals.ts";
 import { subtreeNuggets, type Tree } from "../state/tree.ts";
 import { applyExclusions, type Rehomed } from "./exclude.ts";

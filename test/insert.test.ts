@@ -1,7 +1,7 @@
 import type { Static, TSchema } from "typebox";
 import { describe, expect, it } from "vitest";
 import { DEFAULT_CONFIG } from "../src/config.ts";
-import type { PiRequest, PiResult, PiRunner } from "../src/pi/run-pi.ts";
+import type { PiRequest, PiResult, PiRunner } from "../src/pi/types.ts";
 import {
   buildSkillPrompt,
   detachLatent,

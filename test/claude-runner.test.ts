@@ -9,8 +9,8 @@ import {
   claudeSettings,
   modelRunner,
 } from "../src/pi/run-claude.ts";
-import type { PiRequest, PiRunner } from "../src/pi/run-pi.ts";
 import { PiConfigRunner } from "../src/pi/run-pi.ts";
+import type { PiRequest, PiRunner } from "../src/pi/types.ts";
 
 const schema = Type.Object({
   items: Type.Array(Type.String()),

@@ -6,7 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import type { Static, TSchema } from "typebox";
 import { describe, expect, it } from "vitest";
 import { type Config, DEFAULT_CONFIG } from "../src/config.ts";
-import type { PiRequest, PiResult, PiRunner } from "../src/pi/run-pi.ts";
+import type { PiRequest, PiResult, PiRunner } from "../src/pi/types.ts";
 import { rejectProposal } from "../src/pipeline/accept.ts";
 import { buildClassifyPrompt } from "../src/pipeline/classify.ts";
 import { exitCode, runPipeline } from "../src/pipeline/run.ts";

@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { agentModel, type Config } from "../config.ts";
-import type { PiRunner, Usage } from "../pi/run-pi.ts";
-import { addUsage, ZERO_USAGE } from "../pi/run-pi.ts";
+import type { PiRunner, Usage } from "../pi/types.ts";
+import { addUsage, ZERO_USAGE } from "../pi/types.ts";
 import {
   loadSkillsDir,
   renderSkillIndex,

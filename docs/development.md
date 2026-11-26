@@ -74,7 +74,7 @@ Environment overrides:
 - **TypeScript, erasable syntax only** (`erasableSyntaxOnly`): no enums, namespaces or constructor parameter properties, so Node can strip the types.
 - **Imports:** relative imports use `.ts` extensions; `tsconfig.build.json` rewrites them to `.js` in `dist/`.
 - **Database changes** are new numbered migrations in `src/state/db.ts`, never edits to old ones. Back up the real db before running a migration on it.
-- **Model calls** go through `PiRunner` (`src/pi/run-pi.ts`) and return results through a result tool, never parsed free text.
+- **Model calls** go through `PiRunner` (`src/pi/types.ts`) and return results through a result tool, never parsed free text.
 
 ## Task tracking
 

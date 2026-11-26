@@ -337,7 +337,7 @@ src/
     accept.ts revise.ts interactive.ts privacy.ts
     run.ts                   the lbg run pass
   skills/                    parse SKILL.md / AGENTS.md, repo resolution
-  pi/run-pi.ts run-claude.ts claude-guard.ts claude-guard-hook.ts guard.ts guard-extension.ts
+  pi/types.ts run-pi.ts run-claude.ts claude-guard.ts claude-guard-hook.ts guard.ts guard-extension.ts
   notify/prompt.ts           the shell prompt file
 systemd/                     unit templates
 test/

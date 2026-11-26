@@ -4,8 +4,8 @@ import { join } from "node:path";
 import type { Static } from "typebox";
 import { agentModel, type Config } from "../config.ts";
 import { GUARDED_TOOLS } from "../pi/guard.ts";
-import type { PiRunner, Usage } from "../pi/run-pi.ts";
-import { addUsage, ZERO_USAGE } from "../pi/run-pi.ts";
+import type { PiRunner, Usage } from "../pi/types.ts";
+import { addUsage, ZERO_USAGE } from "../pi/types.ts";
 import { type DraftFile, Proposals } from "../state/proposals.ts";
 import { subtreeNuggets, type Tree } from "../state/tree.ts";
 import {

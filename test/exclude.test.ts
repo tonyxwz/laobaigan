@@ -6,7 +6,7 @@ import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import type { Static, TSchema } from "typebox";
 import { describe, expect, it } from "vitest";
 import { type Config, DEFAULT_CONFIG } from "../src/config.ts";
-import type { PiRequest, PiResult, PiRunner } from "../src/pi/run-pi.ts";
+import type { PiRequest, PiResult, PiRunner } from "../src/pi/types.ts";
 import { buildDraftPrompt } from "../src/pipeline/draft-prompt.ts";
 import { insertNuggets } from "../src/pipeline/insert.ts";
 import { draftSkill } from "../src/pipeline/render.ts";

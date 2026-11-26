@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { Static, TSchema } from "typebox";
 import { describe, expect, it } from "vitest";
 import { type Config, DEFAULT_CONFIG, loadConfig } from "../src/config.ts";
-import type { PiRequest, PiResult, PiRunner } from "../src/pi/run-pi.ts";
+import type { PiRequest, PiResult, PiRunner } from "../src/pi/types.ts";
 import { processSessions } from "../src/pipeline/process.ts";
 import { ClaudeAdapter } from "../src/sources/claude.ts";
 import type {
