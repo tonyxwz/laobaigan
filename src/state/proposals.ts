@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { shortHash } from "../util/hash.ts";
 import type { StateDb } from "./db.ts";
 import type { ProposalKind } from "./tree.ts";
 
@@ -39,7 +39,7 @@ export interface DraftFile {
 }
 
 export function hashContent(s: string): string {
-  return createHash("sha256").update(s).digest("hex").slice(0, 16);
+  return shortHash(s);
 }
 
 export interface ProposalRow {

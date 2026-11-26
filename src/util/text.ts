@@ -33,3 +33,12 @@ export function toDate(v: unknown): Date | undefined {
   }
   return undefined;
 }
+
+/** Indent every line by `n` spaces. */
+export function indent(s: string, n = 4): string {
+  const pad = " ".repeat(n);
+  return s
+    .split("\n")
+    .map((l) => pad + l)
+    .join("\n");
+}

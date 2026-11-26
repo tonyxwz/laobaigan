@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
 import { basename, join } from "node:path";
 import {
@@ -13,6 +12,7 @@ import {
   readJsonl,
   subdirs,
 } from "../util/fs.ts";
+import { shortHash } from "../util/hash.ts";
 import { isRecord, renderInput, str, toDate, truncate } from "../util/text.ts";
 import { activeBranch } from "../util/tree.ts";
 import type {
@@ -310,7 +310,7 @@ function isMemoryFile(path: string): boolean {
 
 /** Stable, unique per file (note names repeat across projects), readable in a 12-char prefix. */
 export function memorySessionId(path: string): string {
-  const hash = createHash("sha256").update(path).digest("hex").slice(0, 6);
+  const hash = shortHash(path, 6);
   return `mem-${basename(path, ".md")}-${hash}`;
 }
 

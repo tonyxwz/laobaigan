@@ -75,7 +75,7 @@ import {
 import { subtreeNuggets, Tree, type TreeNode } from "./state/tree.ts";
 import { acquireLock } from "./util/lock.ts";
 import { tildify } from "./util/path.ts";
-import { truncate } from "./util/text.ts";
+import { indent, truncate } from "./util/text.ts";
 import { parseDuration, parseSince } from "./util/time.ts";
 
 const USAGE = `lbg (laobaigan 老白干) — distill repeated explanations from agent sessions into skills
@@ -1545,13 +1545,6 @@ function renderTranscript(t: Transcript): string {
     }
   }
   return `${lines.join("\n")}\n`;
-}
-
-function indent(s: string): string {
-  return s
-    .split("\n")
-    .map((l) => `    ${l}`)
-    .join("\n");
 }
 
 // `lbg … | head` closes stdout early: exit quietly instead of crashing on EPIPE.

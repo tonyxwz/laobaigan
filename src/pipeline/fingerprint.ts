@@ -1,5 +1,5 @@
-import { createHash } from "node:crypto";
 import type { Transcript, Turn } from "../sources/types.ts";
+import { shortHash } from "../util/hash.ts";
 
 /** Human-authored user turns: the ones that carry what I taught the agent. */
 export function isHumanTurn(t: Turn): boolean {
@@ -20,10 +20,7 @@ export function fingerprintTurn(
   const when = t.ts
     ? t.ts.toISOString().slice(0, 19)
     : `${fallback.sessionId}#${fallback.index}`;
-  return createHash("sha256")
-    .update(`${when}\n${text}`)
-    .digest("hex")
-    .slice(0, 32);
+  return shortHash(`${when}\n${text}`, 32);
 }
 
 /** Fingerprints of every human turn, keyed by turn index. */

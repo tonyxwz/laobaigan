@@ -78,6 +78,24 @@ export async function exists(path: string): Promise<boolean> {
 }
 
 /** Immediate subdirectories of `dir` (empty if `dir` is missing). */
+/** Whether the path is a directory (symlinks are followed). */
+export async function isDir(path: string): Promise<boolean> {
+  try {
+    return (await stat(path)).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+/** The file's text, or undefined when it can't be read. */
+export async function readIfExists(path: string): Promise<string | undefined> {
+  try {
+    return await readFile(path, "utf8");
+  } catch {
+    return undefined;
+  }
+}
+
 export async function subdirs(dir: string): Promise<string[]> {
   try {
     const entries = await readdir(dir, { withFileTypes: true });

@@ -2,8 +2,8 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { CONFIG_PATH, detectSkillsDir, skillsDirCandidates } from "./config.ts";
-import { tildify } from "./util/path.ts";
 import type { SourceAdapter } from "./sources/types.ts";
+import { tildify } from "./util/path.ts";
 
 /**
  * `lbg init`: see what this machine has (agents' session stores, skills dirs, pi's

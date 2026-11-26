@@ -1,6 +1,7 @@
-import { createHash } from "node:crypto";
 import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import { basename, extname, join } from "node:path";
+import { isDir, readIfExists } from "../util/fs.ts";
+import { shortHash } from "../util/hash.ts";
 import { parseFrontmatter } from "./index.ts";
 
 /**
@@ -155,10 +156,6 @@ export function fileNodeKind(
   return undefined;
 }
 
-export function sha(s: string): string {
-  return createHash("sha256").update(s).digest("hex").slice(0, 16);
-}
-
 export function slugify(title: string): string {
   return (
     title
@@ -261,7 +258,7 @@ export function parseSkill(
     description: firstSentence(p.body),
     body: p.body,
     sourcePath: `${skillMdPath}#${p.slug}`,
-    hash: sha(`${p.title}\n${p.body}`),
+    hash: shortHash(`${p.title}\n${p.body}`),
   }));
   for (const r of references) {
     const { h1: refTitle, rest: refBody } = takeH1(stripFrontmatter(r.content));
@@ -272,7 +269,7 @@ export function parseSkill(
       description: firstSentence(refBody),
       body: refBody,
       sourcePath: r.path,
-      hash: sha(r.content),
+      hash: shortHash(r.content),
     });
   }
   return {
@@ -283,7 +280,7 @@ export function parseSkill(
     sections,
     sourcePath: skillMdPath,
     // Relative names only: moving the skills dir isn't an edit.
-    hash: sha(
+    hash: shortHash(
       [md, ...references.map((r) => `${basename(r.path)}\n${r.content}`)].join(
         "\n\0",
       ),
@@ -310,10 +307,10 @@ export function parseAgentsMd(path: string, md: string): ParsedAgentsMd {
         description: firstSentence(s.body),
         body: s.body,
         sourcePath: `${source}/${s.slug}`,
-        hash: sha(`${s.title}\n${s.body}`),
+        hash: shortHash(`${s.title}\n${s.body}`),
       })),
       sourcePath: source,
-      hash: sha(`${p.title}\n${p.body}`),
+      hash: shortHash(`${p.title}\n${p.body}`),
       resources: [],
     };
   });
@@ -325,7 +322,7 @@ export function parseAgentsMd(path: string, md: string): ParsedAgentsMd {
         intro: preamble,
         sections: [],
         sourcePath: `${path}${INTRO_ANCHOR}`,
-        hash: sha(preamble),
+        hash: shortHash(preamble),
         resources: [],
       }
     : undefined;
@@ -334,7 +331,7 @@ export function parseAgentsMd(path: string, md: string): ParsedAgentsMd {
     preamble,
     ...(intro ? { intro } : {}),
     sections,
-    hash: sha(md),
+    hash: shortHash(md),
   };
 }
 
@@ -358,10 +355,10 @@ export function parseDoc(path: string, rel: string, md: string): ParsedSkill {
       description: firstSentence(p.body),
       body: p.body,
       sourcePath: `${path}#${p.slug}`,
-      hash: sha(`${p.title}\n${p.body}`),
+      hash: shortHash(`${p.title}\n${p.body}`),
     })),
     sourcePath: path,
-    hash: sha(md),
+    hash: shortHash(md),
     resources: [],
   };
 }
@@ -387,22 +384,6 @@ export async function repoDocFiles(
     );
   }
   return out;
-}
-
-async function isDir(p: string): Promise<boolean> {
-  try {
-    return (await stat(p)).isDirectory(); // follows symlinks
-  } catch {
-    return false;
-  }
-}
-
-async function readIfExists(p: string): Promise<string | undefined> {
-  try {
-    return await readFile(p, "utf8");
-  } catch {
-    return undefined;
-  }
 }
 
 /** Parse every `<dir>/<name>/SKILL.md` (symlinked skill dirs included). */

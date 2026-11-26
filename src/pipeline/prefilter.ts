@@ -1,5 +1,5 @@
 import type { Transcript, Turn } from "../sources/types.ts";
-import { truncate } from "../util/text.ts";
+import { indent, truncate } from "../util/text.ts";
 import { isHumanTurn } from "./fingerprint.ts";
 import { redact } from "./redact.ts";
 
@@ -229,12 +229,4 @@ function renderSegment(seg: Turn[], condensed: boolean): string {
 
 function oneLine(s: string): string {
   return s.replace(/\s+/g, " ").trim();
-}
-
-function indent(s: string, n = 4): string {
-  const pad = " ".repeat(n);
-  return s
-    .split("\n")
-    .map((l) => pad + l)
-    .join("\n");
 }
