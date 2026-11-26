@@ -1,58 +1,77 @@
 # Agent Instructions
 
-This project uses **bd** (beads) for issue tracking. Run `bd prime` for full workflow context.
+This is **lbg** (laobaigan): a CLI that reads a user's Claude Code, pi and opencode sessions, finds what they keep explaining, and drafts it as skills or repository docs that the user reviews as proposals. TypeScript on Node ≥ 24, no build step in a checkout (`node src/cli.ts` is `lbg`).
 
-> **Architecture in one line:** Issues live in a local Dolt database
-> (`.beads/dolt/`); cross-machine sync uses `bd dolt push/pull` (a
-> git-compatible protocol), stored under `refs/dolt/data` on your git
-> remote — separate from `refs/heads/*` where your code lives.
-> `.beads/issues.jsonl` is a passive export, not the wire protocol.
->
-> See [sync-concepts](https://github.com/gastownhall/beads/blob/main/docs/core-concepts/sync-concepts.md)
-> for the one-screen overview and anti-patterns (don't treat JSONL as the
-> source of truth; don't `bd import` during normal operation; don't
-> reach for third-party Dolt hosting before trying the default).
+## Documentation
 
-> **Beads sync goes to GitHub only.** The Dolt remote `origin` points at
-> `git+ssh://git@github.com/tonyxwz/laobaigan.git` (the `github` git remote), not at git
-> `origin`. Never let bd adopt a remote from git `origin` (use `--no-adopt` /
-> `BD_NO_REMOTE_ADOPT=1` if a command offers it).
+The docs are the source of truth for how lbg works. Read the one that covers your task before changing code, and update it in the same change.
 
-## Quick Reference
+- `docs/architecture.md`: the pipeline (sync → extract → insert → score → draft), the knowledge tree, drafting and review, models, state. Read it before touching `src/pipeline/`, `src/state/` or `src/pi/`.
+- `docs/development.md`: setup, debugging commands, tests, conventions, packaging.
+- `docs/usage.md`: every command, option and config key. Update it whenever the CLI or the config changes.
+- `docs/glossary.md`: the terms (nugget, scope, node, proposal, ...). Use them as defined.
+- `README.md` is for end users only: a short intro, install, reviewing proposals. Details belong in `docs/usage.md`. No milestones or trackers in it.
+
+## Commands
 
 ```bash
-bd ready              # Find available work
-bd show <id>          # View issue details
-bd update <id> --claim  # Claim work atomically
-bd close <id>         # Complete work
-bd dolt push          # Push beads data to remote
+npm install
+npm run check          # tsc --noEmit + vitest; run before handing off
+npm run lint           # biome check
+npm run format         # biome format --write (2-space indentation)
+node src/cli.ts ...    # same as lbg
 ```
 
-## Non-Interactive Shell Commands
+## Code layout
 
-**ALWAYS use non-interactive flags** with file operations to avoid hanging on confirmation prompts.
-
-Shell commands like `cp`, `mv`, and `rm` may be aliased to include `-i` (interactive) mode on some systems, causing the agent to hang indefinitely waiting for y/n input.
-
-**Use these forms instead:**
-
-```bash
-# Force overwrite without prompting
-cp -f source dest           # NOT: cp source dest
-mv -f source dest           # NOT: mv source dest
-rm -f file                  # NOT: rm file
-
-# For recursive operations
-rm -rf directory            # NOT: rm -r directory
-cp -rf source dest          # NOT: cp -r source dest
+```
+src/cli.ts             commands
+src/config.ts          defaults and ~/.config/laobaigan/config.json
+src/sources/           one adapter per agent (session listing and loading)
+src/pipeline/          the stages of lbg run, and proposal review (accept, revise, edit)
+src/state/             SQLite state: db.ts (schema, migrations), tree.ts, proposals.ts, rejections.ts
+src/skills/            parsing SKILL.md, AGENTS.md and repo docs; repo resolution
+src/pi/                model runners (pi SDK, Claude Code) and the file guard for drafting
+test/                  vitest; helpers/faux.ts runs real pi sessions on pi's faux provider
 ```
 
-**Other commands that may prompt:**
+## Design rules
 
-- `scp` - use `-o BatchMode=yes` for non-interactive
-- `ssh` - use `-o BatchMode=yes` to fail instead of prompting
-- `apt-get` - use `-y` flag
-- `brew` - use `HOMEBREW_NO_AUTO_UPDATE=1` env var
+- **Only `lbg run` makes the pipeline's model calls.** Other commands only read or write the state db. The one exception is `lbg proposal revise`.
+- **Every model call goes through a `PiRunner`** (`src/pi/run-pi.ts`) and returns its result through a result tool, never parsed free text. Models and credentials come from the configured agent (pi or Claude Code); lbg has no provider policy of its own.
+- **lbg never runs git and never changes skill files on its own.** Every change is a proposal stored in the state db; `accept` writes the files and committing is the user's call.
+- **Keep lbg generic.** A repository is the nearest ancestor directory with a `.git` entry. Don't add behavior for one particular environment or build system.
+- **Database changes are new numbered migrations** in `src/state/db.ts`, never edits to old ones.
+- **TypeScript with erasable syntax only** (no enums, namespaces or constructor parameter properties); relative imports use `.ts` extensions.
+
+## Testing
+
+- Tests never call a real model and never touch the real state dir: pass scripted runners, use temp dirs.
+- Unit tests are not enough for CLI-visible changes. Also run the change end to end through `lbg`, against a copy of the state so nothing real is modified:
+
+  ```bash
+  T=$(mktemp -d); sqlite3 ~/.local/state/laobaigan/state.db "VACUUM INTO '$T/state.db'"
+  LBG_STATE_DIR=$T node src/cli.ts ...
+  ```
+
+  `lbg run --dry-run` does the same for a whole run (it calls the model and keeps nothing).
+- The hourly timer may run this checkout's code, so a broken edit can break the background run. Keep `npm run check` green.
+
+## Public repository
+
+This is a public, vendor-neutral open-source project. Nothing specific to an employer or a private environment goes into code, docs, tests, commit messages or issues: no internal tool or service names, hosts, paths or e-mail addresses. Use generic wording and examples instead ("a multi-package workspace", "refresh your model provider's credentials").
+
+## Shell commands
+
+Use non-interactive forms, because `cp`, `mv` and `rm` may be aliased to prompt: `cp -f`, `mv -f`, `rm -f`, `rm -rf`, `cp -rf`. For `ssh` / `scp` add `-o BatchMode=yes`; for `apt-get` add `-y`.
+
+## Task tracking
+
+Work is tracked in **bd** (beads), not in markdown lists. `bd list --type epic` shows the milestones. When a new idea comes up or something is deferred, file it instead of starting it.
+
+**Beads sync goes to GitHub only.** The Dolt remote `origin` points at `git+ssh://git@github.com/tonyxwz/laobaigan.git` (the `github` git remote), not at git `origin`. Never let bd adopt a remote from git `origin` (use `--no-adopt` / `BD_NO_REMOTE_ADOPT=1` if a command offers it). Issue text is public too.
+
+The rest of this file is generated by bd; leave the marked blocks to it.
 
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:46cd31e7 -->
 ## Beads Issue Tracker
