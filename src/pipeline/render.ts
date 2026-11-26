@@ -16,7 +16,7 @@ import { GUARDED_TOOLS } from "../pi/guard.ts";
 import type { PiRunner, Usage } from "../pi/run-pi.ts";
 import { addUsage } from "../pi/run-pi.ts";
 import { parseFrontmatter } from "../skills/index.ts";
-import { parseAgentsMd } from "../skills/parse.ts";
+import { fileNodeKind, parseAgentsMd, repoDocFiles } from "../skills/parse.ts";
 import { resolveRepo } from "../skills/repo.ts";
 import type { NuggetRow } from "../state/db.ts";
 import { type DraftFile, hashContent, Proposals } from "../state/proposals.ts";
@@ -45,7 +45,8 @@ import { skillStats } from "./treescore.ts";
  *
  * Targets (paths relative to the target root):
  *   global                        <skillsDir>  ⟶  <name>/  (SKILL.md + references/)
- *   repo, live AGENTS.md section  <repo>       ⟶  AGENTS.md (that section only)
+ *   repo, live AGENTS.md section  <repo>       ⟶  AGENTS.md (that section only; the intro: the text before the first section)
+ *   repo, live document           <repo>       ⟶  docs/<x>.md; for a fix-description, a pointer to it in AGENTS.md
  *   repo, live .agents skill      <repo>       ⟶  .agents/skills/<name>/
  *   repo, latent                  <repo>       ⟶  .agents/skills/<name>/ or a new AGENTS.md section
  */
@@ -64,6 +65,27 @@ export interface RenderTarget {
   agentsMd?: string;
   /** For live AGENTS.md sections: the heading being updated. */
   section?: string;
+  /** The target is the AGENTS.md intro: the text before its first "##" section. */
+  intro?: boolean;
+  /** A repository document (docs/<x>.md): the file being updated, or pointed at. */
+  doc?: string;
+  /** Write a pointer to `doc` into AGENTS.md instead of changing the document. */
+  pointer?: boolean;
+  /** Read-only files copied into the scratch dir next to the writable ones (the repo's own docs). */
+  context?: string[];
+}
+
+/** A repo's always-relevant markdown, for the drafter to read: AGENTS.md, CLAUDE.md, README.md, its documents. */
+export async function repoContextPaths(
+  root: string,
+  docDirs: string[],
+): Promise<string[]> {
+  return [
+    ...["AGENTS.md", "CLAUDE.md", "README.md"].filter((f) =>
+      existsSync(join(root, f)),
+    ),
+    ...(await repoDocFiles(root, docDirs)),
+  ];
 }
 
 export class SkipError extends Error {}
@@ -99,28 +121,54 @@ export async function resolveTarget(
     );
   }
   const src = skill.sourcePath ?? "";
+  const context = await repoContextPaths(root, cfg.repoDocs);
+  const kind = skill.origin === "file" ? fileNodeKind(src) : undefined;
   const md = /^(.*\/(?:AGENTS|CLAUDE)\.md)#/.exec(src);
-  if (md)
+  if (md && (kind === "agents-section" || kind === "agents-intro"))
     return {
       root,
       skillName: name,
       writable: [relative(root, md[1]!)],
       agentsMd: relative(root, md[1]!),
-      section: skill.title,
+      ...(kind === "agents-intro" ? { intro: true } : { section: skill.title }),
+      context,
     };
-  const skillDir = `.agents/skills/${name}`;
-  if (src.includes("/.agents/skills/"))
-    return { root, skillName: name, writable: [`${skillDir}/`], skillDir };
   const agentsMd =
     existsSync(join(root, "AGENTS.md")) || !existsSync(join(root, "CLAUDE.md"))
       ? "AGENTS.md"
       : "CLAUDE.md";
+  if (kind === "doc") {
+    const doc = relative(root, src);
+    // The document already says it and it was explained again: agents didn't read it.
+    // What's missing is a pointer in AGENTS.md, not more text in the document.
+    return skill.proposalKind === "fix-description"
+      ? {
+          root,
+          skillName: name,
+          writable: [agentsMd],
+          agentsMd,
+          doc,
+          pointer: true,
+          context,
+        }
+      : { root, skillName: name, writable: [doc], doc, context };
+  }
+  const skillDir = `.agents/skills/${name}`;
+  if (kind === "skill")
+    return {
+      root,
+      skillName: name,
+      writable: [`${skillDir}/`],
+      skillDir,
+      context,
+    };
   return {
     root,
     skillName: name,
     writable: [`${skillDir}/`, agentsMd],
     skillDir,
     agentsMd,
+    context,
   };
 }
 
@@ -154,10 +202,13 @@ export async function snapshot(
   return out;
 }
 
-/** A scratch dir holding a copy of the writable paths (symlinks resolved). */
+/**
+ * A scratch dir holding a copy of the writable paths (symlinks resolved), plus the
+ * target's read-only context files. The guard keeps writes to the writable paths.
+ */
 export async function makeScratch(target: RenderTarget): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "lbg-draft-"));
-  for (const w of target.writable) {
+  for (const w of [...(target.context ?? []), ...target.writable]) {
     const rel = w.replace(/\/$/, "");
     const from = join(target.root, rel);
     if (!existsSync(from)) continue;
@@ -217,7 +268,8 @@ House rules:
 - Corrections become rules: "Do X, not Y (because ...)".
 - Knowledge items are dated. When two of them conflict, the newer one wins; drop the older claim instead of keeping both.
 - Never include secrets, tokens, account credentials, or anything shown as [REDACTED].
-- Only write the paths you were given. You may read anything else in the repository to match its conventions and avoid duplicating other skills.
+- Only write the paths you were given. For a repository target, the working directory also holds read-only copies of its AGENTS.md, README.md and docs/: read them first, match their conventions, and leave out what they already say.
+- A repository document (docs/<x>.md) is read by people too: keep its structure and voice, and put each piece of knowledge in the section it belongs to.
 - Stay on the skill's topic (its title and, for an existing skill, its current description). Some knowledge items may only be adjacent: they mention a related tool or word but are about something else. Don't write those in; list them in report_draft's \`excluded\` with a one-line reason, and they will be filed in a better skill. Don't widen the description to cover them.
 - When done, call report_draft once.`;
 
@@ -261,7 +313,19 @@ export function buildDraftPrompt(
     `${base(n)}${draftedAt && (n.attachedAt?.getTime() ?? 0) > draftedAt.getTime() ? " (NEW SINCE THE DRAFT)" : ""}`;
   const lines: string[] = [];
 
-  if (target.agentsMd && target.section) {
+  if (target.pointer && target.doc && target.agentsMd) {
+    lines.push(
+      `Task: ${target.doc} already states the knowledge below, yet the engineer had to explain it again: agents working in this repository did not read that document. Make ${target.agentsMd} point to it: add (or sharpen) one or two lines saying WHEN to read ${target.doc}, naming the tasks, files and commands involved. Put them where ${target.agentsMd} lists its documentation, or in a new short "##" section if it has no such place. Do not copy the document's content into ${target.agentsMd}.`,
+    );
+  } else if (target.doc) {
+    lines.push(
+      `Task: update the document ${target.doc}. Read it first; add the new knowledge to the section it belongs to (a new "##" section only if none fits) and change as little as needed.`,
+    );
+  } else if (target.agentsMd && target.intro) {
+    lines.push(
+      `Task: update the text before the first "##" section of ${target.agentsMd}. Change only that text; keep it short, since every agent in the repository always reads it.`,
+    );
+  } else if (target.agentsMd && target.section) {
     lines.push(
       `Task: update the "## ${target.section}" section of ${target.agentsMd}. Change only that section.`,
     );
@@ -290,10 +354,16 @@ export function buildDraftPrompt(
       "Items marked (NEW SINCE THE DRAFT) came in after the current draft was written: add them unless the engineer says otherwise.",
     );
   }
-  if (
-    kind === "fix-description" ||
-    subtreeNuggets(skill).some((n) => n.coveredNodeId !== undefined)
-  ) {
+  const anyCovered = subtreeNuggets(skill).some(
+    (n) => n.coveredNodeId !== undefined,
+  );
+  if (!target.skillDir) {
+    // No description to fix: AGENTS.md is always loaded, and a document gets a pointer instead.
+    if (anyCovered && !target.pointer)
+      lines.push(
+        "Items marked (ALREADY IN THE FILE) are stated there already: don't repeat them.",
+      );
+  } else if (kind === "fix-description" || anyCovered) {
     lines.push(
       "Items marked (ALREADY IN THE FILE) were explained again even though the skill says them: agents did not load the skill. Rewrite the description so it triggers in those situations (name the tools, files and tasks involved).",
     );
@@ -429,20 +499,43 @@ export function verifyDraft(
     else if (oldMd !== undefined) {
       const before = parseAgentsMd(target.agentsMd, oldMd);
       const now = parseAgentsMd(target.agentsMd, agents.content);
-      if (before.preamble.trim() !== now.preamble.trim())
-        problems.push(
-          `${target.agentsMd}: the text before the first section changed`,
-        );
-      const kept = new Set(now.sections.map((x) => x.hash));
-      for (const sec of before.sections) {
-        if (target.section && sec.title === target.section) continue;
-        if (!kept.has(sec.hash))
+      // A pointer may go wherever the file lists its documentation; anything else stays in its lane.
+      if (!target.pointer) {
+        if (!target.intro && before.preamble.trim() !== now.preamble.trim())
           problems.push(
-            `${target.agentsMd}: section "${sec.title}" changed; only ${target.section ? `"${target.section}"` : "new sections"} may change`,
+            `${target.agentsMd}: the text before the first section changed`,
           );
+        const kept = new Set(now.sections.map((x) => x.hash));
+        const may = target.intro
+          ? "the text before the first section"
+          : target.section
+            ? `"${target.section}"`
+            : "new sections";
+        for (const sec of before.sections) {
+          if (target.section && sec.title === target.section) continue;
+          if (!kept.has(sec.hash))
+            problems.push(
+              `${target.agentsMd}: section "${sec.title}" changed; only ${may} may change`,
+            );
+        }
       }
     }
+    if (
+      target.pointer &&
+      target.doc &&
+      agents.content !== null &&
+      !agents.content.includes(target.doc)
+    )
+      problems.push(
+        `${target.agentsMd} doesn't mention ${target.doc}; the change must point to it`,
+      );
   }
+  if (
+    target.doc &&
+    !target.pointer &&
+    files.some((f) => f.path === target.doc && f.content === null)
+  )
+    problems.push(`${target.doc} must not be deleted`);
   for (const f of files) {
     if (f.content === null) continue;
     if (containsSecrets(f.content))

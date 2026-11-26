@@ -1,4 +1,5 @@
 import type { ScoreConfig } from "../config.ts";
+import { fileNodeKind } from "../skills/parse.ts";
 import type { NuggetRow } from "../state/db.ts";
 import { type MemoryRow, Rejections } from "../state/rejections.ts";
 import {
@@ -21,7 +22,9 @@ import {
  *   latent / declared skill  → "new"              all evidence counts
  *   live (file) skill        → "update"           only evidence attached since its last render
  *                            → "fix-description"  evidence the file already states ("covered"):
- *                                                 I still had to explain it, so it didn't trigger
+ *                                                 I still had to explain it, so it didn't trigger.
+ *                                                 For a repo document that is a pointer in AGENTS.md;
+ *                                                 AGENTS.md itself is always loaded, so it earns none.
  */
 
 export interface SkillStats extends EvidenceStats {
@@ -74,7 +77,9 @@ export function earnedProposal(
     (fresh.sessions >= 2 && fresh.agents.length >= 2)
   )
     return "update";
-  if (stats.covered!.sessions >= p.fixDescriptionMinSessions)
+  const kind = fileNodeKind(skill.sourcePath);
+  const alwaysLoaded = kind === "agents-section" || kind === "agents-intro";
+  if (!alwaysLoaded && stats.covered!.sessions >= p.fixDescriptionMinSessions)
     return "fix-description";
   return undefined;
 }

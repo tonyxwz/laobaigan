@@ -303,7 +303,12 @@ describe("syncTree", () => {
     tree.ensureRoot({ scope: "repo", repo }); // the tree knows the repo (it has evidence)
 
     const r = await syncTree(tree, { skillsDir: dir, declared: [] });
-    expect(r.repos[repo]!.created).toEqual(["build", "style", "run-evals"]);
+    expect(r.repos[repo]!.created).toEqual([
+      "agents-md-intro",
+      "build",
+      "style",
+      "run-evals",
+    ]);
     const root = tree.trees({ scope: "repo", repo })[0]!;
     expect(root).toMatchObject({
       summary: "Preamble.",
@@ -312,6 +317,7 @@ describe("syncTree", () => {
     expect(
       root.children.map((c) => [c.title, c.children.map((x) => x.title)]),
     ).toEqual([
+      ["AGENTS.md intro", []],
       ["Build", ["Tests"]],
       ["Style", []],
       ["run-evals", []],
@@ -322,7 +328,60 @@ describe("syncTree", () => {
     await syncTree(tree, { skillsDir: dir, declared: [] });
     expect(
       tree.trees({ scope: "repo", repo })[0]!.children.map((c) => c.title),
-    ).toEqual(["Build", "Style"]);
+    ).toEqual(["AGENTS.md intro", "Build", "Style"]);
+  });
+
+  it("mirrors a repo's documents when asked to, and forgets them when they go", async () => {
+    const repo = await mkdtemp(join(tmpdir(), "lbg-repo-"));
+    await writeFile(
+      join(repo, "AGENTS.md"),
+      "# Agents\n\n## Build\nUse hatch.",
+    );
+    await mkdir(join(repo, "docs", "deep"), { recursive: true });
+    await writeFile(
+      join(repo, "docs", "development.md"),
+      "# Development\n\nWorking on it.\n\n## Tests\nRun vitest.\n\n## Conventions\nTabs.\n",
+    );
+    await writeFile(join(repo, "docs", "notes.txt"), "not markdown");
+    await writeFile(join(repo, "docs", "deep", "x.md"), "# Nested\n"); // top level only
+    const { dir } = await skillsDir();
+    const tree = new Tree(new StateDb(":memory:"));
+    tree.ensureRoot({ scope: "repo", repo });
+
+    // Off unless the caller passes the directories.
+    await syncTree(tree, { skillsDir: dir, declared: [] });
+    expect(
+      tree.trees({ scope: "repo", repo })[0]!.children.map((c) => c.name),
+    ).toEqual(["build"]);
+
+    const src = { skillsDir: dir, declared: [], repoDocs: ["docs"] };
+    expect((await syncTree(tree, src)).repos[repo]!.created).toEqual([
+      "docs-development",
+    ]);
+    const doc = tree
+      .trees({ scope: "repo", repo })[0]!
+      .children.find((c) => c.name === "docs-development")!;
+    expect(doc).toMatchObject({
+      title: "Development",
+      description: "docs/development.md: Working on it.",
+      origin: "file",
+      sourcePath: join(repo, "docs", "development.md"),
+    });
+    expect(doc.children.map((c) => c.title)).toEqual(["Tests", "Conventions"]);
+
+    // Evidence in a document that disappears is kept (the node turns latent); AGENTS.md is untouched.
+    const n = tree.db.insertNugget(nugget("s1", { scope: "repo", repo }));
+    tree.attachNugget(n, doc.children[0]!.id);
+    await rm(join(repo, "docs"), { recursive: true });
+    await syncTree(tree, src);
+    expect(
+      tree
+        .trees({ scope: "repo", repo })[0]!
+        .children.map((c) => [c.name, c.origin]),
+    ).toEqual([
+      ["build", "file"],
+      ["docs-development", "latent"],
+    ]);
   });
 });
 

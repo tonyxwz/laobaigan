@@ -12,7 +12,10 @@ import { parseFrontmatter } from "./index.ts";
  *   <repo>/AGENTS.md                  → root text = body before the first "##"
  *     "## Heading" sections           → depth-1 nodes, source "<AGENTS.md>#<slug>"
  *       "### Heading" subsections     → depth-2 nodes
+ *     text before the first "##"      → a depth-1 node too (the intro), source "<AGENTS.md>#^intro"
  *   <repo>/.agents/skills/<name>/     → repo skills, parsed like global ones
+ *   <repo>/docs/*.md                  → documents: depth-1 nodes, source = the file
+ *     "## Heading" sections           → depth-2 nodes, source "<file>#<slug>"
  *
  * Headings inside fenced code blocks are ignored.
  */
@@ -46,8 +49,40 @@ export interface ParsedAgentsMd {
   path: string;
   /** Text before the first "##": what every agent in the repo always reads. */
   preamble: string;
+  /** The preamble as a node of its own, so knowledge can be filed there (absent when it is empty). */
+  intro?: ParsedSkill;
   sections: ParsedSkill[];
   hash: string;
+}
+
+/** Source path suffix of the AGENTS.md intro node ("^" never comes out of slugify). */
+export const INTRO_ANCHOR = "#^intro";
+
+/** Max documents mirrored per docs directory. */
+export const MAX_DOCS = 30;
+
+export type FileNodeKind =
+  /** The text before the first "##" of AGENTS.md / CLAUDE.md. */
+  | "agents-intro"
+  /** A "##" section of AGENTS.md / CLAUDE.md. */
+  | "agents-section"
+  /** A skill folder (global, or a repo's .agents/skills/<name>). */
+  | "skill"
+  /** A repository document (docs/<x>.md). */
+  | "doc";
+
+/** What kind of file a depth-1 file node mirrors, from its source path. */
+export function fileNodeKind(
+  sourcePath: string | undefined,
+): FileNodeKind | undefined {
+  if (!sourcePath) return undefined;
+  if (/\/(AGENTS|CLAUDE)\.md#/i.test(sourcePath))
+    return sourcePath.endsWith(INTRO_ANCHOR)
+      ? "agents-intro"
+      : "agents-section";
+  if (sourcePath.endsWith("/SKILL.md")) return "skill";
+  if (/\.md$/i.test(sourcePath)) return "doc";
+  return undefined;
 }
 
 export function sha(s: string): string {
@@ -212,7 +247,76 @@ export function parseAgentsMd(path: string, md: string): ParsedAgentsMd {
       resources: [],
     };
   });
-  return { path, preamble, sections, hash: sha(md) };
+  const intro: ParsedSkill | undefined = preamble
+    ? {
+        name: `${slugify(basename(path))}-intro`,
+        title: `${basename(path)} intro`,
+        description: firstSentence(preamble),
+        intro: preamble,
+        sections: [],
+        sourcePath: `${path}${INTRO_ANCHOR}`,
+        hash: sha(preamble),
+        resources: [],
+      }
+    : undefined;
+  return {
+    path,
+    preamble,
+    ...(intro ? { intro } : {}),
+    sections,
+    hash: sha(md),
+  };
+}
+
+/**
+ * Parse a repository document (docs/<x>.md): the file is a depth-1 node, its "##" sections
+ * depth 2. `rel` is its path relative to the repo root; it leads the description so that
+ * routing and drafting can tell a document from a skill.
+ */
+export function parseDoc(path: string, rel: string, md: string): ParsedSkill {
+  const { h1, rest } = takeH1(stripFrontmatter(md));
+  const { preamble, parts } = splitByHeading(rest, 2);
+  const first = firstSentence(preamble);
+  return {
+    name: slugify(rel.replace(/\.md$/i, "")),
+    title: h1 ?? basename(path),
+    description: `${rel}${first ? `: ${first}` : ""}`,
+    intro: preamble,
+    sections: uniqueSlugs(parts).map((p) => ({
+      title: p.title,
+      slug: p.slug,
+      description: firstSentence(p.body),
+      body: p.body,
+      sourcePath: `${path}#${p.slug}`,
+      hash: sha(`${p.title}\n${p.body}`),
+    })),
+    sourcePath: path,
+    hash: sha(md),
+    resources: [],
+  };
+}
+
+/** The markdown files directly inside each docs directory of a repo, as paths relative to it. */
+export async function repoDocFiles(
+  repo: string,
+  docDirs: string[],
+): Promise<string[]> {
+  const out: string[] = [];
+  for (const dir of docDirs) {
+    let names: string[];
+    try {
+      names = (await readdir(join(repo, dir))).sort();
+    } catch {
+      continue;
+    }
+    out.push(
+      ...names
+        .filter((f) => /\.md$/i.test(f))
+        .slice(0, MAX_DOCS)
+        .map((f) => join(dir, f)),
+    );
+  }
+  return out;
 }
 
 async function isDir(p: string): Promise<boolean> {
@@ -262,10 +366,15 @@ export async function parseSkillsDir(dir: string): Promise<ParsedSkill[]> {
   return out;
 }
 
-/** A repo's AGENTS.md (or CLAUDE.md when there is no AGENTS.md) and its .agents/skills. */
+/** A repo's AGENTS.md (or CLAUDE.md when there is no AGENTS.md), its .agents/skills and its documents. */
 export async function parseRepo(
   repo: string,
-): Promise<{ agentsMd?: ParsedAgentsMd; skills: ParsedSkill[] }> {
+  docDirs: string[] = [],
+): Promise<{
+  agentsMd?: ParsedAgentsMd;
+  skills: ParsedSkill[];
+  docs: ParsedSkill[];
+}> {
   let agentsMd: ParsedAgentsMd | undefined;
   for (const name of ["AGENTS.md", "CLAUDE.md"]) {
     const p = join(repo, name);
@@ -276,8 +385,14 @@ export async function parseRepo(
       break;
     }
   }
+  const docs: ParsedSkill[] = [];
+  for (const rel of await repoDocFiles(repo, docDirs)) {
+    const md = await readIfExists(join(repo, rel));
+    if (md?.trim()) docs.push(parseDoc(join(repo, rel), rel, md));
+  }
   return {
     ...(agentsMd ? { agentsMd } : {}),
     skills: await parseSkillsDir(join(repo, ".agents", "skills")),
+    docs,
   };
 }

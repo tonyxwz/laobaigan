@@ -519,6 +519,7 @@ async function main(argv: string[]): Promise<number> {
           const r = await syncTree(tree, {
             skillsDir: cfg.skillsDir,
             declared: cfg.topics,
+            repoDocs: cfg.repoDocs,
           });
           if (values.json) return (json(r), 0);
           const line = (label: string, x: SyncReport) => {

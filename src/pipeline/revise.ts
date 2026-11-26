@@ -1,5 +1,5 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { applyPatch, createPatch } from "diff";
 import { agentModel, type Config } from "../config.ts";
 import { GUARDED_TOOLS } from "../pi/guard.ts";
@@ -9,6 +9,7 @@ import {
   type Usage,
   ZERO_USAGE,
 } from "../pi/run-pi.ts";
+import { fileNodeKind } from "../skills/parse.ts";
 import { Feedback } from "../state/feedback.ts";
 import {
   type DraftFile,
@@ -25,6 +26,7 @@ import {
   makeScratch,
   type RenderTarget,
   ReportDraftSchema,
+  repoContextPaths,
   snapshot,
   verifyDraft,
 } from "./render.ts";
@@ -69,24 +71,42 @@ export interface Rebased {
 }
 
 /** The render target a proposal was drafted for, rebuilt from what it stored. */
-export function targetOf(p: ProposalRow, skill: TreeNode): RenderTarget {
+export function targetOf(
+  p: ProposalRow,
+  skill: TreeNode,
+  context: string[] = [],
+): RenderTarget {
   const dir = p.writable.find((w) => w.endsWith("/"));
   const file = p.writable.find((w) => !w.endsWith("/"));
-  const liveSection =
-    !!file && !dir && /\/(AGENTS|CLAUDE)\.md#/.test(skill.sourcePath ?? "");
-  return {
+  const kind =
+    skill.origin === "file" ? fileNodeKind(skill.sourcePath) : undefined;
+  const base = {
     root: p.targetRoot,
     skillName: p.skillName ?? skill.name ?? `node-${skill.id}`,
     writable: p.writable,
+    ...(context.length ? { context } : {}),
+  };
+  if (kind === "doc" && file && !dir) {
+    // Drafted for a document: either the document itself, or a pointer to it in AGENTS.md.
+    const doc = relative(p.targetRoot, skill.sourcePath!);
+    return file === doc
+      ? { ...base, doc }
+      : { ...base, agentsMd: file, doc, pointer: true };
+  }
+  const agents = !!file && !dir;
+  return {
+    ...base,
     ...(dir ? { skillDir: dir.replace(/\/$/, "") } : {}),
     ...(file ? { agentsMd: file } : {}),
-    ...(liveSection ? { section: skill.title } : {}),
+    ...(agents && kind === "agents-section" ? { section: skill.title } : {}),
+    ...(agents && kind === "agents-intro" ? { intro: true } : {}),
   };
 }
 
 export async function openDraft(
   tree: Tree,
   id: number,
+  cfg?: Pick<Config, "repoDocs">,
 ): Promise<DraftWorkspace> {
   const props = new Proposals(tree.db);
   const p = props.assertFree(id);
@@ -99,7 +119,13 @@ export async function openDraft(
   if (!skill)
     throw new Error(`Proposal #${id}: node ${p.nodeId} no longer exists`);
   const openedAt = new Date();
-  const target = targetOf(p, skill);
+  const target = targetOf(
+    p,
+    skill,
+    p.scope === "repo" && cfg
+      ? await repoContextPaths(p.targetRoot, cfg.repoDocs)
+      : [],
+  );
   const base = await snapshot(target.root, target.writable);
   const scratch = await makeScratch(target);
   const rebased: Rebased[] = [];
@@ -262,7 +288,7 @@ export async function reviseProposal(
   id: number,
   feedback: string,
 ): Promise<ReviseResult> {
-  const ws = await openDraft(tree, id);
+  const ws = await openDraft(tree, id, cfg);
   const prompt = `${reviseContext(tree, ws)}\n\nFeedback from the engineer (apply it):\n${feedback}\n\nRevise the files now, then call report_draft.`;
   // What I asked for is review feedback for this skill, whatever the redraft's outcome.
   new Feedback(tree.db).add({ proposalId: id, kind: "revise", text: feedback });

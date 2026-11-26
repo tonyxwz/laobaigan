@@ -73,6 +73,7 @@ Skills are marked:
 - live: an existing skill file the agents already use. Prefer these when the nugget is about the same tool, system, or workflow.
 - declared: a skill the engineer asked for; its description says what belongs there. Prefer it whenever a nugget falls within that description.
 - latent: a skill being grown from earlier evidence, not published yet.
+In a repository, the live entries are the sections of its AGENTS.md, its skills, and its documents (the description starts with the file, e.g. "docs/development.md: ..."). Knowledge about how that project works, is built, tested or documented belongs in the matching document or AGENTS.md section; create a new skill there only for something none of them is about.
 - rejected="<why>": a proposal for this skill was rejected, and its rule says why. Knowledge on the same topic still goes INTO it: never create a new look-alike skill for it. The one exception: when the rule names another skill where this knowledge belongs, put it there.
 
 Rules:
@@ -427,10 +428,16 @@ export interface InsertResult {
   caught: { memoryId: number; skill: string; nuggets: number }[];
 }
 
-/** Level 2 is worth a call when the skill has sections, or is a non-file skill growing several new nuggets. */
+/**
+ * Level 2 is worth a call when the skill has sections, is a non-file skill growing several
+ * new nuggets, or is live text without sections (an AGENTS.md section, a short document):
+ * only this call can tell that the text already states a nugget.
+ */
 function wantsSections(skill: TreeNode, incoming: number): boolean {
   return (
-    skill.children.length > 0 || (skill.origin !== "file" && incoming >= 2)
+    skill.children.length > 0 ||
+    (skill.origin !== "file" && incoming >= 2) ||
+    (skill.origin === "file" && skill.summary.trim() !== "")
   );
 }
 

@@ -173,6 +173,11 @@ export interface Config {
     /** SKILL.md longer than this fails verification (move detail into references/). */
     maxSkillLines: number;
   };
+  /**
+   * Directories (relative to a repository root) whose *.md files are homes for that repo's
+   * knowledge, next to AGENTS.md and .agents/skills. Default ["docs"]; [] turns it off.
+   */
+  repoDocs: string[];
   /** Topics I want to exist (future skills / AGENTS.md sections); always offered as homes. */
   topics: DeclaredTopic[];
   clustering: {
@@ -264,6 +269,7 @@ export const DEFAULT_CONFIG: Config = {
     updateSimilarity: 0.25,
     agentsMdMaxChars: 1200,
   },
+  repoDocs: ["docs"],
   topics: [],
   clustering: { guidance: "" },
 };
@@ -370,7 +376,22 @@ export function loadConfig(path = CONFIG_PATH): Config {
         : {}),
     },
     stateDir: expandPath(c.stateDir),
+    repoDocs: validateRepoDocs(c.repoDocs),
   };
+}
+
+const strings = (v: unknown): v is string[] =>
+  Array.isArray(v) && v.every((x) => typeof x === "string" && x.trim() !== "");
+
+function validateRepoDocs(v: unknown): string[] {
+  if (
+    !strings(v) ||
+    v.some((d) => isAbsolute(d) || d.split(/[\\/]/).includes(".."))
+  )
+    throw new Error(
+      'config.repoDocs must be a list of directories relative to a repository root, e.g. ["docs"]',
+    );
+  return v.map((d) => d.replace(/\/+$/, ""));
 }
 
 /** Settings that would switch off (or let tools around) lbg's guard hook. */

@@ -211,7 +211,7 @@ export async function processSessions(
       continue;
     }
 
-    const repo = await repoContext(t.cwd);
+    const repo = await repoContext(t.cwd, cfg.repoDocs);
     try {
       log(
         `extract ${t.agent}:${t.sessionId} (${summary.chunks} chunk(s), ~${summary.approxTokens} tok)`,
@@ -338,7 +338,7 @@ function normalizeScope(
   if (
     out.coveredBySkill &&
     !global.some((s) => s.name === out.coveredBySkill) &&
-    !/agents\.md|claude\.md|\.agents\//i.test(out.coveredBySkill)
+    !/\.md\b|\.agents\//i.test(out.coveredBySkill)
   ) {
     // Keep the model's hint but mark it as unverified.
     out.coveredBySkill = `?${out.coveredBySkill}`;

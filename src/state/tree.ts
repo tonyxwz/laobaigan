@@ -4,7 +4,7 @@ import type { NuggetRow, StateDb, Status } from "./db.ts";
  * The knowledge tree: one per scope (global, or one repo).
  *
  *   depth 0  root     the always-loaded skill list / the repo's AGENTS.md
- *   depth 1  skill    name + description (always loaded); repo: AGENTS.md section or .agents/skills/<name>
+ *   depth 1  skill    name + description (always loaded); repo: AGENTS.md section or intro, .agents/skills/<name>, or a document (docs/<x>.md)
  *   depth 2  section  a SKILL.md section or references/<x>.md (loaded on demand)
  *   nuggets attach to depth 1 or 2.
  */

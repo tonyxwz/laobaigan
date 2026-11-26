@@ -163,6 +163,7 @@ export async function runPipeline(
   await stage("sync", false, async () => {
     const r = await syncTree(tree, {
       skillsDir: cfg.skillsDir,
+      repoDocs: cfg.repoDocs,
       declared: cfg.topics,
     });
     const all = [r.global, ...Object.values(r.repos), r.declared];

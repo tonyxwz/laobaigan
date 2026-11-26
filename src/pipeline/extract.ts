@@ -49,7 +49,7 @@ export const NuggetSchema = Type.Object({
   coveredBySkill: Type.Optional(
     Type.String({
       description:
-        "Name of an existing skill (or AGENTS.md) that already contains this knowledge.",
+        "Name of an existing skill (or AGENTS.md, or a repository document such as docs/x.md) that already contains this knowledge.",
     }),
   ),
   confidence: Type.Number({
@@ -90,7 +90,7 @@ Rules:
 - Merge related points from the same session into one nugget about one coherent topic, rather than many tiny ones.
 - Write \`knowledge\` so it stands alone: include the exact commands/paths/names from the transcript, not "as discussed".
 - scope: ask "would this help in a different repository?" If no, use "repo" and set \`repo\` to the repository root path when you can tell it (from the session working directory or paths in the transcript).
-- If the knowledge is already covered by a listed existing skill or AGENTS.md section, still report it but set \`coveredBySkill\` — the user having to repeat it means that skill isn't being triggered.
+- If the knowledge is already covered by a listed existing skill, AGENTS.md section or repository document, still report it but set \`coveredBySkill\` — the user having to repeat it means that skill or document isn't being read.
 - confidence: 0.9+ the user explicitly taught/corrected; ~0.6 implied by the user's instructions; below 0.5 don't report.
 - A "memory note" source is not a conversation: it is a note the agent saved of what the user told it in earlier sessions, written as a single U1 turn. Treat its content as knowledge the user supplied and cite U1. The same rules apply: skip one-off task state and anything that wouldn't help a new session.
 - <rejected_topics>, when present, lists topics the user rejected as skills. "outdated": don't report the old claim again, but DO report what replaces it (newer, corrected knowledge). "not-useful": don't report knowledge about that topic at all.`;

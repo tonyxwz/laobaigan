@@ -134,7 +134,7 @@ export async function chatRevise(
 ): Promise<InteractiveResult> {
   const launcher = opts.launcher ?? terminalLauncher;
   const log = opts.log ?? (() => {});
-  const ws = await openDraft(tree, id);
+  const ws = await openDraft(tree, id, cfg);
   const side = await mkdtemp(join(tmpdir(), "lbg-chat-"));
   const cleanups: (() => Promise<void>)[] = [];
   try {
@@ -357,7 +357,7 @@ export async function editProposal(
   const launcher = opts.launcher ?? terminalLauncher;
   const editor =
     opts.editor ?? process.env.VISUAL ?? process.env.EDITOR ?? "vi";
-  const ws = await openDraft(tree, id);
+  const ws = await openDraft(tree, id, cfg);
   try {
     const files = ws.proposal.files
       .filter((f) => f.content !== null)

@@ -10,7 +10,7 @@ People who use several coding agents (Claude Code, pi, opencode, …) keep re-ex
 
 1. **Incremental.** Process all history once, then only sessions that are new or changed, including resumed sessions.
 2. **Find repeated explanations.** Keep facts and procedures that _the user_ gave the agent, and propose them once they recur across sessions.
-3. **Put knowledge in the right place.** Knowledge that applies everywhere goes to a global skill in the shared skills directory. Knowledge about one repository goes to that repository's `AGENTS.md` or `.agents/skills/<name>/`.
+3. **Put knowledge in the right place.** Knowledge that applies everywhere goes to a global skill in the shared skills directory. Knowledge about one repository goes into that repository, where it already keeps such things: `AGENTS.md`, its documents (`docs/*.md`) or `.agents/skills/<name>/`.
 4. **Never change skills on its own.** Every change is a proposal the user reviews and accepts. lbg doesn't use git; committing is up to the user.
 5. **All model calls go through pi** (`@earendil-works/pi-coding-agent`), with whatever provider and model pi is configured with. lbg has no LLM API clients of its own.
 
@@ -124,7 +124,7 @@ interface Nugget {
 ```
 
 - The model answers only through a result tool (`report_knowledge`) whose result ends the run (`terminate: true`), so the output is schema-validated (TypeBox) instead of parsed from free text.
-- No built-in tools: everything is in the prompt, including an index of existing skills (global ones, plus the session repo's `.agents/skills` and `AGENTS.md` headings).
+- No built-in tools: everything is in the prompt, including an index of existing skills (global ones, plus the session repo's `.agents/skills`, `AGENTS.md` headings and document headings).
 - Scope rule of thumb: "would this help in a different repository?" A repo is the nearest ancestor of the session's working directory that has a `.git` entry, or the session's working directory itself as a fallback.
 
 ## 5. The knowledge tree
@@ -132,9 +132,9 @@ interface Nugget {
 Skill files already form a tree with progressive disclosure, so lbg keeps **one tree per scope** that mirrors them (`src/state/tree.ts`):
 
 ```
-depth 0  root     global: the skill list every agent loads   repo: <repo>/AGENTS.md preamble (always loaded there)
-depth 1  skill    a skill folder (name + description)        repo: an AGENTS.md "##" section, or .agents/skills/<name>
-depth 2  section  a SKILL.md "##" section or references/*.md  repo: an AGENTS.md "###" subsection
+depth 0  root     global: the skill list every agent loads   repo: the repository
+depth 1  skill    a skill folder (name + description)        repo: an AGENTS.md "##" section or its intro, .agents/skills/<name>, or a document (docs/<x>.md)
+depth 2  section  a SKILL.md "##" section or references/*.md  repo: an AGENTS.md "###" subsection, a document's "##" section
          nuggets  attach to skills and sections, never to roots
 ```
 
@@ -150,13 +150,17 @@ Depth is capped at 2 below the root. Agents don't reliably follow deeper chains 
 
 - each skill folder in the global skills dir: `SKILL.md` frontmatter, `##` sections, `references/*.md`, with symlinked folders followed
 - for every repo the tree knows, its `AGENTS.md` (`##` → depth 1, `###` → depth 2; a `CLAUDE.md` that only points at `AGENTS.md` is ignored) and `.agents/skills`
+- the text before the first `##` of that `AGENTS.md`, as a depth-1 **intro** node (`AGENTS.md#^intro`), so rules written there can hold evidence too
+- the repo's **documents**: the `*.md` files directly inside each `config.repoDocs` directory (default `docs`, at most 30 per directory). The file is a depth-1 node whose description starts with its path, its `##` sections are depth 2
+
+Documents are mirrored because a project that has `docs/` keeps its knowledge there. Without them, lbg can't see that `docs/development.md` already says something and proposes a new skill that repeats it. `fileNodeKind` (`src/skills/parse.ts`) tells the kinds of live node apart by source path.
 
 Nodes are matched first by source path, then by name or title, which is how a latent node becomes live once its proposal is accepted. Removing a file never drops evidence: a section's nuggets move up to its skill, and a skill that still holds nuggets turns latent.
 
 **Insert** (`src/pipeline/insert.ts`) routes new nuggets down the tree, one batched model call per level:
 
 - **Level 1**, per scope root: the prompt lists the root's skills (id, live/declared/latent, name, title, description, section titles), never their full content. Each nugget goes to a skill, or to a new latent skill.
-- **Level 2**, per touched skill that has sections (or is a non-file skill receiving several nuggets): each nugget goes to a section, a new section, or the skill body. Nuggets whose content the live text already states are flagged **covered**.
+- **Level 2**, per touched skill that has sections, is a non-file skill receiving several nuggets, or is live text without sections (an `AGENTS.md` section, a short document): each nugget goes to a section, a new section, or the skill body. Nuggets whose content the live text already states are flagged **covered**; only this call can tell, which is why live text always gets it.
 - Calls are skipped when there's nothing to decide, and invalid model output is repaired, so every nugget is placed exactly once.
 - Summaries are lazy: only marked stale, and rewritten when the subtree is drafted. The stable part of the prompt (the skill list) comes first so the provider can cache it.
 
@@ -167,6 +171,8 @@ Nodes are matched first by source path, then by name or title, which is how a la
 | latent or declared | all of it                                           | `new` at ≥ 3 sessions, or ≥ 2 across agents                                            |
 | live               | attached after the skill's last render (**fresh**)  | `update` at ≥ 2 sessions                                                               |
 | live               | fresh, and already stated in the file (**covered**) | `fix-description` at ≥ 2 sessions: it was explained again, so the skill didn't trigger |
+
+What a `fix-description` fixes depends on the node. A skill gets a better description. A document has none: what's missing is a pointer to it in `AGENTS.md`. An `AGENTS.md` section or intro is always loaded, so there is nothing to fix and it earns no proposal.
 
 The numeric score (sessions, extra agents, extra days, corrections, minus coverage) only orders candidates; the thresholds above decide them. Status rules:
 
@@ -188,9 +194,9 @@ For each candidate, the draft stage of `lbg run` (at most `render.maxPerRun` per
 
 1. **Resolves the target.**
    - Global: the skills dir → `<name>/`.
-   - Repo: a live `AGENTS.md` section → `AGENTS.md`; a live repo skill → `.agents/skills/<name>/`; otherwise either of those, chosen by the model by size.
+   - Repo: a live `AGENTS.md` section or intro → `AGENTS.md`; a live repo skill → `.agents/skills/<name>/`; a live document → that file for an `update`, and `AGENTS.md` (a pointer to the document) for a `fix-description`; otherwise a new skill or a new `AGENTS.md` section, chosen by the model by size.
    - Evidence filed under a multi-package workspace root (not a repo) is skipped for now.
-2. **Copies only the target paths** into a scratch dir (`lbg-draft-*`) and runs pi there with the **guarded tools** (`src/pi/guard.ts`).
+2. **Copies the target paths** into a scratch dir (`lbg-draft-*`), plus, for a repo, read-only copies of its `AGENTS.md`, `CLAUDE.md`, `README.md` and documents so the drafter can match them and leave out what they already say. It runs pi there with the **guarded tools** (`src/pi/guard.ts`).
    - `read`, `ls`, `find`, `grep`, `write`, `edit`, under pi's built-in names; a custom tool replaces the built-in of the same name.
    - Every path is resolved through symlinks; reads are confined to the scratch dir, writes to the target paths. `.git` is never writable, and there is no bash.
    - The prompt carries the house rules: the description says _when_ to use the skill, exact commands and paths, no secrets or session trivia, detail in `references/`. It also includes the evidence (marked NEW / already absorbed / ALREADY IN THE FILE for updates) and the other skills' descriptions to avoid duplicates.
@@ -198,7 +204,8 @@ For each candidate, the draft stage of `lbg run` (at most `render.maxPerRun` per
    - only target paths changed
    - frontmatter `name` equals the folder name (lowercase, hyphens, ≤ 64 chars) and the description is ≤ 1024 chars
    - `SKILL.md` is within `render.maxSkillLines`
-   - for `AGENTS.md`, the preamble and every section other than the target are unchanged
+   - for `AGENTS.md`, the preamble and every section other than the target are unchanged (for the intro: every section; for a pointer: the file must name the document)
+   - a document isn't deleted
    - no secrets and no `[REDACTED]` placeholders
 4. **Stores the changed files on the proposal** (path, hash of the original, new content), deletes the scratch dir, and marks the proposal `open`. The live files are untouched.
 5. **Keeps a live skill's scope.** For an `update` of a live skill, the new description may only use words the skill already covers (its old description, `SKILL.md` and `references/`), allowing at most 2 new words for rewording (`src/pipeline/scope.ts`). If it takes on a new subject, the drafter gets one retry in the same scratch copy with the problem explained; if it still widens the scope, the draft fails with the new words listed. `fix-description` proposals are exempt. In one-shot or chat `revise` it's only a warning (you're steering); a hand `edit` isn't checked. If the drafter finds that none of the new evidence is on-topic, it changes nothing, every item is re-filed, and the proposal closes as "nothing on-topic to add" instead of failing.
@@ -322,7 +329,7 @@ test/
 
 | Topic               | Decision                                                                                                                                                                         |
 | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Repo knowledge      | Goes into the repo (`AGENTS.md` for short rules, `.agents/skills/<name>/` for procedures), never into a global skill.                                                            |
+| Repo knowledge      | Goes into the repo, never into a global skill: the document or `AGENTS.md` section that is about it; else `AGENTS.md` for short rules, `.agents/skills/<name>/` for procedures.  |
 | History             | Backfill all history on the first run; dedup state makes re-runs cheap.                                                                                                          |
 | Resumed sessions    | Change tokens plus per-turn fingerprints: only new turns are extracted, even when an agent copies old history into a new file.                                                   |
 | Models and provider | One agent for every stage (`agent`: pi or Claude Code), with that agent's model: its own default, or `pi.model` / `claudeCode.model` in lbg's config.                            |

@@ -99,6 +99,8 @@ lbg proposal diff <id>                 # only the diff, in git format
 
 Global knowledge goes to your skills directory; knowledge about one repository goes to that repository.
 
+In a repository, lbg files knowledge where the project already keeps it: the sections of `AGENTS.md` (and the text before its first section), `.agents/skills/<name>`, and the documents in `docs/*.md` (`repoDocs` in the config). An `update` of a document changes that document. A `fix-description` of a document means it already says what you had to explain again, so agents aren't reading it: the proposal adds a pointer to it in `AGENTS.md` instead. `AGENTS.md` itself is always loaded, so it never gets a `fix-description`.
+
 ### Changing a draft
 
 ```bash
@@ -295,6 +297,10 @@ systemctl --user disable --now laobaigan.timer   # pause
     ]
   },
 
+  // Where a repository keeps its documentation, relative to its root. The *.md files directly
+  // inside are homes for that repo's knowledge, next to AGENTS.md. [] turns this off.
+  "repoDocs": ["docs"],
+
   // Optional steering: skills you want to exist, and a policy for how knowledge is grouped.
   "topics": [
     {
@@ -323,6 +329,7 @@ systemctl --user disable --now laobaigan.timer   # pause
 | `render.retryAfterHours`                  | wait after a failed draft before the timer tries that skill again                                                                                                                                                                                                                                                                                                                                   |
 | `render.maxSkillLines`                    | a drafted `SKILL.md` longer than this fails its check (detail belongs in `references/`)                                                                                                                                                                                                                                                                                                             |
 | `rejections.maxCallsPerRun`               | rejections classified per run                                                                                                                                                                                                                                                                                                                                                                       |
+| `repoDocs`                                | directories (relative to a repository root) whose `*.md` files lbg files that repo's knowledge into; default `["docs"]`, `[]` for none                                                                                                                                                                                                                                                              |
 | `rejections.expireDays`                   | when `not-useful` memories expire (0 = never)                                                                                                                                                                                                                                                                                                                                                       |
 | `agent`                                   | `pi` (default) or `claude-code`: the agent for every call (extraction, rejection classification, tree routing, drafting, revise one-shot and interactive)                                                                                                                                                                                                                                           |
 | `pi.model`, `pi.thinking`                 | pi's model (`provider/id`, or an id of pi's default provider) and thinking level (`off`, `minimal`, `low`, `medium`, `high`). Unset: pi's defaults                                                                                                                                                                                                                                                  |

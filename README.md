@@ -2,7 +2,7 @@
 
 _老白干 (lǎo bái gān) is a classic northern Chinese baijiu, a strong clear spirit made by distillation. This tool does the same with conversations: it boils the explanations you keep repeating to your coding agents down into skills._
 
-You keep telling your agents the same things in new sessions: how a project is built, where the logs live, which command to use instead of the obvious one. **lbg** reads your Claude Code, pi and opencode sessions in the background, notices what you've explained more than once, and drafts it as a [skill](https://pi.dev/docs/latest/skills), or as a section of a repository's `AGENTS.md`.
+You keep telling your agents the same things in new sessions: how a project is built, where the logs live, which command to use instead of the obvious one. **lbg** reads your Claude Code, pi and opencode sessions in the background, notices what you've explained more than once, and drafts it as a [skill](https://pi.dev/docs/latest/skills), or as a change to a repository's `AGENTS.md` or docs.
 
 Nothing changes until you review a **proposal** and accept it. Model calls go through [pi](https://pi.dev), with the provider, model and credentials pi is configured with, or optionally through Claude Code ([see below](#use-claude-code)).
 

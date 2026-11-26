@@ -121,7 +121,11 @@ export async function acceptProposal(
   }
   props.markAccepted(id);
   try {
-    await syncTree(tree, { skillsDir: cfg.skillsDir, declared: cfg.topics });
+    await syncTree(tree, {
+      skillsDir: cfg.skillsDir,
+      declared: cfg.topics,
+      repoDocs: cfg.repoDocs,
+    });
   } catch (e) {
     // The files are written and the proposal is accepted; only the tree is behind.
     throw new Error(

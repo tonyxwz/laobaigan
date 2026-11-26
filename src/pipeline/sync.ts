@@ -4,7 +4,7 @@ import type {
   ParsedSection,
   ParsedSkill,
 } from "../skills/parse.ts";
-import { parseRepo, parseSkillsDir } from "../skills/parse.ts";
+import { fileNodeKind, parseRepo, parseSkillsDir } from "../skills/parse.ts";
 import {
   type NodeRow,
   type Scope,
@@ -228,9 +228,13 @@ export function syncAgentsMd(
       sourcePath: md.path,
       sourceHash: md.hash,
     });
-  const isAgentsSection = (n: NodeRow) =>
-    !!n.sourcePath && /\/(AGENTS|CLAUDE)\.md#/.test(n.sourcePath);
-  return syncSkills(tree, scope, md?.sections ?? [], { owns: isAgentsSection });
+  const isAgentsSection = (n: NodeRow) => {
+    const k = fileNodeKind(n.sourcePath);
+    return k === "agents-section" || k === "agents-intro";
+  };
+  // The intro is a node too, so knowledge can be filed (and found already stated) there.
+  const parsed = md ? [...(md.intro ? [md.intro] : []), ...md.sections] : [];
+  return syncSkills(tree, scope, parsed, { owns: isAgentsSection });
 }
 
 /**
@@ -299,9 +303,11 @@ export interface SyncSources {
   /** The global skills directory (live, not a worktree). */
   skillsDir: string;
   declared: DeclaredTopic[];
+  /** Directories (relative to a repo root) whose *.md files are mirrored as documents. */
+  repoDocs?: string[];
 }
 
-/** Parse everything lbg mirrors and sync the tree: global skills, known repos, declared topics. */
+/** Parse everything lbg mirrors and sync the tree: global skills, known repos (AGENTS.md, skills, documents), declared topics. */
 export async function syncTree(
   tree: Tree,
   src: SyncSources,
@@ -321,13 +327,18 @@ export async function syncTree(
     .filter((r) => r.scope === "repo" && r.repo)
     .map((r) => r.repo!);
   for (const repo of known) {
-    const parsed = await parseRepo(repo);
-    const isRepoSkill = (n: NodeRow) =>
-      !!n.sourcePath && n.sourcePath.includes("/.agents/skills/");
+    const parsed = await parseRepo(repo, src.repoDocs ?? []);
+    const owns = (kind: "skill" | "doc") => (n: NodeRow) =>
+      fileNodeKind(n.sourcePath) === kind;
     repos[repo] = merge(
-      syncAgentsMd(tree, repo, parsed.agentsMd),
-      syncSkills(tree, { scope: "repo", repo }, parsed.skills, {
-        owns: isRepoSkill,
+      merge(
+        syncAgentsMd(tree, repo, parsed.agentsMd),
+        syncSkills(tree, { scope: "repo", repo }, parsed.skills, {
+          owns: owns("skill"),
+        }),
+      ),
+      syncSkills(tree, { scope: "repo", repo }, parsed.docs, {
+        owns: owns("doc"),
       }),
     );
   }

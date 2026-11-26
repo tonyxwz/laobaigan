@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { exists, subdirs } from "../util/fs.ts";
+import { repoDocFiles, splitByHeading } from "./parse.ts";
 
 export interface SkillInfo {
   name: string;
@@ -16,6 +17,8 @@ export interface RepoContext {
   /** `AGENTS.md` / `CLAUDE.md` section headings, for overlap checks. */
   agentsMdHeadings: string[];
   agentsMdPath?: string;
+  /** Repository documents (docs/<x>.md) with their "##" headings. */
+  docs: { path: string; headings: string[] }[];
 }
 
 /** Parse `name` / `description` from SKILL.md YAML frontmatter (single-line or folded values). */
@@ -91,12 +94,28 @@ export async function projectRoot(dir: string): Promise<string | undefined> {
 const repoCache = new Map<string, Promise<RepoContext | undefined>>();
 
 /** Repo-local skills (`.agents/skills`) and AGENTS.md headings for the repo containing `dir`. */
-export function repoContext(dir: string): Promise<RepoContext | undefined> {
-  let p = repoCache.get(dir);
+export function repoContext(
+  dir: string,
+  docDirs: string[] = [],
+): Promise<RepoContext | undefined> {
+  const key = `${dir}\0${docDirs.join("\0")}`;
+  let p = repoCache.get(key);
   if (!p) {
     p = (async () => {
       const root = await projectRoot(dir);
       if (!root) return undefined;
+      const docs: RepoContext["docs"] = [];
+      for (const rel of await repoDocFiles(root, docDirs)) {
+        try {
+          const md = await readFile(join(root, rel), "utf8");
+          docs.push({
+            path: rel,
+            headings: splitByHeading(md, 2).parts.map((x) => x.title),
+          });
+        } catch {
+          // unreadable: skip
+        }
+      }
       const skills = await loadSkillsDir(
         join(root, ".agents", "skills"),
         "repo",
@@ -113,14 +132,15 @@ export function repoContext(dir: string): Promise<RepoContext | undefined> {
             skills,
             agentsMdHeadings: headings,
             agentsMdPath: path,
+            docs,
           };
         } catch {
           // try next
         }
       }
-      return { root, skills, agentsMdHeadings: [] };
+      return { root, skills, agentsMdHeadings: [], docs };
     })();
-    repoCache.set(dir, p);
+    repoCache.set(key, p);
   }
   return p;
 }
@@ -142,7 +162,12 @@ export function renderSkillIndex(
         `- ${repo.agentsMdPath.split("/").pop()} sections: ${repo.agentsMdHeadings.join(" | ") || "(no headings)"}`,
       );
     }
-    if (!repo.skills.length && !repo.agentsMdPath) lines.push("- (none)");
+    for (const d of repo.docs)
+      lines.push(
+        `- ${d.path} sections: ${d.headings.join(" | ") || "(no headings)"}`,
+      );
+    if (!repo.skills.length && !repo.agentsMdPath && !repo.docs.length)
+      lines.push("- (none)");
   }
   return lines.join("\n");
 }

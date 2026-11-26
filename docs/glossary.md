@@ -74,16 +74,22 @@ Example: _"Use `rg` rather than `grep -r` to search code"_: a `correction`, `glo
 
 ```
 depth 0  root     the always-loaded layer: the global skill list, or a repo's AGENTS.md
-depth 1  skill    one skill folder (name + description), or an AGENTS.md "##" section
-depth 2  section  a "##" section of SKILL.md, a references/*.md file, or an AGENTS.md "###" subsection
+depth 1  skill    one skill folder (name + description), an AGENTS.md "##" section or its intro, or a repo document
+depth 2  section  a "##" section of SKILL.md or of a document, a references/*.md file, or an AGENTS.md "###" subsection
          nuggets  attached to skills or sections, never to roots
 ```
 
 **Scope**
-: Either `global` (the shared skills directory every agent loads) or `repo` (one repository: its `AGENTS.md` and `.agents/skills`). Nuggets, skills and proposals never cross scopes.
+: Either `global` (the shared skills directory every agent loads) or `repo` (one repository: its `AGENTS.md`, `.agents/skills` and documents). Nuggets, skills and proposals never cross scopes.
 
 **Root**
-: The top node of one scope's tree. A repo root holds that repo's `AGENTS.md` preamble (the text before the first `##`). Roots never hold nuggets and are never proposed.
+: The top node of one scope's tree. Roots never hold nuggets and are never proposed.
+
+**Intro (node)**
+: The text before the first `##` of a repo's `AGENTS.md`, as a depth-1 node of its own, so knowledge can be filed there and found already stated there.
+
+**Document (node)**
+: A depth-1 node mirroring one of a repository's documents (`docs/*.md`, see `repoDocs`), with its `##` sections at depth 2. Repo knowledge is filed into the document that is about it instead of a new skill.
 
 **Skill (node)**
 : A depth-1 node: one future or existing skill. What gets scored and proposed.
@@ -117,7 +123,7 @@ depth 2  section  a "##" section of SKILL.md, a references/*.md file, or an AGEN
 : For a live skill: evidence attached after its render time, which the file doesn't say yet.
 
 **Covered evidence**
-: For a live skill: something you explained even though the skill already says it. A sign the skill's description doesn't trigger.
+: For a live skill: something you explained even though the skill already says it. A sign the skill's description doesn't trigger; for a document, that nothing points agents to it. `AGENTS.md` is always loaded, so covered evidence there earns nothing.
 
 **Score**
 : A number that orders skills (sessions, extra agents, extra days, corrections, minus coverage). It only ranks candidates; promotion is decided by readable session thresholds (`src/pipeline/treescore.ts`).
@@ -127,7 +133,7 @@ depth 2  section  a "##" section of SKILL.md, a references/*.md file, or an AGEN
 
 - **new**: a latent or declared skill with evidence from ≥ 3 sessions, or ≥ 2 across different agents
 - **update**: a live skill with fresh evidence from ≥ 2 sessions
-- **fix-description**: a live skill with covered evidence from ≥ 2 sessions
+- **fix-description**: a live skill with covered evidence from ≥ 2 sessions. For a document it is a **pointer**: a line in `AGENTS.md` saying when to read it
 
 **Curation**
 : Your hand edits to the tree: `lbg tree merge | split | move | rename | unlock` and `lbg nuggets move`. Every edit is **locked**, so automation never undoes it. Live skills change only through proposals.
@@ -135,7 +141,7 @@ depth 2  section  a "##" section of SKILL.md, a references/*.md file, or an AGEN
 ## Proposals
 
 **Draft**
-: pi writing one candidate skill's files (`src/pipeline/render.ts`), in a **scratch dir**: a temporary copy of only that skill's target paths. Your real files are never touched while drafting.
+: pi writing one candidate skill's files (`src/pipeline/render.ts`), in a **scratch dir**: a temporary copy of only that skill's target paths, plus read-only copies of a repository's `AGENTS.md`, `README.md` and documents. Your real files are never touched while drafting.
 
 **Guarded tools**
 : The file tools the drafting model gets (`read`, `ls`, `find`, `grep`, `write`, `edit`), confined to the scratch dir, with writes allowed only to the skill's paths. No bash (`src/pi/guard.ts`).
