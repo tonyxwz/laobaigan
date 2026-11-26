@@ -12,40 +12,55 @@ import { isAllowed, type RenderTarget } from "./target.ts";
 const GENERATED_BLOCK =
   /<!--\s*(BEGIN\b[^>]*?)-->[\s\S]*?<!--\s*END\b[^>]*?-->/g;
 
-/** Problems with a draft; empty = OK. `files` are the changes, `base` the originals. */
-export function verifyDraft(
-  files: DraftFile[],
-  base: Map<string, string>,
-  target: RenderTarget,
-  cfg: Config,
-): string[] {
-  const problems: string[] = [];
-  if (!files.length) problems.push("no files were changed");
-  for (const f of files)
-    if (!isAllowed(f.path, target.writable))
-      problems.push(`changed a path outside the proposal: ${f.path}`);
-  const after = new Map(base);
-  for (const f of files)
-    f.content === null ? after.delete(f.path) : after.set(f.path, f.content);
+/** What a check looks at. */
+interface Draft {
+  /** The changes. */
+  files: DraftFile[];
+  /** The originals of the writable paths. */
+  base: Map<string, string>;
+  /** The writable paths as the draft leaves them. */
+  after: Map<string, string>;
+  target: RenderTarget;
+  cfg: Config;
+}
 
-  // Every skill the draft touched must stay a valid skill: the target, and any other one.
-  const skillDirs = new Set<string>();
+/** One rule a draft must pass. Returns its problems; none = passed. */
+type Check = (d: Draft) => string[];
+
+const changesSomething: Check = ({ files }) =>
+  files.length ? [] : ["no files were changed"];
+
+const staysInsideTheProposal: Check = ({ files, target }) =>
+  files
+    .filter((f) => !isAllowed(f.path, target.writable))
+    .map((f) => `changed a path outside the proposal: ${f.path}`);
+
+/** The skill folders the draft touched: the target, and any other one in the repo. */
+function touchedSkillDirs({ files, target }: Draft): Set<string> {
+  const dirs = new Set<string>();
   for (const f of files) {
     if (target.skillDir && f.path.startsWith(`${target.skillDir}/`))
-      skillDirs.add(target.skillDir);
+      dirs.add(target.skillDir);
     for (const d of target.readRoot ? AGENT_SKILL_DIRS : []) {
       const m = f.path.startsWith(`${d}/`)
         ? /^[^/]+/.exec(f.path.slice(d.length + 1))
         : null;
-      if (m && f.path !== `${d}/${m[0]}`) skillDirs.add(`${d}/${m[0]}`);
+      if (m && f.path !== `${d}/${m[0]}`) dirs.add(`${d}/${m[0]}`);
     }
   }
-  for (const skillDir of skillDirs) {
+  return dirs;
+}
+
+/** Every skill the draft touched must stay a valid skill. */
+const skillsStayValid: Check = (d) => {
+  const { after, target, cfg } = d;
+  const problems: string[] = [];
+  for (const skillDir of touchedSkillDirs(d)) {
     const own = skillDir === target.skillDir;
     const at = own ? "" : `${skillDir}: `;
     const md = after.get(`${skillDir}/SKILL.md`);
     if (md === undefined) {
-      // Deleting another skill outright is caught below; a half-deleted one here.
+      // Deleting another skill outright is caught by deletesOnlyInItsSkill; a half-deleted one here.
       if (own || [...after.keys()].some((p) => p.startsWith(`${skillDir}/`)))
         problems.push(`${skillDir}/SKILL.md is missing`);
       continue;
@@ -68,34 +83,52 @@ export function verifyDraft(
         `${at}SKILL.md has ${lines} lines (max ${cfg.render.maxSkillLines}); move detail into references/`,
       );
   }
-  // Existing files are only deleted inside the skill the proposal is about.
-  for (const f of files)
-    if (
-      f.content === null &&
-      !(target.skillDir && f.path.startsWith(`${target.skillDir}/`))
+  return problems;
+};
+
+/** Existing files are only deleted inside the skill the proposal is about. */
+const deletesOnlyInItsSkill: Check = ({ files, target }) =>
+  files
+    .filter(
+      (f) =>
+        f.content === null &&
+        !(target.skillDir && f.path.startsWith(`${target.skillDir}/`)),
     )
-      problems.push(`${f.path} must not be deleted`);
-  // Blocks another tool generates and owns (<!-- BEGIN x --> … <!-- END x -->) stay as they are.
+    .map((f) => `${f.path} must not be deleted`);
+
+/** Blocks another tool generates and owns (<!-- BEGIN x --> … <!-- END x -->) stay as they are. */
+const keepsGeneratedBlocks: Check = ({ files, base }) => {
+  const problems: string[] = [];
   for (const f of files) {
     const old = base.get(f.path);
     if (old === undefined || f.content === null) continue;
     for (const m of old.matchAll(GENERATED_BLOCK))
       if (!f.content.includes(m[0]))
         problems.push(
-          `${f.path}: the generated block "${m[1]!.trim()}" changed; leave marked blocks alone`,
+          `${f.path}: the generated block "${(m[1] ?? "").trim()}" changed; leave marked blocks alone`,
         );
   }
-  if (
-    target.pointer &&
-    target.doc &&
-    target.agentsMd &&
-    !(after.get(target.agentsMd) ?? "").includes(target.doc)
-  )
-    problems.push(
-      `${target.agentsMd} doesn't mention ${target.doc}; the change must point to it`,
-    );
-  // What the draft adds, not what the file already had: a document may legitimately show a
-  // placeholder or an example key, and that must not block every later change to it.
+  return problems;
+};
+
+/** A pointer proposal must leave AGENTS.md mentioning the document. */
+const pointsToItsDocument: Check = ({ after, target }) =>
+  target.pointer &&
+  target.doc &&
+  target.agentsMd &&
+  !(after.get(target.agentsMd) ?? "").includes(target.doc)
+    ? [
+        `${target.agentsMd} doesn't mention ${target.doc}; the change must point to it`,
+      ]
+    : [];
+
+/**
+ * No secrets and no redaction placeholders in what the draft adds. Not in what the file
+ * already had: a document may legitimately show a placeholder or an example key, and that
+ * must not block every later change to it.
+ */
+const addsNoSecrets: Check = ({ files, base }) => {
+  const problems: string[] = [];
   for (const f of files) {
     if (f.content === null) continue;
     const had = new Set((base.get(f.path) ?? "").split("\n"));
@@ -108,8 +141,37 @@ export function verifyDraft(
     if (added.includes("[REDACTED"))
       problems.push(`${f.path} contains a [REDACTED] placeholder`);
   }
-  problems.push(...privateProblems(draftPrivateHits(files, base, target, cfg)));
   return problems;
+};
+
+const addsNoPrivateTerms: Check = ({ files, base, target, cfg }) =>
+  privateProblems(draftPrivateHits(files, base, target, cfg));
+
+/** Every check, in the order their problems are reported. */
+const CHECKS: Check[] = [
+  changesSomething,
+  staysInsideTheProposal,
+  skillsStayValid,
+  deletesOnlyInItsSkill,
+  keepsGeneratedBlocks,
+  pointsToItsDocument,
+  addsNoSecrets,
+  addsNoPrivateTerms,
+];
+
+/** Problems with a draft; empty = OK. `files` are the changes, `base` the originals. */
+export function verifyDraft(
+  files: DraftFile[],
+  base: Map<string, string>,
+  target: RenderTarget,
+  cfg: Config,
+): string[] {
+  const after = new Map(base);
+  for (const f of files)
+    if (f.content === null) after.delete(f.path);
+    else after.set(f.path, f.content);
+  const draft: Draft = { files, base, after, target, cfg };
+  return CHECKS.flatMap((check) => check(draft));
 }
 
 /** Private terms the draft would add, when its target is a public repo (see privacy.ts). */
