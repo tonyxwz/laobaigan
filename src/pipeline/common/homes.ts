@@ -14,6 +14,9 @@ import type { RenderTarget } from "./target.ts";
  *   doc             a repository document (docs/<x>.md), or a pointer to it in AGENTS.md
  *   skill           a skill folder that exists
  *   latent          no file yet: a new skill folder or, in a repo, a new AGENTS.md section
+ *
+ * TODO(lbg-68p): "home" is a confusing name for this; it's the kind of file a node maps to
+ * and its per-kind rules. Rename it (e.g. FileKind / fileKindOf).
  */
 export type HomeKind = FileNodeKind | "latent";
 
