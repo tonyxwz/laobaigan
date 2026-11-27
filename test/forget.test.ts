@@ -7,7 +7,7 @@ import type {
 } from "../src/agents/types.ts";
 import { type Config, DEFAULT_CONFIG } from "../src/config.ts";
 import { buildDraftPrompt } from "../src/pipeline/draft/draft-prompt.ts";
-import { resolveTarget } from "../src/pipeline/draft/target.ts";
+import { resolveTarget } from "../src/pipeline/draft/resolve-target.ts";
 import { processSessions } from "../src/pipeline/extract/process.ts";
 import { rejectProposal } from "../src/pipeline/review/reject.ts";
 import { scoreTree } from "../src/pipeline/tree/treescore.ts";

@@ -22,6 +22,7 @@ import {
   ReportDraftSchema,
 } from "./draft-prompt.ts";
 import { reviewFeedbackPrompt } from "./feedback-prompt.ts";
+import { resolveTarget, SkipError } from "./resolve-target.ts";
 import {
   checkScope,
   type ScopeCheck,
@@ -29,14 +30,13 @@ import {
   scopeRetryPrompt,
 } from "./scope.ts";
 import { diffSnapshot, makeScratch, snapshot } from "./scratch.ts";
-import { resolveTarget, SkipError } from "./target.ts";
 import { draftPrivateHits, verifyDraft } from "./verify.ts";
 
 /**
  * Draft one candidate skill as a proposal, stored in the db. lbg never runs git and never
  * touches the live files while drafting.
  *
- *   resolve the target (target.ts) → copy its writable paths into a scratch dir (scratch.ts) →
+ *   resolve the target (resolve-target.ts) → copy its writable paths into a scratch dir (scratch.ts) →
  *   the drafter, with guarded file tools confined to the scratch dir (draft-prompt.ts) →
  *   verify (verify.ts) → store the changed files (with hashes of the originals) → proposal `open`.
  *   Failure: proposal `failed`, node stays a candidate. The scratch dir is always removed.

@@ -10,7 +10,7 @@ import {
 import { describe, expect, it } from "vitest";
 import { type Config, DEFAULT_CONFIG } from "../src/config.ts";
 import { draftSkill } from "../src/pipeline/draft/render.ts";
-import { resolveTarget } from "../src/pipeline/draft/target.ts";
+import { resolveTarget } from "../src/pipeline/draft/resolve-target.ts";
 import {
   closeDraft,
   discardDraft,

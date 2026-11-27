@@ -3,7 +3,7 @@ import type { FileGuard } from "../../agents/guard.ts";
 /**
  * Where a draft goes (paths relative to the target root). For a repo this is the PRIMARY target: what the
  * proposal is about. The draft may also change the repo's other agent files and documents
- * (repoWritable in draft/target.ts), and may read anything in the repo:
+ * (repoWritable in draft/resolve-target.ts), and may read anything in the repo:
  *   global                        <skillsDir>  ⟶  <name>/  (SKILL.md + references/)
  *   repo, live AGENTS.md section  <repo>       ⟶  AGENTS.md (that section only; the intro: the text before the first section)
  *   repo, live document           <repo>       ⟶  docs/<x>.md; for a fix-description, a pointer to it in AGENTS.md

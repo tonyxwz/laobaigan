@@ -335,7 +335,7 @@ src/
     tree/                    sync.ts insert.ts treescore.ts stats.ts curate.ts exclude.ts
     common/                  what several stages share: homes.ts (what differs per kind of place),
                              target.ts (RenderTarget), privacy.ts (the private-terms gate)
-    draft/                   render.ts (drafting one candidate), target.ts (where it goes),
+    draft/                   render.ts (drafting one candidate), resolve-target.ts (where it goes),
                              scratch.ts, draft-prompt.ts, verify.ts, scope.ts, feedback-prompt.ts,
                              workspace.ts (a proposal's draft reopened for revise / chat / edit)
     review/                  accept.ts reject.ts proposal-view.ts commit.ts revise.ts
