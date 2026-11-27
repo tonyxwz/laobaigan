@@ -3,9 +3,9 @@ import type { Config } from "../../config.ts";
 import { parseFrontmatter } from "../../skills/index.ts";
 import { AGENT_SKILL_DIRS } from "../../skills/layout.ts";
 import type { DraftFile } from "../../state/proposals.ts";
-import { containsSecrets } from "../extract/redact.ts";
-import { privateHits, privateProblems } from "./privacy.ts";
-import { isAllowed, type RenderTarget } from "./target.ts";
+import { containsSecrets } from "../../util/redact.ts";
+import { privateHits, privateProblems } from "../common/privacy.ts";
+import { isAllowed, type RenderTarget } from "../common/target.ts";
 
 /** Checks a finished draft must pass before it becomes a proposal. */
 

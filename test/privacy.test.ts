@@ -10,18 +10,18 @@ import {
   privateHits,
   privateProblems,
   privateTermsIn,
-} from "../src/pipeline/draft/privacy.ts";
+} from "../src/pipeline/common/privacy.ts";
 import { draftSkill } from "../src/pipeline/draft/render.ts";
+import {
+  closeDraft,
+  discardDraft,
+  openDraft,
+} from "../src/pipeline/draft/workspace.ts";
 import {
   acceptProposal,
   privateHitsFor,
 } from "../src/pipeline/review/accept.ts";
 import { commitMessageFor } from "../src/pipeline/review/commit.ts";
-import {
-  closeDraft,
-  discardDraft,
-  openDraft,
-} from "../src/pipeline/review/revise.ts";
 import { syncTree } from "../src/pipeline/tree/sync.ts";
 import { scoreTree } from "../src/pipeline/tree/treescore.ts";
 import { type NuggetInsert, StateDb } from "../src/state/db.ts";

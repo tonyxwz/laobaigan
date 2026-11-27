@@ -7,12 +7,12 @@ import {
   buildExcerpt,
   isTrivialPrompt,
 } from "../src/pipeline/extract/prefilter.ts";
+import type { Transcript, Turn } from "../src/sources/types.ts";
 import {
   containsSecrets,
   redact,
   setExtraPatterns,
-} from "../src/pipeline/extract/redact.ts";
-import type { Transcript, Turn } from "../src/sources/types.ts";
+} from "../src/util/redact.ts";
 
 // Fake credentials, assembled at runtime so secret scanners don't flag the source.
 const FAKE_AKID = "AKIA" + "ABCDEFGHIJKLMNOP";

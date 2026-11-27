@@ -2,7 +2,7 @@ import { type Static, type TSchema, Type } from "typebox";
 import type { AgentRequest, AgentRunner, Usage } from "../../agents/types.ts";
 import { addUsage, ZERO_USAGE } from "../../agents/types.ts";
 import { agentModel, type Config } from "../../config.ts";
-import { isValidSkillName } from "../../skills/name.ts";
+import { isValidSkillName, skillName } from "../../skills/name.ts";
 import type { NuggetRow } from "../../state/db.ts";
 import { type MemoryRow, Rejections } from "../../state/rejections.ts";
 import {
@@ -12,7 +12,6 @@ import {
   type TreeNode,
 } from "../../state/tree.ts";
 import { truncate } from "../../util/text.ts";
-import { skillName } from "./stats.ts";
 
 /**
  * Insert: route new nuggets top-down through the knowledge tree, one batched

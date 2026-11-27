@@ -11,6 +11,11 @@ import { describe, expect, it } from "vitest";
 import { type Config, DEFAULT_CONFIG } from "../src/config.ts";
 import { draftCandidates, draftSkill } from "../src/pipeline/draft/render.ts";
 import {
+  closeDraft,
+  discardDraft,
+  openDraft,
+} from "../src/pipeline/draft/workspace.ts";
+import {
   acceptProposal,
   conflicts,
   newSinceDraft,
@@ -18,12 +23,7 @@ import {
 import { commitTargetFor } from "../src/pipeline/review/commit.ts";
 import { proposalDiff } from "../src/pipeline/review/proposal-view.ts";
 import { rejectProposal } from "../src/pipeline/review/reject.ts";
-import {
-  closeDraft,
-  discardDraft,
-  openDraft,
-  reviseProposal,
-} from "../src/pipeline/review/revise.ts";
+import { reviseProposal } from "../src/pipeline/review/revise.ts";
 import { syncTree } from "../src/pipeline/tree/sync.ts";
 import { scoreTree, skillStats } from "../src/pipeline/tree/treescore.ts";
 import { type NuggetInsert, StateDb } from "../src/state/db.ts";
@@ -650,7 +650,7 @@ describe("openDraft rebases a stale draft onto newer edits", () => {
     draftFile: (base: string) => { content: string; baseContent?: string },
   ) {
     const { openDraft, discardDraft, reviseContext } = await import(
-      "../src/pipeline/review/revise.ts"
+      "../src/pipeline/draft/workspace.ts"
     );
     const { hashContent } = await import("../src/state/proposals.ts");
     const { cfg, db, tree, dot, skillsDir } = await globalSetup();

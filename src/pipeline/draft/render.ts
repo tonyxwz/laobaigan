@@ -8,19 +8,20 @@ import { addUsage, ZERO_USAGE } from "../../agents/types.ts";
 import { agentModel, type Config } from "../../config.ts";
 import { type DraftFile, Proposals } from "../../state/proposals.ts";
 import { subtreeNuggets, type Tree } from "../../state/tree.ts";
+import {
+  type PrivateHit,
+  privateProblems,
+  privateRetryPrompt,
+} from "../common/privacy.ts";
+import { guardFor, type RenderTarget } from "../common/target.ts";
+import { applyExclusions, type Rehomed } from "../tree/exclude.ts";
 import { skillStats } from "../tree/treescore.ts";
 import {
   buildDraftPrompt,
   DRAFT_SYSTEM_PROMPT,
   ReportDraftSchema,
 } from "./draft-prompt.ts";
-import { applyExclusions, type Rehomed } from "./exclude.ts";
-import {
-  type PrivateHit,
-  privateProblems,
-  privateRetryPrompt,
-} from "./privacy.ts";
-import { reviewFeedbackPrompt } from "./review.ts";
+import { reviewFeedbackPrompt } from "./feedback-prompt.ts";
 import {
   checkScope,
   type ScopeCheck,
@@ -28,12 +29,7 @@ import {
   scopeRetryPrompt,
 } from "./scope.ts";
 import { diffSnapshot, makeScratch, snapshot } from "./scratch.ts";
-import {
-  guardFor,
-  type RenderTarget,
-  resolveTarget,
-  SkipError,
-} from "./target.ts";
+import { resolveTarget, SkipError } from "./target.ts";
 import { draftPrivateHits, verifyDraft } from "./verify.ts";
 
 /**

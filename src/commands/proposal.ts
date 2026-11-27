@@ -3,7 +3,7 @@ import { createInterface } from "node:readline/promises";
 import { modelRunner } from "../agents/run-claude.ts";
 import { CONFIG_PATH, type Config, loadConfig } from "../config.ts";
 import { writePromptStatus } from "../notify/prompt.ts";
-import { privateProblems } from "../pipeline/draft/index.ts";
+import { privateProblems } from "../pipeline/common/index.ts";
 import {
   acceptProposal,
   chatRevise,

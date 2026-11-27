@@ -3,7 +3,7 @@ import { cp, mkdir, mkdtemp, readdir, readFile, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { type DraftFile, hashContent } from "../../state/proposals.ts";
-import type { RenderTarget } from "./target.ts";
+import type { RenderTarget } from "../common/target.ts";
 
 /** The scratch copy a draft is written in, and what changed in it. */
 

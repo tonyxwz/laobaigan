@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { reviewFeedbackPrompt } from "../src/pipeline/draft/review.ts";
+import { reviewFeedbackPrompt } from "../src/pipeline/draft/feedback-prompt.ts";
 import { rejectProposal } from "../src/pipeline/review/reject.ts";
 import { Rejections } from "../src/state/rejections.ts";
 import { proposalSetup } from "./helpers/proposals.ts";

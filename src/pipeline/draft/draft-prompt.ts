@@ -6,8 +6,8 @@ import {
   type TreeNode,
 } from "../../state/tree.ts";
 import { truncate } from "../../util/text.ts";
-import { homeOfTarget } from "./homes.ts";
-import type { RenderTarget } from "./target.ts";
+import { homeOfTarget } from "../common/homes.ts";
+import type { RenderTarget } from "../common/target.ts";
 
 export const DRAFT_SYSTEM_PROMPT = `You write and maintain agent skills from knowledge an engineer taught their AI coding agents (pi, Claude Code, opencode).
 

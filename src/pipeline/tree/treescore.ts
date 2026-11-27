@@ -7,7 +7,7 @@ import {
   type Tree,
   type TreeNode,
 } from "../../state/tree.ts";
-import { homeOf } from "../draft/homes.ts";
+import { homeOf } from "../common/homes.ts";
 import {
   type EvidenceStats,
   evidenceStats,

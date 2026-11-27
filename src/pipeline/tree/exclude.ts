@@ -2,7 +2,7 @@ import type { AgentRunner, Usage } from "../../agents/types.ts";
 import type { Config } from "../../config.ts";
 import { type Exclusion, Proposals } from "../../state/proposals.ts";
 import { subtreeNuggets, type Tree, type TreeNode } from "../../state/tree.ts";
-import { insertNuggets } from "../tree/insert.ts";
+import { insertNuggets } from "./insert.ts";
 
 /**
  * Off-topic evidence. When a drafter (or I, in review) leaves a nugget out of a skill, it's

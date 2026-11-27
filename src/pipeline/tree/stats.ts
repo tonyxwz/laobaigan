@@ -69,38 +69,6 @@ export function meetsPromotion(
   );
 }
 
-export function skillName(title: string): string {
-  const stop = new Set([
-    "the",
-    "a",
-    "an",
-    "and",
-    "or",
-    "of",
-    "for",
-    "to",
-    "in",
-    "on",
-    "with",
-    "by",
-    "is",
-    "are",
-  ]);
-  const words = title
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, " ")
-    .trim()
-    .split(/\s+/)
-    .filter((w) => w && !stop.has(w));
-  let name = "";
-  for (const w of words) {
-    const next = name ? `${name}-${w}` : w;
-    if (next.length > 40) break;
-    name = next;
-  }
-  return name || "skill";
-}
-
 export function evidenceText(c: {
   title: string;
   summary: string;

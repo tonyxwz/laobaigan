@@ -22,10 +22,8 @@ import {
 import type { Turn } from "../../state/feedback.ts";
 import { Feedback } from "../../state/feedback.ts";
 import type { Tree } from "../../state/tree.ts";
+import { guardFor } from "../common/target.ts";
 import { DRAFT_SYSTEM_PROMPT } from "../draft/draft-prompt.ts";
-import { guardFor } from "../draft/target.ts";
-import { readChatTurns, readClaudeChatTurns } from "./chatlog.ts";
-import { editDiff } from "./proposal-view.ts";
 import {
   type CloseResult,
   closeDraft,
@@ -33,7 +31,9 @@ import {
   discardDraft,
   openDraft,
   reviseContext,
-} from "./revise.ts";
+} from "../draft/workspace.ts";
+import { readChatTurns, readClaudeChatTurns } from "./chatlog.ts";
+import { editDiff } from "./proposal-view.ts";
 
 /**
  * Interactive changes to an open proposal, in my own terminal:

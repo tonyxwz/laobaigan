@@ -8,6 +8,8 @@
  *   chatRevise / editProposal    rework it in a chat with the agent, or in my editor
  *   dropEvidence                 take evidence off the proposal and re-file it
  */
+
+export type { Rebased } from "../draft/workspace.ts";
 export { acceptProposal, newSinceDraft, privateHitsFor } from "./accept.ts";
 export {
   commitTargetFor,
@@ -23,4 +25,4 @@ export {
 } from "./interactive.ts";
 export { proposalDiff, proposalView } from "./proposal-view.ts";
 export { rejectProposal } from "./reject.ts";
-export { type Rebased, reviseProposal } from "./revise.ts";
+export { reviseProposal } from "./revise.ts";

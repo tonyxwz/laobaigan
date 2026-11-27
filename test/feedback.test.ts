@@ -5,8 +5,8 @@ import { join } from "node:path";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import { type Config, DEFAULT_CONFIG } from "../src/config.ts";
+import { reviewFeedbackPrompt } from "../src/pipeline/draft/feedback-prompt.ts";
 import { draftSkill } from "../src/pipeline/draft/render.ts";
-import { reviewFeedbackPrompt } from "../src/pipeline/draft/review.ts";
 import { readChatTurns } from "../src/pipeline/review/chatlog.ts";
 import {
   chatRevise,

@@ -5,8 +5,8 @@ import {
   evidenceText,
   meetsPromotion,
   scoreOf,
-  skillName,
 } from "../src/pipeline/tree/stats.ts";
+import { skillName } from "../src/skills/name.ts";
 import type { NuggetRow } from "../src/state/db.ts";
 
 const S = DEFAULT_CONFIG.score;

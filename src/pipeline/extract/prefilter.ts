@@ -1,7 +1,7 @@
 import type { Transcript, Turn } from "../../sources/types.ts";
+import { redact } from "../../util/redact.ts";
 import { indent, truncate } from "../../util/text.ts";
 import { isHumanTurn } from "./fingerprint.ts";
-import { redact } from "./redact.ts";
 
 export interface PrefilterOptions {
   /** Approx token budget per chunk (chars / 4). */

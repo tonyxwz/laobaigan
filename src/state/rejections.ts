@@ -1,4 +1,4 @@
-import { redact } from "../pipeline/extract/redact.ts";
+import { redact } from "../util/redact.ts";
 import type { StateDb } from "./db.ts";
 import { Tree } from "./tree.ts";
 

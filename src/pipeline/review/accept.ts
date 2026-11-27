@@ -13,8 +13,8 @@ import {
   type PrivateHit,
   privateHits,
   privateProblems,
-} from "../draft/privacy.ts";
-import { isAllowed } from "../draft/target.ts";
+} from "../common/privacy.ts";
+import { isAllowed } from "../common/target.ts";
 import { syncTree } from "../tree/sync.ts";
 import { commitMessageFor } from "./commit.ts";
 import { currentFile } from "./proposal-view.ts";

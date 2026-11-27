@@ -11,12 +11,12 @@ import { describe, expect, it } from "vitest";
 import { type Config, DEFAULT_CONFIG } from "../src/config.ts";
 import { draftSkill } from "../src/pipeline/draft/render.ts";
 import { resolveTarget } from "../src/pipeline/draft/target.ts";
-import { acceptProposal } from "../src/pipeline/review/accept.ts";
 import {
   closeDraft,
   discardDraft,
   openDraft,
-} from "../src/pipeline/review/revise.ts";
+} from "../src/pipeline/draft/workspace.ts";
+import { acceptProposal } from "../src/pipeline/review/accept.ts";
 import { syncTree } from "../src/pipeline/tree/sync.ts";
 import { scoreTree, skillStats } from "../src/pipeline/tree/treescore.ts";
 import { type NuggetInsert, StateDb } from "../src/state/db.ts";

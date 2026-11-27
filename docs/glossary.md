@@ -153,7 +153,7 @@ depth 2  section  a "##" section of SKILL.md or of a document, a references/*.md
 : Checks on a draft before it's stored: only writable paths changed, every touched skill has a `name` matching its folder and a description that fits, `SKILL.md` isn't too long, generated blocks (`<!-- BEGIN … -->`) are untouched, nothing outside the target skill is deleted, no secrets, no private terms added to a public repo.
 
 **Private terms**
-: Words listed in `privacy.privateTerms` that must never be added to a repository listed in `privacy.publicRepos`. A keyword gate (`src/pipeline/draft/privacy.ts`): drafts, revisions and accepts that add one are refused.
+: Words listed in `privacy.privateTerms` that must never be added to a repository listed in `privacy.publicRepos`. A keyword gate (`src/pipeline/common/privacy.ts`): drafts, revisions and accepts that add one are refused.
 
 **Proposal**
 : One drafted change to one skill, stored in lbg's database: the changed files (path, hash of the original, new content), a summary for you, the evidence, and the cost. lbg doesn't use git.

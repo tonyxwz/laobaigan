@@ -1,12 +1,9 @@
 import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
-import {
-  type ExtraPattern,
-  setExtraPatterns,
-} from "./pipeline/extract/redact.ts";
 import { isValidSkillName } from "./skills/name.ts";
 import { expandHome } from "./util/path.ts";
+import { type ExtraPattern, setExtraPatterns } from "./util/redact.ts";
 
 /** Truncation limits applied when normalizing transcripts. */
 export interface NormalizeLimits {
@@ -193,7 +190,7 @@ export interface Config {
   };
   /**
    * Shell command `lbg proposal accept <id> --commit` runs after writing the files (lbg itself
-   * never runs git). One for every target, or one per scope. See src/pipeline/commit.ts for
+   * never runs git). One for every target, or one per scope. See src/pipeline/review/commit.ts for
    * the placeholders.
    */
   commitCommand?: string | { global?: string; repo?: string };
